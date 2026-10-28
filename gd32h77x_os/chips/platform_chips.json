@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "platform_chips": {
+    "GD32H77D": {
+      "target_chip": "GD32H77DIW",
+      "order_code": "GD32H77DIWK7",
+      "alias_of": "GD32H77DIW",
+      "allowed_boards": [
+        "GD32H77D_GINO"
+      ],
+      "approved_geometries": [
+        "GD32H77DIW_CNVM",
+        "GD32H77DIW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77DIW": {
+      "target_chip": "GD32H77DIW",
+      "order_code": "GD32H77DIWK7",
+      "approved_geometries": [
+        "GD32H77DIW_CNVM",
+        "GD32H77DIW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77DIP": {
+      "target_chip": "GD32H77DIP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77DIP_CNVM",
+        "GD32H77DIP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77DII": {
+      "target_chip": "GD32H77DII",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77DII_CNVM",
+        "GD32H77DII_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77EIW": {
+      "target_chip": "GD32H77EIW",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77EIW_CNVM",
+        "GD32H77EIW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77EIP": {
+      "target_chip": "GD32H77EIP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77EIP_CNVM",
+        "GD32H77EIP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77EII": {
+      "target_chip": "GD32H77EII",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77EII_CNVM",
+        "GD32H77EII_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779IW": {
+      "target_chip": "GD32H779IW",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779IW_CNVM",
+        "GD32H779IW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779IP": {
+      "target_chip": "GD32H779IP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779IP_CNVM",
+        "GD32H779IP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779II": {
+      "target_chip": "GD32H779II",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779II_CNVM",
+        "GD32H779II_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779VW": {
+      "target_chip": "GD32H779VW",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779VW_CNVM",
+        "GD32H779VW_ECNVM",
+        "GD32H779VW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779VP": {
+      "target_chip": "GD32H779VP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779VP_CNVM",
+        "GD32H779VP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779VI": {
+      "target_chip": "GD32H779VI",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779VI_CNVM",
+        "GD32H779VI_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779ZW": {
+      "target_chip": "GD32H779ZW",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779ZW_CNVM",
+        "GD32H779ZW_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779ZP": {
+      "target_chip": "GD32H779ZP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779ZP_CNVM",
+        "GD32H779ZP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H779ZI": {
+      "target_chip": "GD32H779ZI",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H779ZI_CNVM",
+        "GD32H779ZI_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    },
+    "GD32H77RAP": {
+      "target_chip": "GD32H77RAP",
+      "order_code": null,
+      "approved_geometries": [
+        "GD32H77RAP_CNVM",
+        "GD32H77RAP_AXISRAM",
+        "GD25Q64ESIG"
+      ]
+    }
+  }
+}

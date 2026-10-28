@@ -1,0 +1,13 @@
+__pycache__/
+.build/
+build/
+/tests/build*/
+/tests/CMakeCache.txt
+/tests/CMakeFiles/
+/tests/CTestTestfile.cmake
+/tests/DartConfiguration.tcl
+/tests/Makefile
+/tests/Testing/
+/tests/cmake_install.cmake
+/tests/tuyaos_adapter/
+

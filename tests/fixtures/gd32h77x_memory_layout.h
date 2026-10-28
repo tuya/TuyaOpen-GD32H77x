@@ -1,0 +1,65 @@
+/* Small checked-in layout table for isolated host tests. */
+#ifndef GD32H77X_MEMORY_LAYOUT_H
+#define GD32H77X_MEMORY_LAYOUT_H
+#include <stdint.h>
+#define GD32H77X_LAYOUT_DEVICE_COUNT 3U
+#define GD32H77X_LAYOUT_PARTITION_COUNT 3U
+#define GD32H77X_LAYOUT_SEGMENT_COUNT 5U
+#define GD32H77X_LAYOUT_PART_KV 0U
+#define GD32H77X_LAYOUT_PART_TUYA GD32H77X_LAYOUT_PART_KV
+#define GD32H77X_LAYOUT_PART_METADATA 1U
+#define GD32H77X_LAYOUT_PART_STAGING 2U
+#define GD32H77X_LAYOUT_PART_PRIMARY 3U
+#define GD32H77X_LAYOUT_TUYA_LOGICAL_BASE GD32H77X_LAYOUT_KV_LOGICAL_BASE
+#define GD32H77X_LAYOUT_TUYA_SIZE_BYTES GD32H77X_LAYOUT_KV_SIZE_BYTES
+#define GD32H77X_LAYOUT_TUYA_END GD32H77X_LAYOUT_KV_END
+#define GD32H77X_LAYOUT_TUYA_ERASE_BYTES GD32H77X_LAYOUT_KV_ERASE_BYTES
+#define GD32H77X_LAYOUT_TUYA_PROGRAM_BYTES GD32H77X_LAYOUT_KV_PROGRAM_BYTES
+#define GD32H77X_PRIMARY_BASE UINT32_C(0x08010000)
+#define GD32H77X_PRIMARY_SIZE UINT32_C(0x001C0000)
+#define GD32H77X_LAYOUT_PRIMARY_SIZE_BYTES UINT32_C(0x001C0000)
+#define GD32H77X_LAYOUT_PRIMARY_ERASE_BYTES UINT32_C(0x00010000)
+#define GD32H77X_METADATA_BASE UINT32_C(0x081C0000)
+#define GD32H77X_METADATA_SIZE UINT32_C(0x00010000)
+#define GD32H77X_LAYOUT_METADATA_SIZE_BYTES UINT32_C(0x00010000)
+#define GD32H77X_LAYOUT_METADATA_ERASE_BYTES UINT32_C(0x00010000)
+#define GD32H77X_STAGING_BASE UINT32_C(0x70000000)
+#define GD32H77X_STAGING_SIZE UINT32_C(0x00020000)
+#define GD32H77X_LAYOUT_STAGING_SIZE_BYTES UINT32_C(0x00020000)
+#define GD32H77X_LAYOUT_STAGING_ERASE_BYTES UINT32_C(0x00001000)
+#define GD32H77X_LAYOUT_KV_LOGICAL_BASE UINT32_C(0x081D0000)
+#define GD32H77X_LAYOUT_KV_SIZE_BYTES UINT32_C(0x00030000)
+#define GD32H77X_LAYOUT_KV_END UINT32_C(0x08200000)
+#define GD32H77X_LAYOUT_KV_ERASE_BYTES UINT32_C(0x00010000)
+#define GD32H77X_LAYOUT_KV_PROGRAM_BYTES UINT32_C(32)
+#define GD32H77X_KV_BASE UINT32_C(0x081D0000)
+#define GD32H77X_KV_SIZE UINT32_C(0x00030000)
+#define GD32H77X_KV_END UINT32_C(0x08200000)
+#define GD32H77X_LAYOUT_ACCESS_MAPPED 0U
+#define GD32H77X_LAYOUT_ACCESS_INDIRECT 1U
+#define GD32H77X_LAYOUT_BACKEND_IMPLEMENTED 0U
+#define GD32H77X_LAYOUT_BACKEND_PARTIAL 1U
+#define GD32H77X_LAYOUT_BACKEND_NOT_IMPLEMENTED 2U
+typedef struct {
+    const char *id, *geometry_id, *region;
+    uint32_t capacity_bytes, erase_bytes, program_bytes, page_bytes, cpu_base;
+    uint32_t access, backend_status, flags;
+} gd32h77x_layout_device_t;
+typedef struct {
+    uint32_t logical_offset_bytes, size_bytes, device_offset_bytes;
+    uint16_t device_index, reserved;
+} gd32h77x_layout_segment_t;
+typedef struct {
+    const char *id;
+    uint32_t logical_base, size_bytes, erase_bytes, program_bytes;
+    uint32_t first_segment, segment_count, flags;
+} gd32h77x_layout_partition_t;
+typedef struct {
+    const char *controller, *chip_select, *clock;
+    const char *data[4];
+} gd32h77x_layout_binding_t;
+extern const gd32h77x_layout_device_t gd32h77x_layout_devices[GD32H77X_LAYOUT_DEVICE_COUNT];
+extern const gd32h77x_layout_binding_t gd32h77x_layout_bindings[GD32H77X_LAYOUT_DEVICE_COUNT];
+extern const gd32h77x_layout_segment_t gd32h77x_layout_segments[GD32H77X_LAYOUT_SEGMENT_COUNT];
+extern const gd32h77x_layout_partition_t gd32h77x_layout_partitions[GD32H77X_LAYOUT_PARTITION_COUNT];
+#endif

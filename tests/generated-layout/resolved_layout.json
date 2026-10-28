@@ -1,0 +1,234 @@
+{
+  "build": {
+    "alias_of": "GD32H77DIW",
+    "canonical_target": "GD32H77DIW",
+    "config_chip": "GD32H77D",
+    "order_code": "GD32H77DIWK7",
+    "platform_board": "GD32H77D_GINO",
+    "platform_chip": "GD32H77D",
+    "platform_choice": "GD32H77X"
+  },
+  "layout": {
+    "board_binding": {
+      "ospi0_flash": {
+        "chip_select": "PC11",
+        "clock": "PF10",
+        "controller": "OSPI0",
+        "data": [
+          "PF8",
+          "PF9",
+          "PF7",
+          "PA1"
+        ]
+      }
+    },
+    "devices": [
+      {
+        "access": "mapped",
+        "backend_status": "implemented",
+        "capacity_bytes": 2097152,
+        "cpu_base": 134217728,
+        "erase_bytes": 65536,
+        "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; gd32h77x_78x_nvmc.h CNVM geometry; runtime KV implementation uses an AXI SRAM command routine and rejects DIEEN mode",
+        "executable": true,
+        "geometry_id": "GD32H77DIW_CNVM",
+        "id": "internal_flash",
+        "kind": "flash",
+        "page_bytes": null,
+        "part_number": "GD32H77DIW",
+        "program_bytes": 32,
+        "region": "CNVM",
+        "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM"
+      },
+      {
+        "access": "indirect",
+        "backend_status": "implemented",
+        "capacity_bytes": 8388608,
+        "cpu_base": null,
+        "erase_bytes": 4096,
+        "evidence": "GinoPi schematic U13; OSPI indirect read/page-program/4K-erase driver implemented in gd32h77x_nor.c; physical board validation pending",
+        "executable": false,
+        "geometry_id": "GD25Q64ESIG",
+        "id": "ospi0_flash",
+        "kind": "flash",
+        "page_bytes": 256,
+        "part_number": "GD25Q64ESIG",
+        "program_bytes": null,
+        "region": "NOR",
+        "vendor_algorithm": null
+      }
+    ],
+    "flash_image": {
+      "boot_partition": "boot",
+      "capacity_bytes": 2097152,
+      "end_address": 136314880,
+      "primary_partition": "primary",
+      "start_address": 134217728
+    },
+    "layout_id": "gd32h77x_board_override_gd32h77diw",
+    "linker_memory": [
+      {
+        "attributes": "rx",
+        "length": 65536,
+        "name": "BOOT",
+        "origin": 134217728
+      },
+      {
+        "attributes": "rx",
+        "length": 2031616,
+        "name": "CNVM",
+        "origin": 134283264
+      },
+      {
+        "attributes": "xrw",
+        "length": 786432,
+        "name": "AXISRAM",
+        "origin": 603979776
+      }
+    ],
+    "ota_policy": {
+      "install_strategy": "copy_in_place",
+      "kv": "tuya",
+      "metadata": "metadata",
+      "primary": "primary",
+      "rollback": "not_guaranteed",
+      "staging": "staging",
+      "status": "planned_not_implemented"
+    },
+    "partitions": {
+      "boot": {
+        "erase_bytes": 65536,
+        "flags": 1,
+        "id": "boot",
+        "logical_base": 134217728,
+        "program_bytes": 32,
+        "role": "boot",
+        "segments": [
+          {
+            "device": "internal_flash",
+            "device_index": 0,
+            "device_offset_bytes": 0,
+            "logical_offset_bytes": 0,
+            "size_bytes": 65536
+          }
+        ],
+        "size_bytes": 65536
+      },
+      "filesystem": {
+        "erase_bytes": 4096,
+        "flags": 128,
+        "id": "filesystem",
+        "logical_base": 1881571328,
+        "program_bytes": null,
+        "role": "filesystem",
+        "segments": [
+          {
+            "device": "ospi0_flash",
+            "device_index": 1,
+            "device_offset_bytes": 2523136,
+            "logical_offset_bytes": 0,
+            "size_bytes": 5865472
+          }
+        ],
+        "size_bytes": 5865472
+      },
+      "metadata": {
+        "erase_bytes": 4096,
+        "flags": 16,
+        "id": "metadata",
+        "logical_base": 1881145344,
+        "program_bytes": null,
+        "role": "ota_metadata",
+        "segments": [
+          {
+            "device": "ospi0_flash",
+            "device_index": 1,
+            "device_offset_bytes": 2097152,
+            "logical_offset_bytes": 0,
+            "size_bytes": 131072
+          }
+        ],
+        "size_bytes": 131072
+      },
+      "primary": {
+        "erase_bytes": 65536,
+        "flags": 2,
+        "id": "primary",
+        "logical_base": 134283264,
+        "program_bytes": 32,
+        "role": "primary",
+        "segments": [
+          {
+            "device": "internal_flash",
+            "device_index": 0,
+            "device_offset_bytes": 65536,
+            "logical_offset_bytes": 0,
+            "size_bytes": 2031616
+          }
+        ],
+        "size_bytes": 2031616
+      },
+      "staging": {
+        "erase_bytes": 4096,
+        "flags": 4,
+        "id": "staging",
+        "logical_base": 1879048192,
+        "program_bytes": null,
+        "role": "ota_staging",
+        "segments": [
+          {
+            "device": "ospi0_flash",
+            "device_index": 1,
+            "device_offset_bytes": 0,
+            "logical_offset_bytes": 0,
+            "size_bytes": 2097152
+          }
+        ],
+        "size_bytes": 2097152
+      },
+      "tuya": {
+        "erase_bytes": 4096,
+        "flags": 32,
+        "id": "tuya",
+        "logical_base": 1881276416,
+        "program_bytes": null,
+        "role": "kv",
+        "segments": [
+          {
+            "device": "ospi0_flash",
+            "device_index": 1,
+            "device_offset_bytes": 2228224,
+            "logical_offset_bytes": 0,
+            "size_bytes": 294912
+          }
+        ],
+        "size_bytes": 294912
+      }
+    },
+    "platform": "GD32H77X",
+    "platform_chip": "GD32H77D",
+    "schema_version": 1,
+    "target_chip": "GD32H77DIW"
+  },
+  "normalizedLayoutDigest": "9b1196cd77a0ba884997357e93cafb5791ac44b6996efbe43869d54d2840ae78",
+  "schema_version": 1,
+  "source": {
+    "sourceDigest": "5d6b60849400cdaf2bc73314456b1e84bf92d8a871cec2ee3bcff905087430e1",
+    "sourceInputs": [
+      {
+        "digest": "052c05e8627177a955b49e91dd0fa9e617899dcbbd114d227ccf3c2e136892df",
+        "kind": "partitions",
+        "sourceKind": "board_override",
+        "sourcePath": "boards/GD32H77X/GD32H77D_GINO/partitions.csv"
+      },
+      {
+        "digest": "acc24144544b1cbda624c1eb735a07b9d7e68b2a271b1259eb741316d8788200",
+        "kind": "flash_devices",
+        "sourceKind": "board_override",
+        "sourcePath": "boards/GD32H77X/GD32H77D_GINO/flash_devices.csv"
+      }
+    ],
+    "sourceKind": "board_override",
+    "sourcePath": "boards/GD32H77X/GD32H77D_GINO/partitions.csv"
+  }
+}

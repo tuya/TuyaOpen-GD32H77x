@@ -1,0 +1,9 @@
+# GD32H77X application Kconfig is owned by the main repository board tree:
+#
+#   boards/GD32H77X/Kconfig
+#   boards/GD32H77X/TKL_Kconfig
+#   boards/GD32H77X/GD32H77D_GINO/Kconfig
+#
+# Do not duplicate adapter capability symbols here. tos.py sources the board
+# tree through boards/Kconfig; duplicate definitions in this file previously
+# carried unrelated generic-GD32 options and made the active defaults unclear.

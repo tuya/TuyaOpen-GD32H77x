@@ -1,0 +1,718 @@
+{
+  "archive": "GD32H77x_78x_Demo_Suites_V0.5.0.7z",
+  "sha256": "0e15f0a2456ff8273c6cdd2008027a9a1152657fbc46754e41f1f04889783905",
+  "files": {
+    "FreeRTOS/LICENSE.md": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/LICENSE.md",
+      "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
+    },
+    "FreeRTOS/croutine.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/croutine.c",
+      "sha256": "b7e15578564ae248cc890ebe688284c244b7e5054b4c7c39b6726fcd38732e05"
+    },
+    "FreeRTOS/event_groups.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/event_groups.c",
+      "sha256": "f8739c4756c1a6a90aa2981366d706a3affd845da03c97c34f5b2e7537493e68"
+    },
+    "FreeRTOS/include/CMakeLists.txt": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/CMakeLists.txt",
+      "sha256": "52741830c9909c41edcda8328f223226c8ce682990b83bfbd8c6c0c95f7be9b7"
+    },
+    "FreeRTOS/include/FreeRTOS.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/FreeRTOS.h",
+      "sha256": "97ec7b3c36b5108aace2f61445d2bb9bb26a341c8aa3d5157328263010d0e1cd"
+    },
+    "FreeRTOS/include/StackMacros.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/StackMacros.h",
+      "sha256": "c8799f1fe0bc6fb5e65543d587c638a4d56679ff802d3141adacdec875f4ff92"
+    },
+    "FreeRTOS/include/atomic.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/atomic.h",
+      "sha256": "0101a248d8eaf3c4daa26f4ea399f9b4abcb11ac8a0482fb6449bdb5d42d21fd"
+    },
+    "FreeRTOS/include/croutine.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/croutine.h",
+      "sha256": "946e11d339dab5f7be136775cfa75f7d51c0054b3d7efeff64d03263ee11de99"
+    },
+    "FreeRTOS/include/deprecated_definitions.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/deprecated_definitions.h",
+      "sha256": "282c3df0a516c46db7cd8c841150b9b6685deaf92eeadff79dbfe05915dc565b"
+    },
+    "FreeRTOS/include/event_groups.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/event_groups.h",
+      "sha256": "b93938a05e1541408653b8e101047866f4ab1fed54aa2e6beec88266ef1a6f88"
+    },
+    "FreeRTOS/include/list.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/list.h",
+      "sha256": "8a5c93ee448eb6e5546522d73e08583aae2c0a66cdada4f4dd75728f98c7e76c"
+    },
+    "FreeRTOS/include/message_buffer.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/message_buffer.h",
+      "sha256": "f676f0ecc4a82d072ecec62101111041dff274cac0b1ebca48dd2b9f6432df38"
+    },
+    "FreeRTOS/include/mpu_prototypes.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/mpu_prototypes.h",
+      "sha256": "87e780ca9e277b0c2ecbb626833a55def268384d187a0ea67a840a9e1b00f41c"
+    },
+    "FreeRTOS/include/mpu_syscall_numbers.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/mpu_syscall_numbers.h",
+      "sha256": "dba0a617ae4a6ff4e387deda6f6a03859770141526e213a79de159a8d1e408ec"
+    },
+    "FreeRTOS/include/mpu_wrappers.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/mpu_wrappers.h",
+      "sha256": "18e555457219812bf8442d878486e53aa4e79f213cab3255cce88180d67f6f1c"
+    },
+    "FreeRTOS/include/newlib-freertos.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/newlib-freertos.h",
+      "sha256": "f5f66125363b0f9d1c984fc4ed0e39feb49f9023a4aeaa5b0ecdc1a6cd404bfb"
+    },
+    "FreeRTOS/include/picolibc-freertos.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/picolibc-freertos.h",
+      "sha256": "d60daf43005f6858762862c2602e2c7f39f97529e32f85a621534e95a2bfc929"
+    },
+    "FreeRTOS/include/portable.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/portable.h",
+      "sha256": "d5f408bc6b2fff5314ce5e0097536be3842d8193f475c36dfac5168ff5fbf93a"
+    },
+    "FreeRTOS/include/projdefs.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/projdefs.h",
+      "sha256": "5ebc971e87d3b0a5a886e8c3dcf63c985aaa135a6a92876720841f0be885ce43"
+    },
+    "FreeRTOS/include/queue.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/queue.h",
+      "sha256": "079547ba473b4011dd8e185f90dbdf9a4eab8c5df38367f0eb616e0c796848cd"
+    },
+    "FreeRTOS/include/semphr.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/semphr.h",
+      "sha256": "5cf73d53ab31e5b620975cdaf5425f86f95fcd5f790539441636120c903b5cff"
+    },
+    "FreeRTOS/include/stack_macros.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/stack_macros.h",
+      "sha256": "b67cf756197b65f07b8adbe43d1c186b4a3fddf6560f481e9ef54cea4f12feac"
+    },
+    "FreeRTOS/include/stdint.readme": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/stdint.readme",
+      "sha256": "0addd65af953e0fa84ce74e9206f1928486b1bcf9b5aa8f9aac9fa694c7cfc44"
+    },
+    "FreeRTOS/include/stream_buffer.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/stream_buffer.h",
+      "sha256": "f4e11d510196cfefb2eae87e97ee0308edb4f6d163ae3da05d0edaa1d06a1bdf"
+    },
+    "FreeRTOS/include/task.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/task.h",
+      "sha256": "474e34e5bd9c2b5cac49e1882d32f49da84389aeb3cfbeff334fcba16af9110c"
+    },
+    "FreeRTOS/include/timers.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/include/timers.h",
+      "sha256": "fe31bfc90d53f73048d1636860abf7b26abfc5161efd63afa5e7d74c701e152e"
+    },
+    "FreeRTOS/list.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/list.c",
+      "sha256": "c81cbc0d9e2e4f5035a4b7e47995d0cd9303868e0a3f519a95f8f9969f382e6c"
+    },
+    "FreeRTOS/portable/GCC/ARM_CM7/r0p1/port.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/portable/GCC/ARM_CM7/r0p1/port.c",
+      "sha256": "e3db47fdeba7edffda98cfd2e603a3a5c559a733de2f864be8ad5b677296642d"
+    },
+    "FreeRTOS/portable/GCC/ARM_CM7/r0p1/portmacro.h": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/portable/GCC/ARM_CM7/r0p1/portmacro.h",
+      "sha256": "edaf0e445975d13e9dcf697c6d9415091888731da094e627db7d9c35b383dc23"
+    },
+    "FreeRTOS/portable/MemMang/heap_4.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/portable/MemMang/heap_4.c",
+      "sha256": "a261227173ff7b62a9d4c31e9c9370fd2c2a7a29091868d131228578f40139c3"
+    },
+    "FreeRTOS/queue.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/queue.c",
+      "sha256": "bf0fc16ab27174e9fdce65bc66bb1b3e77820032944ab84c7eb16b31b53a1c88"
+    },
+    "FreeRTOS/stream_buffer.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/stream_buffer.c",
+      "sha256": "121def826654fe8741ac93d2bbda1203851f42ed4c602061d8c1c01a64624b14"
+    },
+    "FreeRTOS/tasks.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/tasks.c",
+      "sha256": "cfe709de0389c51886c02a762e1d99a9ec14707fa8da43beef122950b14d4157"
+    },
+    "FreeRTOS/timers.c": {
+      "source": "GD32H77DI_EVAL_Demo_Suites/Projects/33_ENET/Third_party/FreeRTOS-Kernel-11.2.0/timers.c",
+      "sha256": "5a9060e28436b0c58b60f678e1eeb552b4142930cef4641dce262839334ae3f3"
+    },
+    "SOFTWARE LICENSE AGREEMENT SLA-GD0001-version1.1.pdf": {
+      "source": "SOFTWARE LICENSE AGREEMENT SLA-GD0001-version1.1.pdf",
+      "sha256": "189037720ad599df11e34b275fce9556e52e780f6669533f8e684e4bf855a5bc"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Include/gd32h77x_78x.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Include/gd32h77x_78x.h",
+      "sha256": "23965e4930557d56d12096b13201951d4622fe462106d5d0fcd8256083434aef"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Include/gd32h77x_78x_err_report.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Include/gd32h77x_78x_err_report.h",
+      "sha256": "dc77d09de79842aee3e851289a6afe69aa761f6f00f1ab22995b496d01c62bc4"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Include/system_gd32h77x_78x.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Include/system_gd32h77x_78x.h",
+      "sha256": "ee56d3b4d0e81dcbfc9f9f0b57bcc2b0fb9a80d602c5b073f7db64f1c818f99e"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/ARM/startup_gd32h77x_78x.s": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/ARM/startup_gd32h77x_78x.s",
+      "sha256": "2d43b45d0ee2704d2ed127fff06f0905a3652d8fd800803f15d508cd0fef5557"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xI_flash.ld": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xI_flash.ld",
+      "sha256": "9bbfd1fd0df0e6fafc5ecd922e2bdb3c4e1dbc7dc10b9e7900f259085c8e0cce"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xN_flash.ld": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xN_flash.ld",
+      "sha256": "f54336796fc8646b9750b68411aa11e37c5c366e5b4693e59cdd9b7ff8d7b163"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xP_flash.ld": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xP_flash.ld",
+      "sha256": "d66e0333bad9318527f46baed8205bf4d19af79a5c9e7c944175cd8fa5bc4f81"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xW_flash.ld": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/Ld/gd32h77x_78x_xW_flash.ld",
+      "sha256": "28c1c39f13727373851e88e1fbdb998be3b4afe2f4b21c44afa1c37c3a2781ec"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/newlib/syscalls.c": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/newlib/syscalls.c",
+      "sha256": "ec3ac239be097b6ef4c1e2f1442be755113f95ee26d269d40f123f307653bfc2"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/GCC/startup_gd32h77x_78x.S": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/GCC/startup_gd32h77x_78x.S",
+      "sha256": "57c7cd0ed2c2bfd06de6e1c00622ab07c1d97f87e2a64d10921951d8a42b0c33"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/IAR/startup_gd32h77x_78x.s": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/IAR/startup_gd32h77x_78x.s",
+      "sha256": "fd9fcba833fd911331acf017db317a60a2e740520b6b14d57cb1d088d6273065"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/gd32h77x_78x_err_report.c": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/gd32h77x_78x_err_report.c",
+      "sha256": "f30024917bf9a8dbfb467e538f531a1915cf8814520bfe1e21c30be73c683494"
+    },
+    "gd32/CMSIS/GD/GD32H77x_78x/Source/system_gd32h77x_78x.c": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/GD/GD32H77x_78x/Source/system_gd32h77x_78x.c",
+      "sha256": "7a53c1f658c1d3bf191540bb98cc1b2999f59272e25f4ac8688e82b5102d9882"
+    },
+    "gd32/CMSIS/LICENSE.TXT": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/LICENSE.TXT",
+      "sha256": "e03ba41d7fab20700769fe4118bab50d800cb74f990353a05d2f5fff1c228363"
+    },
+    "gd32/CMSIS/cachel1_armv7.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/cachel1_armv7.h",
+      "sha256": "6cdb5b324f2fd1bb5b2f47298ba6e6777e735d7cad3bb8d942cd36e2c6e65328"
+    },
+    "gd32/CMSIS/cmsis_compiler.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/cmsis_compiler.h",
+      "sha256": "2ec9f436c763d0ab134b22976733c6e5c69269d5e5dd52de3635791a744516af"
+    },
+    "gd32/CMSIS/cmsis_gcc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/cmsis_gcc.h",
+      "sha256": "3d4e265d0aa42f888385ccf073666e6ebb5ec9f834760b9da27c474e177f708d"
+    },
+    "gd32/CMSIS/cmsis_version.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/cmsis_version.h",
+      "sha256": "280b9fc8739aefa878d47e68d7adbd4908a15f98ec193cdba1a4b514133f5c34"
+    },
+    "gd32/CMSIS/core_cm7.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/core_cm7.h",
+      "sha256": "fbe0bdf33247ebfc5e545e2f435836f48787bb76c08e84e2c17499cad3432cfe"
+    },
+    "gd32/CMSIS/mpu_armv7.h": {
+      "source": "GD32H77x_78x_Firmware_Library/CMSIS/mpu_armv7.h",
+      "sha256": "de1b5eb9ed566527b66dc06f4ecb6a43ab6800f7dac47e87c9cb42984dca41bb"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_adc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_adc.h",
+      "sha256": "f46bda4d10ca8fac9c4c79baae5b79c2f863ed247dd2a1af8f0c7603d3810362"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_axiim.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_axiim.h",
+      "sha256": "535131587b9ff3e417b23a7cd7433c90bfc867f8a5c58f3953976e9b6a55164b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_can.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_can.h",
+      "sha256": "bfd8ed9f52a41f4f08e8709e3a2d8e8456baf06b964185241810fe1da8a14a86"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cau.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cau.h",
+      "sha256": "85a929b8794e970660e73f368e4f2e5d31056a3d553a1fca65f32a3c53f98365"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cmp.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cmp.h",
+      "sha256": "2245d5f95a2b0bf794da3fef4b63aac7ab72b2ded3eb8ed2c84cc30ff8e03e68"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cpdm.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_cpdm.h",
+      "sha256": "4d7bc93d9fbd6a50bfb3823f96c7e013aacad59944ddda545c3e721aedc8eeca"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_crc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_crc.h",
+      "sha256": "0864347f4c3de35a51c005957094f309e58c07427e61c5037f34e47e69fe78fd"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ctc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ctc.h",
+      "sha256": "9f928cca97fbb300cb0766a0ff9db32ddaa3ad4ef08870c01ff46b78bfc789ee"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dac.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dac.h",
+      "sha256": "04f4117b839a7cc01d870dcee390714231fe3c6a805fb8c7bd9257d8e9cf3699"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dbg.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dbg.h",
+      "sha256": "363454f20d390643036a54a30a59a76e630f1ebbe47857dd98f8e2800b694f15"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dci.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dci.h",
+      "sha256": "dafc5f3cdbfd48eaf3915fb814f6a8f72c913346234be9ec377e8954ad7d5991"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dma.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dma.h",
+      "sha256": "6b8160d9370ea5f5b767751d8d065f80dc953f7a7277703d2b1818a62a3a0652"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dsi.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_dsi.h",
+      "sha256": "755c8f57daf645f693ba721463584451ed3208cf5c2099588c93f192a5d14e3b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim.h",
+      "sha256": "210d4176a902e7e5d338c6cb0435e6575b20d83f9dde9ed889e09b8c461e35df"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_afmt.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_afmt.h",
+      "sha256": "541f5e71046710fa43285bb5bfca0db76df16e05413feda12e21fb8a331805a3"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_biss.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_biss.h",
+      "sha256": "bb84cf62537f1e5ce2151c722126db078443b6c915b2278b1db3d4da85ac80e3"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_endat.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_endat.h",
+      "sha256": "78b15d09e1597777c523eab600821d624752e20cae499cf086ab7c746086d399"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_hdsl.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_hdsl.h",
+      "sha256": "e72d7f4f0b00184f9b55f3bcd687ba976db00175c75bdce23b9e3ec36927a68a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_tfmt.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edim_tfmt.h",
+      "sha256": "35fb4b7cbc5b6b9c4f7bad0b7f5daf7a2fc6644afd0d533a64eebdc0bd663d5a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edout.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_edout.h",
+      "sha256": "2d829a38da200b9860347789e344ab5718e070443f1f3beafb7b9ca89f7b56a8"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_enet.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_enet.h",
+      "sha256": "55c1c615e5d659b88abb8122d8bbdd68e053069ed9a24b6d7e34b6140327e02b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_esc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_esc.h",
+      "sha256": "dca842151eab709cd201f5648fa3100b766178cde8d2256bcab3a453ed8d2192"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_exmc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_exmc.h",
+      "sha256": "bd1ad024b4bfeb9fcbcb39bc58517b692dde4260b94548f0640032c7bde5e5fd"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_exti.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_exti.h",
+      "sha256": "85fb6c08e854ed86a00028e7328c12a21431e63d57d97d8a967efa7ad9d0f936"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fac.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fac.h",
+      "sha256": "ff2549580a51adc1560d3843e4c567d2f41a898ec632049cdaf45135c5ce251d"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fft.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fft.h",
+      "sha256": "24ac721ce880216c0a1908131784918053c69d8742d054f5331fd5af24a75f82"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fwdgt.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_fwdgt.h",
+      "sha256": "18c6de3fcc71373563150f5c091cab038292bf1eee8c78d2ade8d70a7933c379"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_gpio.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_gpio.h",
+      "sha256": "f0f0a6f189cb6a4261076a1413ecbef0a0778e0ffc8c69bc8e086d23f2fed298"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_gpsi.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_gpsi.h",
+      "sha256": "9dcbe1778678c2eaf1df7c39e773916b81e04f12b5df6df0fad5c8b570f72c99"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hau.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hau.h",
+      "sha256": "a8d2ba9fc3576ef17c7e5b1efc718dcc4e2d50c2458a88eb7d248135fa4a2c66"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hpdf.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hpdf.h",
+      "sha256": "a950731fbe38d830018b064b812d1536dff009e647d378b59e02115f5d0037c8"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hwsem.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_hwsem.h",
+      "sha256": "d7992a05b1a9f1a7c7c6a6ecd276af7814612dba4a8c48cc50ac24530e1d5f7a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_i2c.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_i2c.h",
+      "sha256": "e920d478ec044cc08737af7abb70eae18c7881d38bbd74c0007abc0ef16de9b1"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ipa.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ipa.h",
+      "sha256": "07ddaa63a64ceda10c71973cc80d31485f57d0b91d63ab81311930386983a63e"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_lpdts.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_lpdts.h",
+      "sha256": "96e7d830be28113de9edc73490dcd904bced079a6935e2a4fb902e6334cb5b20"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_mdio.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_mdio.h",
+      "sha256": "31ceeed75da5f84ddb87ec5e5279f4cfb1a530d7f790ade93c062ff23cda572d"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_mdma.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_mdma.h",
+      "sha256": "41b7fa4c8cd74ea6dc2840989d62955fc7bf2cce750f60d9edc40164eba68a11"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_misc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_misc.h",
+      "sha256": "3530ee13809ff8ba790e47e107477a47f07eecfb8d2ce3f9d5381805a48a6a73"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_nvmc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_nvmc.h",
+      "sha256": "d7dc2220bb86f15eb5773b425bae5b007606ebf2bb0d875bd34d108558da8213"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ospi.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ospi.h",
+      "sha256": "ade8eadf87afa447e98a01eea01db73b7f544d7ad37af882e82900176c089bb0"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ospim.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_ospim.h",
+      "sha256": "8307499517e701a97a16bcadabc1c534761ccebe853b5eeffdde8bd6302a520e"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_pkcau.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_pkcau.h",
+      "sha256": "6fc274fd636ba1ca41b4918385682ad36140b299432ba56de9a4d70b895eb41a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_pmu.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_pmu.h",
+      "sha256": "a27bbfd29b2f2db44a249be5b54e69e6ff9521f82ab33992fde7547874ef8929"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rameccmu.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rameccmu.h",
+      "sha256": "109970b6a0ea76819fad293fd750aab7fbbd14ef7e1f6ec1585810cf0a78b942"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rcu.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rcu.h",
+      "sha256": "f6a86dd6914842adaa166f01e4d95748a27fcf05f4f34a4e236a060141956fd6"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rdcm.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rdcm.h",
+      "sha256": "47f7f2b299dc49c777d8586e7bd69d4443057609965d5175f1d46fe68d40e2c3"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rspdif.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rspdif.h",
+      "sha256": "07b106b2432dc74dba8c4481d4b97db2fa638ef59bd2e95918b134519636620a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rtc.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rtc.h",
+      "sha256": "e1c27dd32e34997236111ef95481d6ba22579a080fac14589301386425626a61"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rtdec.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_rtdec.h",
+      "sha256": "a2d01e3734d5c86db9d46d3f7c8e992168ebc3c340f5509d33478f7d0f629344"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_sai.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_sai.h",
+      "sha256": "bcc0a9aaf351c41be5382f7aff9765924db13df424afb8b62f7f7ef123b31c1b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_sdio.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_sdio.h",
+      "sha256": "5d0760ac93f0934e22b13db4c63a1427f52ef367d7b5e8ffc7bd89175def5112"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_spi.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_spi.h",
+      "sha256": "e563f24b9b35a41dd74a708bf64751e14b28e783219237c8921c211cc932a39b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_syscfg.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_syscfg.h",
+      "sha256": "de7392d0c2a97ab2321275767f61d6889165006611f091bc01bb8a528f6f43ae"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_timer.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_timer.h",
+      "sha256": "ee89d2e6f89ccf7e83efb3e340022b3769f11a5ff9c55129d3fe0a8c00f858a6"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_tli.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_tli.h",
+      "sha256": "225a578cb335cf251424afd3202178e75ec68104d5869a29259a81e0bdf82982"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_tmu.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_tmu.h",
+      "sha256": "a90ddd236e987ceb220412589434d1a4adb0798fe7c53bf83b24fa4386924170"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_trigsel.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_trigsel.h",
+      "sha256": "6668ae05c1ef60e38d6d8584153576c51e3503334840a92f9dd8857613960a58"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_trng.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_trng.h",
+      "sha256": "5aa40ba73d5bccd37c5aa9301597d64b829a1bf2f660a11bbc73f109f337b76b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_usart.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_usart.h",
+      "sha256": "762ab8fbca3f7e0d21f9c25f6a2b5d7134bfb1bc38be3adf0953b31a1aeae936"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_vref.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_vref.h",
+      "sha256": "5c5b41f0cee5721aea53d6847964d60c7bbf595b0404b58b01faed4ac80ef2ec"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_wwdgt.h": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Include/gd32h77x_78x_wwdgt.h",
+      "sha256": "feaf6c038533c186aee53ec2750c08e65d9a36e390563e1feaf3d5297ffe8c10"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_adc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_adc.c",
+      "sha256": "c07454d8c82a333f02f7d273cb55517548abf52f429d5f28f51788fd974a07e9"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_can.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_can.c",
+      "sha256": "50a307f5b3f618c45d8509a8c81d5e5ae346bc08ce100ee9604ef878dae814e1"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cau.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cau.c",
+      "sha256": "e8fdd73b65c9b24e4fa831f242e1f416f8dc92312e1e9d3a4a00076d07d1759e"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cau_aes.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cau_aes.c",
+      "sha256": "9fed1e44130e9035d14f06657de54955fef82ea4202e5d4c90cf2f0bdf9bf13c"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cmp.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cmp.c",
+      "sha256": "8c3e71c07c2a5320052841047076e4d556d564352fa9f79c6def761cb6d99145"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cpdm.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_cpdm.c",
+      "sha256": "24ab0a3455b96a6214b6815479c9fdb69694279240fd1e216b7573054da14f00"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_crc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_crc.c",
+      "sha256": "facb47b5705f2e656a824640539407e3efb6cb87b05505304805acdb712ba10a"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ctc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ctc.c",
+      "sha256": "aa952f1ee7163ba7ed24b59833a5086ca1d8110e676aaf17fbc8ad5446515011"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dac.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dac.c",
+      "sha256": "ba0b1620715efeda9896e0ca2558d62d5ec848f87b911dca1a5dc5a5a82f919b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dbg.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dbg.c",
+      "sha256": "bb289ba3608257b2ad4dcb216254ef88430817961041dce9f2ee97b71331b43b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dci.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dci.c",
+      "sha256": "96a05d7f4c5b30d0a04ae5ddd22528b28477271e2aaa7a4d858a88839327ae61"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dma.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dma.c",
+      "sha256": "df5518dce362a5fce3a55bdfdbc31df7f53754b052005b0e357e494dfc711d14"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dsi.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dsi.c",
+      "sha256": "86229acad29fcd5a8c91ffec376df6492feb8d7589fa2cbf96161cfe11c1f204"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim.c",
+      "sha256": "1220f27c38575262b536e4c2bfd85477a2e864d13fb32807d0e06b743a5079f1"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_afmt.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_afmt.c",
+      "sha256": "3332a53ebe672daab6de40a9e089eb7c6ea5c96bfb961e41d8e136bc0f50eaf2"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_biss.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_biss.c",
+      "sha256": "c6a2873565948a152a3c7136f47d1de8f96ff13a4148415c4e3801ac2075d0d0"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_endat.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_endat.c",
+      "sha256": "27ace454e8d12b38383ff3eca0e7456ff755616ad145248d831bf3504f564d3b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_hdsl.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_hdsl.c",
+      "sha256": "57fa329a6229b5af1941e5f4179870e1844b921bae71279cfe8a07c7c7767342"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_tfmt.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edim_tfmt.c",
+      "sha256": "620d249328aafefa283d69fa63cdcbe49375741bc843a61a1f4933835f4dad45"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edout.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_edout.c",
+      "sha256": "6a68b823e853f74119bdb8aa468937dc51da5ff75d075a429ec143267cb475f9"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_enet.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_enet.c",
+      "sha256": "48cfebd2f15a8e28cae106c5ecb34cf0decc5036404e12f50a6171ca38057d4c"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_esc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_esc.c",
+      "sha256": "39d5fca7d1696968aae64109c311f3f0c903ebc3cf63ab7b29df2a2a5ca570c7"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_exmc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_exmc.c",
+      "sha256": "3b732ad4039107a720cfa9748ae183a913364b12486f8a284a002dee3b1f4ffd"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_exti.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_exti.c",
+      "sha256": "d6635e2201c64655e34a3679748b2e9c600320f2d45bb1de7d1a31e5f7e433e0"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fac.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fac.c",
+      "sha256": "bee052a38bcf4d45c76ac3fb021b22c722199c299056f1489405955e25ef1ad8"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fft.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fft.c",
+      "sha256": "89de686bd7bdbadaeb7aaaaca08a332607fd4505f86af9a930c8d8d0f6e88074"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fwdgt.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_fwdgt.c",
+      "sha256": "6b744600393210ac7ecee8a21d112f7876ab639cf95d64d7dc10ae306f07b711"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_gpio.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_gpio.c",
+      "sha256": "51ecbbe68c983a802d9c9f87632f55c0d5ead513c7a4d94263b850d4cc6e5706"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_gpsi.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_gpsi.c",
+      "sha256": "e907874312855bc22bfaa98bf312f10c1a18e2ba6050efceaa908504dc995351"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hau.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hau.c",
+      "sha256": "f1d8670c7a160dacf587d1794781ce24a3795265700c03b060d37da3d468f997"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hau_sha_md5.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hau_sha_md5.c",
+      "sha256": "c2fb969a7beea9c1ac31e0c1c9a3f56d9a64ac3949c2be045e17847f0cb8293b"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hpdf.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hpdf.c",
+      "sha256": "bc9494c1fd48a7af68551de0a783b64987c14b4a06d87ddc3236bf61825fe39c"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hwsem.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_hwsem.c",
+      "sha256": "3e4b55f96a837968a8106e0158b54e585c81ecc8bc43e627884a50348ff459f1"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_i2c.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_i2c.c",
+      "sha256": "d02c63b16b463f7aa74d33ee7a871af68d0b2f9db0398cba80295710e7f425dc"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ipa.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ipa.c",
+      "sha256": "7e97e8ebc91a4c87c8889875a6344cf5bc76fe2b3988420d4507c6602449eac2"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_lpdts.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_lpdts.c",
+      "sha256": "750472ee14d264e3d830c02f4f477d8c7fbb9142ba8aaed1c8139b9f0ba8a7d0"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_mdio.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_mdio.c",
+      "sha256": "1d3bee56bc377ca5b8e64f31d3ec2d3151ed6a7e3a53a856b13f906254643bed"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_mdma.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_mdma.c",
+      "sha256": "680830c507486f9470a414317ceb19f641481620d7f1e26f58ad4a15c9c6766e"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_misc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_misc.c",
+      "sha256": "7f41acdd911d8f1595135f89d84a270296ec633d2e2203a4ce3d60afc14636ff"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_nvmc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_nvmc.c",
+      "sha256": "40654ad0a994b23614f57ac8c59cedab4819d9cd22740b97f3c37442f12388fb"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ospi.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ospi.c",
+      "sha256": "3fd26fd9b9fd0e7fae7caa1c562931ba17cfa1e0a4fee5230aeb543d1a30e535"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ospim.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ospim.c",
+      "sha256": "8c016e715d35cd4dfd2396b9f376fc97a3334204224e6eef325172cbba77d521"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_pkcau.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_pkcau.c",
+      "sha256": "8b2378e187294efbfc3287b94d4a5db0163f1e9ff525f077ed01235556d8ead6"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_pmu.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_pmu.c",
+      "sha256": "d5482db4770bdd36dc35ce5490c06e8d191b0dc2ba22dc808bea847166dea65f"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rameccmu.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rameccmu.c",
+      "sha256": "dd2add4e5e04a69174e117aa5349d2344c821684b8521f3c2dfc38bfe210a1ab"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rcu.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rcu.c",
+      "sha256": "572b7a46e57a12446049c773134d988f01206e23e0f559025cc54a453614d01e"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rdcm.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rdcm.c",
+      "sha256": "3aa770f67987d1b3767ca3f55b88a6c96103afa4e3f7bcc3f27679af7b31cc92"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rspdif.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rspdif.c",
+      "sha256": "4dbbc612db31d4396265c3f1e8a766a70fe1b0dd319a0dbdd21960f1db958f33"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rtc.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rtc.c",
+      "sha256": "33adbe7729c4cb0f70bc3a2669f6190207ceb3d2f102d96f66114d19384923c4"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rtdec.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rtdec.c",
+      "sha256": "430fcdebdadc87da16a4093d366f019d2740497c09ab91f9f557bddbd354bf80"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_sai.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_sai.c",
+      "sha256": "f01abd7eda1765468c0ac976eb4e754e9296414db261c2231bc6ab19518b7f27"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_sdio.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_sdio.c",
+      "sha256": "05718cd6c745392c266a78c24a6845d8a9963474c66829ea86b879269de17279"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_spi.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_spi.c",
+      "sha256": "21c363a8c66a17623ac5a8d7893c680ea8c76fe39414293fce8b99a0c78b7938"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_syscfg.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_syscfg.c",
+      "sha256": "22360a1e69b8b0b9572d95d0cf8bb48cb75098cef6fce302138a923273a7d9c2"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_timer.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_timer.c",
+      "sha256": "d07feac78ea0f6c050f73854e42ec0f7bb6929d4a02ccf6fc985cb739fdf1a51"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_tli.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_tli.c",
+      "sha256": "45294642591de5627206b1b339ec198ced32c3e7d25173101515f596e58bd2c7"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_tmu.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_tmu.c",
+      "sha256": "6396971f6c3d59f8f153208880ae6b94dd056e0699d1f604d40afd2161523cf4"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_trigsel.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_trigsel.c",
+      "sha256": "dfbbb915464ed5d1f45688b8c71a30c6dfb87a4daced184d239df6821235b6e8"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_trng.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_trng.c",
+      "sha256": "00ed62a50c54f0a979fb3bc931b610a5e0d1d5aa152c5fe4d8af64956a32fc9c"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_usart.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_usart.c",
+      "sha256": "879cea369a6dbe47caf91e46e3525d550cea730fabb7775947ad3931bf29ba89"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_vref.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_vref.c",
+      "sha256": "d41853958507fde737d7b1bcdef7aafeb71d3050e8a2198b5ab0d5958b1ebf87"
+    },
+    "gd32/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_wwdgt.c": {
+      "source": "GD32H77x_78x_Firmware_Library/GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_wwdgt.c",
+      "sha256": "8e1e9a9fa1e707c66bfa4e495ac59cea9350a168b9eb1c74a7c66bef4ed7e2fd"
+    }
+  }
+}

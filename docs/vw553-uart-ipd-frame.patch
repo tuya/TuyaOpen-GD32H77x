@@ -1,0 +1,104 @@
+--- a/MSDK/app/atcmd.c
++++ b/MSDK/app/atcmd.c
+@@ -141,6 +141,7 @@
+ static void at_uart_rx_irq_hdl(uint32_t usart_periph);
+ static void at_uart_init(void);
+ static void at_uart_send(char *data, int size);
++static void at_uart_send_unlocked(char *data, int size);
+ static void at_uart_dma_receive(uint32_t address, uint32_t num);
+ static void at_uart_dma_receive_config(void);
+ static void at_uart_irq_receive_config(void);
+@@ -1533,17 +1534,22 @@
+     usart_deinit(at_uart_conf.usart_periph);
+ }
+ 
++static void at_uart_send_unlocked(char *data, int size)
++{
++    while (size > 0) {
++        uart_putc_noint(at_uart_conf.usart_periph, *data++);
++        size--;
++    }
++}
++
+ static void at_uart_send(char *data, int size)
+ {
+-    if (size == 0) {
++    if (size <= 0) {
+         return;
+     }
+ 
+     sys_sema_down(&at_hw_tx_sema, 0);
+-    while (size > 0) {
+-        uart_putc_noint(at_uart_conf.usart_periph, *data++);
+-        size--;
+-    }
++    at_uart_send_unlocked(data, size);
+     sys_sema_up(&at_hw_tx_sema);
+ }
+ 
+@@ -1724,6 +1730,24 @@
+ #endif
+ }
+ 
++#ifndef CONFIG_ATCMD_SPI
++/* Keep one unsolicited IPD header, payload, and trailer indivisible on UART. */
++void at_hw_send_ipd(char *header, int header_size, char *payload, int payload_size)
++{
++    static char trailer[] = "\r\nOK\r\n";
++
++    sys_sema_down(&at_hw_tx_sema, 0);
++    if (header_size > 0) {
++        at_uart_send_unlocked(header, header_size);
++    }
++    if (payload_size > 0) {
++        at_uart_send_unlocked(payload, payload_size);
++    }
++    at_uart_send_unlocked(trailer, sizeof(trailer) - 1);
++    sys_sema_up(&at_hw_tx_sema);
++}
++#endif
++
+ int at_hw_dma_receive(uint32_t address, uint32_t num)
+ {
+ #ifdef CONFIG_ATCMD_SPI
+--- a/MSDK/app/atcmd.h
++++ b/MSDK/app/atcmd.h
+@@ -51,6 +51,10 @@
+ #define AT_TRACE(fmt, ...)          do{}while(0)
+ #endif
+ 
++#ifndef CONFIG_ATCMD_SPI
++void at_hw_send_ipd(char *header, int header_size, char *payload, int payload_size);
++#endif
++
+ #define AT_RSP_START(len)                                       \
+     char *rsp_buf = NULL;                                       \
+     int rsp_buf_idx = 0;                                        \
+--- a/MSDK/app/atcmd_tcpip.c
++++ b/MSDK/app/atcmd_tcpip.c
+@@ -1453,10 +1453,8 @@
+                 } else if (recv_sz > 0) {
+                     AT_RSP_START(64);
+                     AT_RSP("+IPD,%s:%d, %d: ", inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port), recv_sz);
+-                    AT_RSP_IMMEDIATE();
+-                    AT_RSP_DIRECT((char *)rx_buf, recv_sz);
+-                    AT_RSP("\r\n");
+-                    AT_RSP_OK();
++                    at_hw_send_ipd(rsp_buf, rsp_buf_idx, (char *)rx_buf, recv_sz);
++                    AT_RSP_FREE();
+                 } else {
+                     AT_TRACE("rx error %d, from %s:%d.\r\n", errno, inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
+                 }
+@@ -1679,10 +1677,8 @@
+ #else
+                         AT_RSP_START(20);
+                         AT_RSP("+IPD,%d,%d: ", cip_info.cli[i].fd, recv_sz);
+-                        AT_RSP_IMMEDIATE();
+-                        AT_RSP_DIRECT((char *)rx_buf, recv_sz);
+-                        AT_RSP("\r\n");
+-                        AT_RSP_OK();
++                        at_hw_send_ipd(rsp_buf, rsp_buf_idx, (char *)rx_buf, recv_sz);
++                        AT_RSP_FREE();
+ #endif
+                     }
+                 }

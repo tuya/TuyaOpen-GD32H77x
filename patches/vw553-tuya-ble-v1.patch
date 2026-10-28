@@ -1,0 +1,54 @@
+--- a/MSDK/ble/profile/datatrans/ble_datatrans_common.h
++++ b/MSDK/ble/profile/datatrans/ble_datatrans_common.h
+@@ -38,8 +38,9 @@
+ /* BLE datatrans related service/characteristic UUID value */
+ typedef enum
+ {
+-    BLE_GATT_SVC_DATATRANS_SERVICE = BLE_GATT_UUID_16_LSB(0x0101),  /* BLE datatrans service UUID */
+-    BLE_GATT_SVC_DATATRANS_RX_CHAR = BLE_GATT_UUID_16_LSB(0x0102),  /* BLE datatrans RX characteristic UUID */
+-    BLE_GATT_SVC_DATATRANS_TX_CHAR = BLE_GATT_UUID_16_LSB(0x0103),  /* BLE datatrans TX characteristic UUID */
++    /* TuyaOpen BLE netcfg V1: service, phone->device write, device->phone notify. */
++    BLE_GATT_SVC_DATATRANS_SERVICE = BLE_GATT_UUID_16_LSB(0x1910),
++    BLE_GATT_SVC_DATATRANS_RX_CHAR = BLE_GATT_UUID_16_LSB(0x2B11),
++    BLE_GATT_SVC_DATATRANS_TX_CHAR = BLE_GATT_UUID_16_LSB(0x2B10),
+ } ble_datatrans_uuid_t;
+ #endif /* _BLE_DATATRANS_COMMON_H_ */
+--- a/MSDK/ble/app/atcmd_ble.c
++++ b/MSDK/ble/app/atcmd_ble.c
+@@ -239,7 +239,7 @@
+ void at_ble_normal_trans_mode_send(int argc, char **argv)
+ {
+     uint8_t conn_idx = 0;
+-    uint8_t tx_len = 0;
++    uint16_t tx_len = 0;
+     char *endptr = NULL;
+     uint8_t *tx_buf = NULL;
+ 
+@@ -262,7 +262,7 @@
+         AT_RSP(">\r\n");
+         AT_RSP_IMMEDIATE();
+         at_hw_dma_receive((uint32_t)tx_buf, tx_len);
+-        if (ble_datatrans_srv_tx(0, tx_buf, tx_len) != BLE_ERR_NO_ERROR) {
++        if (ble_datatrans_srv_tx(conn_idx, tx_buf, tx_len) != BLE_ERR_NO_ERROR) {
+             AT_TRACE("data send fail\r\n");
+         }
+ 
+@@ -537,6 +537,9 @@
+ 
+     if (event == BLE_CONN_EVT_STATE_CHG) {
+         if (p_data->conn_state.state == BLE_CONN_STATE_DISCONNECTD) {
++            AT_RSP("+TY553XBLE:DISC,%u,%u\r\n", p_data->conn_state.info.discon_info.conn_idx,
++                   p_data->conn_state.info.discon_info.reason);
++            AT_RSP_IMMEDIATE();
+ #ifndef CONFIG_ATCMD_SPI
+             AT_RSP("disconnected. conn idx: %u, reason 0x%x\r\n", p_data->conn_state.info.discon_info.conn_idx, p_data->conn_state.info.discon_info.reason);
+             AT_RSP_IMMEDIATE();
+@@ -544,6 +547,8 @@
+             at_ble_cb.disconn_flag = true;
+         }
+         else if (p_data->conn_state.state == BLE_CONN_STATE_CONNECTED) {
++            AT_RSP("+TY553XBLE:CONN,%u\r\n", p_data->conn_state.info.conn_info.conn_idx);
++            AT_RSP_IMMEDIATE();
+ #ifndef CONFIG_ATCMD_SPI
+             AT_RSP("connect success. conn idx:%u, interval:0x%x, latancy:0x%x, supv_tout:0x%x\r\n",
+               p_data->conn_state.info.conn_info.conn_idx, p_data->conn_state.info.conn_info.con_interval,
