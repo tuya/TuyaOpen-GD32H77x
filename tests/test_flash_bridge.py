@@ -349,8 +349,10 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                     "devices": [{"region": "CNVM", "capacity_bytes": 0x200000,
                         "erase_bytes": 0x10000, "cpu_base": 0x08000000},
                         {"region": "ECNVM", "geometry_id": "GD32H779VW_ECNVM",
-                        "backend_status": "partial", "cpu_base": 0x08200000,
-                        "capacity_bytes": 0x780000, "erase_bytes": 0x10000,
+                        "backend_status": "implemented", "cpu_base": 0x08200000,
+                        "capacity_bytes": 0x780000, "erase_bytes": 0x1000,
+                        "program_bytes": 8, "page_bytes": 0x1000,
+                        "swd_erase_bytes": 0x10000, "swd_program_bytes": 32,
                         "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM"}],
                     "partitions": {"ecnvm_code": {"logical_base": 0x08200000,
                         "size_bytes": 0x10000}},
@@ -360,6 +362,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                 "address": 0x08200000, "path": str(ecnvm),
                 "sha256": hashlib.sha256(ecnvm.read_bytes()).hexdigest()}]
             commands = []
+            pack_geometries = []
 
             def fake_run(command, _logger, cwd, _env):
                 commands.append(command)
@@ -372,8 +375,12 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                     (Path(cwd) / "ecnvm-readback.bin").write_bytes(b"mismatch")
                 return 0, ""
 
+            def fake_validate_pack(_root, _pack, _target, geometry):
+                pack_geometries.append(dict(geometry))
+                return {"erase_size": 0x10000}
+
             with patch.object(bridge.importlib.metadata, "version", return_value="0.46.0"), \
-                 patch.object(bridge, "_validate_swd_pack", return_value={"erase_size": 0x10000}), \
+                 patch.object(bridge, "_validate_swd_pack", side_effect=fake_validate_pack), \
                  patch.object(bridge, "_run_pyocd", side_effect=fake_run):
                 result = bridge._flash_swd({"CONFIG_FLASH_SWD_TARGET": "GD32H779VW",
                     "CONFIG_FLASH_SWD_PACK": "/fake.pack", "CONFIG_FLASH_VERIFY": "n"},
@@ -384,6 +391,8 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
             self.assertEqual(len(flash_commands), 1)
             self.assertIn("0x08200000", flash_commands[0])
             self.assertTrue(any("commander" in item for item in commands))
+            self.assertEqual([item["erase_bytes"] for item in pack_geometries], [0x10000, 0x10000])
+            self.assertEqual([item["program_bytes"] for item in pack_geometries], [32, 32])
 
     # -- native DfuSe backend ----------------------------------------------
     def test_native_dfu_erases_registry_geometry_and_programs_padded_image(self):

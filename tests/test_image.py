@@ -15,6 +15,17 @@ class ImageTests(unittest.TestCase):
     elf = None
     binary = None
     resolved_layout = None
+    ecnvm_binary = None
+    ecnvm_enabled = False
+
+    @classmethod
+    def verify_args(cls):
+        kwargs = {}
+        if cls.ecnvm_binary is not None:
+            kwargs["ecnvm_bin_path"] = cls.ecnvm_binary
+        if cls.ecnvm_enabled:
+            kwargs["ecnvm_enabled"] = True
+        return kwargs
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -23,7 +34,7 @@ class ImageTests(unittest.TestCase):
         self.raw = self.binary.read_bytes()
 
     def test_actual_image(self):
-        result = verify(self.elf, self.binary, self.resolved_layout)
+        result = verify(self.elf, self.binary, self.resolved_layout, **self.verify_args())
         self.assertEqual(result["size"], len(self.raw))
         self.assertEqual(result["vector_address"], "0x8010000")
         self.assertEqual(result["binSha256"], result["sha256"])
@@ -39,19 +50,19 @@ class ImageTests(unittest.TestCase):
                 corrupt[offset] ^= 1
                 self.copy.write_bytes(corrupt)
                 with self.assertRaises(ValueError):
-                    verify(self.elf, self.copy, self.resolved_layout)
+                    verify(self.elf, self.copy, self.resolved_layout, **self.verify_args())
 
     def test_truncation(self):
         for end in (0, 8, 0x10001, len(self.raw) - 1):
             with self.subTest(end=end):
                 self.copy.write_bytes(self.raw[:end])
                 with self.assertRaises(ValueError):
-                    verify(self.elf, self.copy, self.resolved_layout)
+                    verify(self.elf, self.copy, self.resolved_layout, **self.verify_args())
 
     def test_unexpected_trailer(self):
         self.copy.write_bytes(self.raw + b"\xff")
         with self.assertRaises(ValueError):
-            verify(self.elf, self.copy, self.resolved_layout)
+            verify(self.elf, self.copy, self.resolved_layout, **self.verify_args())
 
 
 if __name__ == "__main__":
@@ -59,8 +70,12 @@ if __name__ == "__main__":
     parser.add_argument("elf", type=Path)
     parser.add_argument("binary", type=Path)
     parser.add_argument("resolved_layout", type=Path)
+    parser.add_argument("--ecnvm-bin", type=Path)
+    parser.add_argument("--ecnvm-enabled", action="store_true")
     args = parser.parse_args()
     ImageTests.elf = args.elf
     ImageTests.binary = args.binary
     ImageTests.resolved_layout = args.resolved_layout
+    ImageTests.ecnvm_binary = args.ecnvm_bin
+    ImageTests.ecnvm_enabled = args.ecnvm_enabled
     unittest.main(argv=[sys.argv[0]])

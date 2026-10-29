@@ -81,9 +81,22 @@ execute_process(
 if(NOT GD32H77X_HOST_LAYOUT_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot resolve GD32H77X host-test layout:\n${GD32H77X_HOST_LAYOUT_OUTPUT}${GD32H77X_HOST_LAYOUT_ERROR}")
 endif()
+set(GD32H77X_H779_HOST_LAYOUT "${CMAKE_CURRENT_BINARY_DIR}/generated-layout-h779")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/resolve_host_layout.py"
+            --platform-root "${CMAKE_CURRENT_SOURCE_DIR}/.."
+            --boards-root "${TUYA_ROOT}/boards"
+            --chip GD32H779VW --board GD32H779V_START
+            --out-dir "${GD32H77X_H779_HOST_LAYOUT}"
+    RESULT_VARIABLE GD32H77X_H779_LAYOUT_RESULT
+    OUTPUT_VARIABLE GD32H77X_H779_LAYOUT_OUTPUT
+    ERROR_VARIABLE GD32H77X_H779_LAYOUT_ERROR)
+if(NOT GD32H77X_H779_LAYOUT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Cannot resolve GD32H779VW host-test layout:\n${GD32H77X_H779_LAYOUT_OUTPUT}${GD32H77X_H779_LAYOUT_ERROR}")
+endif()
 add_executable(test_storage_bounds test_storage_bounds.c
     ../tuyaos/tuyaos_adapter/src/tkl_flash.c
-    ../gd32h77x_os/main/gd32h77x_flash_route.c mock_cnvm.c mock_nor.c
+    ../gd32h77x_os/main/gd32h77x_flash_route.c mock_cnvm.c mock_ecnvm.c mock_nor.c
     fixtures/gd32h77x_memory_layout.c)
 target_include_directories(test_storage_bounds PRIVATE
     "${GD32H77X_TEST_FIXTURES}"
@@ -95,7 +108,7 @@ add_test(NAME gd32h77x_storage_bounds COMMAND test_storage_bounds)
 
 add_executable(test_flash_info_partial test_flash_info_partial.c
     ../tuyaos/tuyaos_adapter/src/tkl_flash.c
-    ../gd32h77x_os/main/gd32h77x_flash_route.c mock_cnvm.c mock_nor.c
+    ../gd32h77x_os/main/gd32h77x_flash_route.c mock_cnvm.c mock_ecnvm.c mock_nor.c
     fixtures/gd32h77x_memory_layout.c)
 target_compile_definitions(test_flash_info_partial PRIVATE GD32H77X_TEST_CNVM_BACKEND_PARTIAL)
 target_include_directories(test_flash_info_partial PRIVATE
@@ -120,6 +133,19 @@ target_include_directories(test_flash_layout_generated PRIVATE "${GD32H77X_HOST_
 target_link_libraries(test_flash_layout_generated PRIVATE gd32h77x_tuyaos_adapter_headers)
 add_test(NAME gd32h77x_flash_layout_generated COMMAND test_flash_layout_generated)
 
+add_executable(test_ecnvm_flash_layout test_ecnvm_flash_layout.c
+    ../tuyaos/tuyaos_adapter/src/tkl_flash.c
+    ../gd32h77x_os/main/gd32h77x_flash_route.c mock_cnvm.c mock_ecnvm.c mock_nor.c
+    "${GD32H77X_H779_HOST_LAYOUT}/gd32h77x_memory_layout.c")
+target_include_directories(test_ecnvm_flash_layout PRIVATE
+    "${GD32H77X_H779_HOST_LAYOUT}/include"
+    "${GD32H77X_TEST_FIXTURES}"
+    ../gd32h77x_os/main
+    "${TUYA_ROOT}/src/common/include")
+target_compile_definitions(test_ecnvm_flash_layout PRIVATE GD32H77X_ECNVM_HOST_TEST)
+target_link_libraries(test_ecnvm_flash_layout PRIVATE gd32h77x_tuyaos_adapter_headers)
+add_test(NAME gd32h77x_ecnvm_kv_layout COMMAND test_ecnvm_flash_layout)
+
 add_executable(test_nor_protocol test_nor_protocol.c ../gd32h77x_os/main/gd32h77x_nor.c
     fixtures/gd32h77x_memory_layout.c)
 target_compile_definitions(test_nor_protocol PRIVATE GD32H77X_NOR_HOST_TEST)
@@ -139,7 +165,7 @@ add_test(NAME gd32h77x_tkl_random_adapter
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_tkl_random_source.py")
 
 set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_vw553_socket test_vw553_uart_policy test_tkl_network_basics test_storage_bounds test_flash_info_partial
-    test_flash_routing test_flash_layout_generated test_nor_protocol test_entropy)
+    test_flash_routing test_flash_layout_generated test_ecnvm_flash_layout test_nor_protocol test_entropy)
 foreach(test_target IN LISTS GD32H77X_HOST_TESTS)
     target_compile_options(${test_target} PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     if(ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

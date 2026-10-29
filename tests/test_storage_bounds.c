@@ -98,9 +98,9 @@ int main(void)
     assert(tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_KV_DATA, &info_kv) == OPRT_OK);
     assert(info_uf.partition_num == 1U && info_kv.partition_num == 1U);
     assert(info_uf.partition[0].start_addr == GD32H77X_LAYOUT_KV_LOGICAL_BASE);
-    assert(info_uf.partition[0].size == UINT32_C(0x00020000));
+    assert(info_uf.partition[0].size == UINT32_C(0x00010000));
     assert(info_uf.partition[0].block_size == GD32H77X_LAYOUT_KV_ERASE_BYTES);
-    assert(info_kv.partition[0].start_addr == info_uf.partition[0].start_addr + UINT32_C(0x00020000));
+    assert(info_kv.partition[0].start_addr == info_uf.partition[0].start_addr + UINT32_C(0x00010000));
     assert(info_kv.partition[0].size == UINT32_C(0x00010000));
     assert(tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_APP, &info_other) != OPRT_OK);
     return 0;

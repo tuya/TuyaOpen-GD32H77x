@@ -61,6 +61,26 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
     ecnvm_limit = ecnvm_base + _number(ecnvm_regions[0]["length"]) if ecnvm_regions else 0
     ecnvm_binary = Path(ecnvm_bin_path).read_bytes() if ecnvm_bin_path else None
     tuya_base = _number(tuya_partition["logical_base"])
+    devices = {device["id"]: device for device in resolved.get("layout", {}).get("devices", [])}
+    kv_segments = tuya_partition.get("segments", [])
+    kv_on_ecnvm = False
+    if len(kv_segments) == 1:
+        kv_device = devices.get(kv_segments[0].get("device"))
+        kv_on_ecnvm = bool(kv_device and kv_device.get("region") == "ECNVM")
+    if ecnvm_regions:
+        ecnvm_code = _partition(resolved, "ecnvm_code")
+        ecnvm_code_end = (_number(ecnvm_code["logical_base"]) +
+                          _number(ecnvm_code["size_bytes"]))
+        if (ecnvm_base != _number(ecnvm_code["logical_base"]) or
+                ecnvm_limit != ecnvm_code_end):
+            raise ValueError("ECNVM linker region differs from the ecnvm_code partition")
+        if ecnvm_binary is not None and len(ecnvm_binary) > ecnvm_limit - ecnvm_base:
+            raise ValueError("ECNVM BIN extends beyond the ecnvm_code partition")
+        if kv_on_ecnvm and (ecnvm_limit != tuya_base or
+                            _number(tuya_partition["logical_base"]) +
+                            _number(tuya_partition["size_bytes"]) !=
+                            _number(kv_device["cpu_base"]) + _number(kv_device["capacity_bytes"])):
+            raise ValueError("ECNVM code must end at the KV partition and KV must end at ECNVM")
     flash_image = resolved.get("layout", {}).get("flash_image", {})
     ram_regions = [entry for entry in resolved.get("layout", {}).get("linker_memory", [])
                    if entry.get("name") == "AXISRAM"]
@@ -202,8 +222,11 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
             raise ValueError(f"FreeRTOS handler not installed: {name}")
     if not ram_base <= symbols["_sbss"] <= symbols["_ebss"] <= symbols["_heap_end"] <= symbols["_stack_bottom"] < stack:
         raise ValueError("RAM sections overlap")
-    if not vector_base <= (symbols["tuya_app_main"] & ~1) < app_limit:
-        raise ValueError("Application entry outside the primary partition")
+    app_entry = symbols["tuya_app_main"] & ~1
+    in_cnvm_app = vector_base <= app_entry < app_limit
+    in_ecnvm_app = bool(ecnvm_regions) and ecnvm_base <= app_entry < ecnvm_limit
+    if not (in_cnvm_app or in_ecnvm_app):
+        raise ValueError("Application entry outside the CNVM/ECNVM executable regions")
     elf_sha = hashlib.sha256(elf).hexdigest()
     bin_sha = hashlib.sha256(binary).hexdigest()
     allowwrite = []

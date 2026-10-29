@@ -81,8 +81,10 @@ if(CONFIG_GD32H77X_ECNVM_CODE STREQUAL "y")
     if(NOT PLATFORM_BOARD STREQUAL "GD32H779V_START")
         message(FATAL_ERROR "GD32H77X_ECNVM_CODE is supported only on GD32H779V_START")
     endif()
-    set(CNVM_TEXT_INPUTS "*(EXCLUDE_FILE (*gd32h77x_diag_cli.c.o*) .text*) *(EXCLUDE_FILE (*gd32h77x_diag_cli.c.o*) .rodata*)")
-    set(ECNVM_OUTPUT_SECTIONS ".ecnvm_text : { *gd32h77x_diag_cli.c.o*(.text*) *gd32h77x_diag_cli.c.o*(.rodata*) } > ECNVM\n    ASSERT(SIZEOF(.ecnvm_text) > 0, \"ECNVM_CODE enabled but diagnostic object has no ECNVM sections\")")
+    # Keep the boot table and vector table in CNVM. Move the application
+    # instruction stream and read-only data into executable ECNVM.
+    set(CNVM_TEXT_INPUTS "")
+    set(ECNVM_OUTPUT_SECTIONS ".ecnvm_text : { *(.text*) *(.rodata*) } > ECNVM\n    ASSERT(SIZEOF(.ecnvm_text) > 0, \"ECNVM_CODE enabled but ECNVM text is empty\")")
 else()
     set(CNVM_TEXT_INPUTS "*(.text*) *(.rodata*)")
     set(ECNVM_OUTPUT_SECTIONS "")
@@ -126,6 +128,7 @@ add_executable(firmware
     gd32h77x_os/wireless/vw553/vw553_device.c
     gd32h77x_os/wireless/vw553/vw553_socket_backend.c
     gd32h77x_os/main/gd32h77x_cnvm.c
+    gd32h77x_os/main/gd32h77x_ecnvm.c
     gd32h77x_os/main/gd32h77x_nor.c
     "${GD32H77X_LAYOUT_SOURCE}"
     ${UTILITY_SOURCES}

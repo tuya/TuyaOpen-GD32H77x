@@ -33,8 +33,8 @@ _ROLE_FLAGS = {
     "data": 1 << 8,
 }
 _LAYOUT_FIELDS = {"schema_version", "layout_id", "platform", "platform_chip",
-                  "target_chip", "devices", "partitions", "linker_memory",
-                  "ota_policy", "board_binding"}
+                  "target_chip", "devices", "partitions", "tuya_subareas",
+                  "linker_memory", "ota_policy", "board_binding"}
 _DEVICE_FIELDS = {"geometry", "access", "backend_status"}
 _PARTITION_FIELDS = {"role", "logical_base", "size_bytes", "erase_bytes",
                      "program_bytes", "segments"}
@@ -45,7 +45,8 @@ _OTA_FIELDS = {"status", "primary", "staging", "scratch", "metadata", "kv",
 _GEOMETRY_FIELDS = {"kind", "part_number", "region", "capacity_bytes", "erase_bytes",
                     "program_bytes", "page_bytes", "cpu_base", "executable",
                     "allowed_backend_status", "default_backend_status",
-                    "vendor_algorithm", "evidence"}
+                    "vendor_algorithm", "evidence", "swd_erase_bytes",
+                    "swd_program_bytes"}
 
 
 class LayoutError(ValueError):
@@ -216,17 +217,30 @@ def _load_csv_layout(partition_path: Path, device_path: Path, *, expected: dict,
         raise LayoutError("device CSV must declare at least one device")
 
     groups = {}
+    tuya_subareas = []
     for row in partition_rows:
         name, device_id = row["name"], row["device"]
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
             raise LayoutError("partition name must be a C identifier: {}".format(name))
         if device_id not in device_defs:
             raise LayoutError("partition {} references unknown device {}".format(name, device_id))
+        offset = _csv_number(row["offset"], name + ".offset")
+        size = _csv_number(row["size"], name + ".size")
+        logical = _csv_number(row["logical_addr"], name + ".logical_addr")
+        if name.startswith("tuya_"):
+            tuya_subareas.append({
+                "id": name,
+                "device": device_id,
+                "device_offset_bytes": offset,
+                "size_bytes": size,
+                "logical_base": logical,
+            })
+            continue
         groups.setdefault(name, []).append({
             "device": device_id,
-            "device_offset_bytes": _csv_number(row["offset"], name + ".offset"),
-            "size_bytes": _csv_number(row["size"], name + ".size"),
-            "logical_base": _csv_number(row["logical_addr"], name + ".logical_addr"),
+            "device_offset_bytes": offset,
+            "size_bytes": size,
+            "logical_base": logical,
         })
     if not groups:
         raise LayoutError("partition CSV must declare at least one partition")
@@ -295,7 +309,7 @@ def _load_csv_layout(partition_path: Path, device_path: Path, *, expected: dict,
         "schema_version": 1, "layout_id": layout_id,
         "platform": _PLATFORM_NAME, "platform_chip": expected["platform_chip"],
         "target_chip": expected["target_chip"], "devices": device_defs,
-        "partitions": partition_defs,
+        "partitions": partition_defs, "tuya_subareas": tuya_subareas,
         "linker_memory": linker_memory,
         "ota_policy": ota_policy,
         "board_binding": bindings,
@@ -487,6 +501,10 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
             "erase_bytes": _integer(geometry.get("erase_bytes"), geometry_id + ".erase_bytes", True),
             "program_bytes": _integer(geometry.get("program_bytes"), geometry_id + ".program_bytes", True),
             "page_bytes": _integer(geometry.get("page_bytes"), geometry_id + ".page_bytes", True),
+            "swd_erase_bytes": _integer(geometry.get("swd_erase_bytes"),
+                                        geometry_id + ".swd_erase_bytes", True),
+            "swd_program_bytes": _integer(geometry.get("swd_program_bytes"),
+                                          geometry_id + ".swd_program_bytes", True),
             "cpu_base": cpu_base,
             "executable": executable,
             "access": access,
@@ -498,6 +516,15 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
             raise LayoutError("unsupported storage geometry {}".format(geometry_id))
         if normalized["erase_bytes"] is None or normalized["erase_bytes"] <= 0:
             raise LayoutError("flash geometry {} needs erase_bytes".format(geometry_id))
+        if ((normalized["swd_erase_bytes"] is None) !=
+                (normalized["swd_program_bytes"] is None)):
+            raise LayoutError("{} SWD erase/program geometry must be specified together".format(
+                geometry_id))
+        if (normalized["swd_erase_bytes"] is not None and
+                (normalized["swd_erase_bytes"] <= 0 or
+                 normalized["swd_program_bytes"] <= 0 or
+                 normalized["swd_erase_bytes"] % normalized["swd_program_bytes"])):
+            raise LayoutError("{} has invalid SWD erase/program geometry".format(geometry_id))
         if normalized["part_number"] == expected["target_chip"] and not vendor_algorithm:
             raise LayoutError(
                 "{} flash geometry {} needs the vendor flash algorithm".format(
@@ -628,6 +655,63 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
     normalized_ids = [_c_identifier(part["id"]) for part in partitions]
     if len(set(normalized_ids)) != len(normalized_ids):
         raise LayoutError("partition ids collide after C identifier normalization")
+
+    raw_subareas = layout.get("tuya_subareas", [])
+    if not isinstance(raw_subareas, list):
+        raise LayoutError("layout.tuya_subareas must be an array")
+    normalized_subareas = []
+    if raw_subareas:
+        kv_partition = role_map.get("kv")
+        if kv_partition is None or len(kv_partition["segments"]) != 1:
+            raise LayoutError("tuya subareas require a single-segment kv partition")
+        kv_segment = kv_partition["segments"][0]
+        kv_device = kv_segment["device"]
+        kv_device_offset = kv_segment["device_offset_bytes"]
+        required_subareas = {
+            "tuya_uf", "tuya_kv_data", "tuya_kv_key", "tuya_kv_swap",
+            "tuya_user0", "tuya_kv_protect",
+        }
+        seen_subareas = set()
+        ranges = []
+        for raw in raw_subareas:
+            if not isinstance(raw, dict):
+                raise LayoutError("tuya subarea entries must be objects")
+            _reject_unknown(raw, {"id", "device", "device_offset_bytes", "size_bytes", "logical_base"},
+                            "tuya subarea")
+            sub_id = _required_string(raw, "id", "tuya subarea")
+            if not sub_id.startswith("tuya_"):
+                raise LayoutError("tuya subarea id must start with tuya_: {}".format(sub_id))
+            if sub_id in seen_subareas:
+                raise LayoutError("duplicate tuya subarea {}".format(sub_id))
+            seen_subareas.add(sub_id)
+            if raw.get("device") != kv_device:
+                raise LayoutError("tuya subarea {} must use the kv device".format(sub_id))
+            offset = _integer(raw.get("device_offset_bytes"), sub_id + ".device_offset_bytes")
+            size = _integer(raw.get("size_bytes"), sub_id + ".size_bytes")
+            logical = _integer(raw.get("logical_base"), sub_id + ".logical_base")
+            if size <= 0 or offset < kv_device_offset or offset + size > kv_device_offset + kv_partition["size_bytes"]:
+                raise LayoutError("tuya subarea {} is outside kv partition".format(sub_id))
+            relative = offset - kv_device_offset
+            if logical != kv_partition["logical_base"] + relative:
+                raise LayoutError("tuya subarea {} logical address does not match kv parent".format(sub_id))
+            ranges.append((relative, relative + size, sub_id))
+            normalized_subareas.append({
+                "id": sub_id,
+                "device": kv_device,
+                "device_offset_bytes": offset,
+                "relative_offset_bytes": relative,
+                "logical_base": logical,
+                "size_bytes": size,
+            })
+        if seen_subareas != required_subareas:
+            missing = sorted(required_subareas - seen_subareas)
+            extra = sorted(seen_subareas - required_subareas)
+            raise LayoutError("tuya subarea set mismatch; missing={}, extra={}".format(missing, extra))
+        ranges.sort()
+        for left, right in zip(ranges, ranges[1:]):
+            if left[1] > right[0]:
+                raise LayoutError("tuya subareas {} and {} overlap".format(left[2], right[2]))
+        normalized_subareas.sort(key=lambda item: item["relative_offset_bytes"])
     generated_macros = {
         "GD32H77X_LAYOUT_DEVICE_COUNT",
         "GD32H77X_LAYOUT_PARTITION_COUNT",
@@ -645,6 +729,18 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
         "GD32H77X_LAYOUT_TUYA_ERASE_BYTES",
         "GD32H77X_LAYOUT_TUYA_PROGRAM_BYTES",
     }
+    for subarea in normalized_subareas:
+        symbol = _c_identifier(subarea["id"])
+        candidate_macros = {
+            "GD32H77X_LAYOUT_{}_BASE".format(symbol),
+            "GD32H77X_LAYOUT_{}_SIZE".format(symbol),
+            "GD32H77X_LAYOUT_{}_END".format(symbol),
+        }
+        collisions = candidate_macros & generated_macros
+        if collisions:
+            raise LayoutError("tuya subarea id {} generates reserved C macro(s): {}".format(
+                subarea["id"], ", ".join(sorted(collisions))))
+        generated_macros.update(candidate_macros)
     for partition in partitions:
         symbol = _c_identifier(partition["id"])
         candidate_macros = {
@@ -732,8 +828,10 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
         part = partition_map["ecnvm_code"]
         if (part["role"] != "data" or len(part["segments"]) != 1
                 or devices[part["segments"][0]["device_index"]]["geometry_id"] != "GD32H779VW_ECNVM"
-                or part["logical_base"] != 0x08200000 or part["size_bytes"] != 0x10000):
-            raise LayoutError("ecnvm_code must be the first 64 KiB of mapped GD32H779VW ECNVM")
+                or part["logical_base"] != 0x08200000
+                or part["size_bytes"] <= 0
+                or part["size_bytes"] > geometries["GD32H779VW_ECNVM"]["capacity_bytes"]):
+            raise LayoutError("ecnvm_code must start at the beginning of mapped GD32H779VW ECNVM")
     elif "ECNVM" in memory_map:
         raise LayoutError("ECNVM linker region requires the declared ecnvm_code partition")
     if set(memory_map) != expected_regions:
@@ -766,6 +864,24 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
         raise LayoutError("boot logical address differs from its CPU-mapped address")
     if primary["logical_base"] != flash_device["cpu_base"] + primary_seg["device_offset_bytes"]:
         raise LayoutError("primary logical address differs from its CPU-mapped address")
+    if normalized_subareas:
+        kv_partition = role_map["kv"]
+        kv_segment = kv_partition["segments"][0]
+        kv_device = devices[kv_segment["device_index"]]
+        kv_device_end = kv_device["cpu_base"] + kv_device["capacity_bytes"]
+        if kv_partition["logical_base"] + kv_partition["size_bytes"] != kv_device_end:
+            raise LayoutError("tuya kv parent must end at its mapped device boundary")
+    if "ecnvm_code" in partition_map and normalized_subareas:
+        ecnvm_partition = partition_map["ecnvm_code"]
+        kv_partition = role_map["kv"]
+        ecnvm_segment = ecnvm_partition["segments"][0]
+        kv_segment = kv_partition["segments"][0]
+        if (ecnvm_segment["device"] == kv_segment["device"] and
+                (ecnvm_partition["logical_base"] + ecnvm_partition["size_bytes"] !=
+                 kv_partition["logical_base"] or
+                 ecnvm_segment["device_offset_bytes"] + ecnvm_partition["size_bytes"] !=
+                 kv_segment["device_offset_bytes"])):
+            raise LayoutError("ecnvm_code must end immediately before the kv partition")
     if memory_map["BOOT"]["attributes"] != "rx" or memory_map["CNVM"]["attributes"] != "rx":
         raise LayoutError("BOOT and CNVM linker regions must use attributes rx")
     if "ECNVM" in memory_map:
@@ -828,6 +944,7 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
         "target_chip": expected["target_chip"],
         "devices": devices,
         "partitions": {part["id"]: part for part in partitions},
+        "tuya_subareas": normalized_subareas,
         "linker_memory": linker_memory,
         "flash_image": {
             "start_address": flash_start,
@@ -981,6 +1098,19 @@ def _generate_header(layout: dict) -> str:
         "#define GD32H77X_LAYOUT_TUYA_ERASE_BYTES {}".format(_u32(layout["partitions"][layout["ota_policy"]["kv"]]["erase_bytes"])),
         "#define GD32H77X_LAYOUT_TUYA_PROGRAM_BYTES {}".format(_u32(layout["partitions"][layout["ota_policy"]["kv"]]["program_bytes"])),
     ]
+    axisram = next(region for region in layout["linker_memory"]
+                   if region["name"] == "AXISRAM")
+    lines.extend([
+        "#define GD32H77X_LAYOUT_AXISRAM_BASE {}".format(_u32(axisram["origin"])),
+        "#define GD32H77X_LAYOUT_AXISRAM_SIZE {}".format(_u32(axisram["length"])),
+    ])
+    for subarea in layout.get("tuya_subareas", []):
+        symbol = _c_identifier(subarea["id"])
+        lines.extend([
+            "#define GD32H77X_LAYOUT_{}_BASE {}".format(symbol, _u32(subarea["logical_base"])),
+            "#define GD32H77X_LAYOUT_{}_SIZE {}".format(symbol, _u32(subarea["size_bytes"])),
+            "#define GD32H77X_LAYOUT_{}_END {}".format(symbol, _u32(subarea["logical_base"] + subarea["size_bytes"])),
+        ])
     kv_partition_id = layout["ota_policy"]["kv"]
     if _c_identifier(kv_partition_id) != "TUYA":
         lines.append("#define GD32H77X_LAYOUT_PART_TUYA GD32H77X_LAYOUT_PART_{}".format(

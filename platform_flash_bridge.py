@@ -371,7 +371,7 @@ def _validate_manifest(image: Path, boards_root: str, using_data: dict) -> Tuple
                 or item.get("address") != part.get("logical_base")
                 or item.get("size", 0) <= 0 or item.get("size", 0) > part.get("size_bytes", 0)
                 or device.get("geometry_id") != "GD32H779VW_ECNVM"
-                or device.get("backend_status") != "partial"):
+                or device.get("backend_status") != "implemented"):
             raise ValueError("Reported ECNVM payload does not match current canonical board geometry")
         sidecar = image.parent / filename
         if (not sidecar.is_file() or _sha256_file(sidecar) != item.get("sha256")):
@@ -987,10 +987,14 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
             raise ValueError("Current layout must declare exactly one ECNVM device")
         device = ecnvm_devices[0]
         if (device.get("geometry_id") != "GD32H779VW_ECNVM"
-                or device.get("backend_status") != "partial"
+                or device.get("backend_status") != "implemented"
                 or device.get("cpu_base") != 0x08200000
                 or device.get("capacity_bytes") != 0x780000
-                or device.get("erase_bytes") != 0x10000
+                or device.get("erase_bytes") != 0x1000
+                or device.get("program_bytes") != 8
+                or device.get("page_bytes") != 0x1000
+                or device.get("swd_erase_bytes") != 0x10000
+                or device.get("swd_program_bytes") != 32
                 or device.get("vendor_algorithm") != "GD32H77x_78x_ECNVM_7M_512K.FLM"):
             raise ValueError("ECNVM device differs from the approved GD32H779VW registry geometry")
         mapped = mapped_payloads[0]
@@ -1004,8 +1008,9 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
                 or len(payload_data) > int(partition["size_bytes"])):
             raise ValueError("ECNVM payload failed address/range/digest preflight")
         ecnvm_geometry = {"region": "ECNVM", "cpu_base": 0x08200000,
-            "capacity_bytes": 0x780000, "erase_bytes": 0x10000,
-            "program_bytes": 32, "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM"}
+            "capacity_bytes": 0x780000, "erase_bytes": device["swd_erase_bytes"],
+            "program_bytes": device["swd_program_bytes"],
+            "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM"}
         ecnvm_pack_info = _validate_swd_pack(platform_root, pack, target, ecnvm_geometry)
         ecnvm_plan = (payload_path, ecnvm_geometry, ecnvm_pack_info)
     start = int(start)

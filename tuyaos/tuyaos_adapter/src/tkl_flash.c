@@ -20,7 +20,9 @@
 
 #include "gd32h77x_storage.h"
 #include "gd32h77x_cnvm.h"
+#include "gd32h77x_ecnvm.h"
 #include "gd32h77x_flash_route.h"
+#include "gd32h77x_kv_test.h"
 #include "gd32h77x_nor.h"
 #include "tkl_flash.h"
 
@@ -28,23 +30,40 @@
 #include <stdint.h>
 #include <string.h>
 
-/* The Tuya area is one external-NOR partition. Its fixed subranges follow
- * the same layout convention as the vendor GD32 TKL flash adapter. */
+/* Tuya KV subranges are generated from the board partitions.csv. Legacy
+ * boards without explicit tuya_* rows retain the vendor-compatible defaults. */
+#ifdef GD32H77X_LAYOUT_TUYA_UF_BASE
+#define TUYA_FLASH_UF_START             GD32H77X_LAYOUT_TUYA_UF_BASE
+#define TUYA_FLASH_UF_SIZE              GD32H77X_LAYOUT_TUYA_UF_SIZE
+#define TUYA_FLASH_KV_DATA_START        GD32H77X_LAYOUT_TUYA_KV_DATA_BASE
+#define TUYA_FLASH_KV_DATA_SIZE         GD32H77X_LAYOUT_TUYA_KV_DATA_SIZE
+#define TUYA_FLASH_KV_KEY_START         GD32H77X_LAYOUT_TUYA_KV_KEY_BASE
+#define TUYA_FLASH_KV_KEY_SIZE          GD32H77X_LAYOUT_TUYA_KV_KEY_SIZE
+#define TUYA_FLASH_KV_SWAP_START        GD32H77X_LAYOUT_TUYA_KV_SWAP_BASE
+#define TUYA_FLASH_KV_SWAP_SIZE         GD32H77X_LAYOUT_TUYA_KV_SWAP_SIZE
+#define TUYA_FLASH_USER0_START          GD32H77X_LAYOUT_TUYA_USER0_BASE
+#define TUYA_FLASH_USER0_SIZE           GD32H77X_LAYOUT_TUYA_USER0_SIZE
+#define TUYA_FLASH_KV_PROTECT_START     GD32H77X_LAYOUT_TUYA_KV_PROTECT_BASE
+#define TUYA_FLASH_KV_PROTECT_SIZE      GD32H77X_LAYOUT_TUYA_KV_PROTECT_SIZE
+#else
+#define TUYA_FLASH_UF_START             GD32H77X_LAYOUT_TUYA_LOGICAL_BASE
 #define TUYA_FLASH_UF_SIZE              UINT32_C(0x00020000)
-#define TUYA_FLASH_KV_DATA_OFFSET       UINT32_C(0x00020000)
+#define TUYA_FLASH_KV_DATA_START        (GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + UINT32_C(0x00020000))
 #define TUYA_FLASH_KV_DATA_SIZE         UINT32_C(0x00010000)
-#define TUYA_FLASH_KV_KEY_OFFSET        UINT32_C(0x00030000)
+#define TUYA_FLASH_KV_KEY_START         (GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + UINT32_C(0x00030000))
 #define TUYA_FLASH_KV_KEY_SIZE          UINT32_C(0x00001000)
-#define TUYA_FLASH_KV_SWAP_OFFSET       UINT32_C(0x00031000)
+#define TUYA_FLASH_KV_SWAP_START        (GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + UINT32_C(0x00031000))
 #define TUYA_FLASH_KV_SWAP_SIZE         UINT32_C(0x00004000)
-#define TUYA_FLASH_USER0_OFFSET         UINT32_C(0x00035000)
+#define TUYA_FLASH_USER0_START          (GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + UINT32_C(0x00035000))
 #define TUYA_FLASH_USER0_SIZE           UINT32_C(0x00010000)
-#define TUYA_FLASH_KV_PROTECT_OFFSET    UINT32_C(0x00045000)
+#define TUYA_FLASH_KV_PROTECT_START     (GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + UINT32_C(0x00045000))
 #define TUYA_FLASH_KV_PROTECT_SIZE      UINT32_C(0x00002000)
-#define TUYA_FLASH_AREA_REQUIRED_SIZE   UINT32_C(0x00047000)
+#endif
 
-_Static_assert(TUYA_FLASH_AREA_REQUIRED_SIZE <= UINT32_C(0x00048000),
-               "Tuya flash subranges exceed the reserved area");
+_Static_assert(TUYA_FLASH_KV_PROTECT_START + TUYA_FLASH_KV_PROTECT_SIZE <=
+               GD32H77X_LAYOUT_TUYA_END,
+               "Tuya subareas exceed the configured kv partition");
+
 
 bool gd32h77x_tuya_range_valid(uint32_t address, uint32_t size)
 {
@@ -62,6 +81,27 @@ bool gd32h77x_tuya_erase_range_valid(uint32_t address, uint32_t size)
 {
     return gd32h77x_flash_range_valid(GD32H77X_LAYOUT_PART_TUYA, address, size,
                                       GD32H77X_FLASH_OP_ERASE);
+}
+
+bool gd32h77x_tuya_reserved_test_page_get(uint32_t *address, uint32_t *size)
+{
+    if (address == NULL || size == NULL) {
+        return false;
+    }
+#if defined(GD32H77X_LAYOUT_TUYA_KV_PROTECT_END)
+    const uint32_t test_address = GD32H77X_LAYOUT_TUYA_KV_PROTECT_END;
+    const uint32_t test_size = UINT32_C(0x00001000);
+    if (test_address == UINT32_C(0x08977000) &&
+        GD32H77X_LAYOUT_TUYA_END == UINT32_C(0x08980000) &&
+        test_address >= GD32H77X_LAYOUT_TUYA_KV_PROTECT_BASE +
+                            GD32H77X_LAYOUT_TUYA_KV_PROTECT_SIZE &&
+        test_size <= GD32H77X_LAYOUT_TUYA_END - test_address) {
+        *address = test_address;
+        *size = test_size;
+        return true;
+    }
+#endif
+    return false;
 }
 
 static OPERATE_RET gd32h77x_flash_access_preflight(uint32_t address, uint32_t size,
@@ -94,6 +134,9 @@ static bool gd32h77x_flash_read_chunk(const gd32h77x_flash_route_chunk_t *chunk,
     if (strcmp(chunk->device->region, "NOR") == 0) {
         result = gd32h77x_nor_read(gd32h77x_flash_device_index(chunk->device),
                                    chunk->device_offset, *destination, chunk->size);
+    } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
+        const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
+        result = gd32h77x_ecnvm_read(address, *destination, chunk->size) == OPRT_OK ? 0 : -1;
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
         result = gd32h77x_cnvm_read(address, *destination, chunk->size) == OPRT_OK ? 0 : -1;
@@ -119,6 +162,10 @@ static bool gd32h77x_flash_write_chunk(const gd32h77x_flash_route_chunk_t *chunk
             gd32h77x_nor_program(gd32h77x_flash_device_index(chunk->device),
                                  chunk->device_offset, write_context->source,
                                  chunk->size) == 0 ? OPRT_OK : OPRT_COM_ERROR;
+    } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
+        const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
+        write_context->result = gd32h77x_ecnvm_program(address, write_context->source,
+                                                        chunk->size);
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
         write_context->result = gd32h77x_cnvm_program(address, write_context->source,
@@ -148,6 +195,9 @@ static bool gd32h77x_flash_erase_chunk(const gd32h77x_flash_route_chunk_t *chunk
             }
         }
         erase_context->result = OPRT_OK;
+    } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
+        const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
+        erase_context->result = gd32h77x_ecnvm_erase(address, chunk->size);
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
         erase_context->result = gd32h77x_cnvm_erase(address, chunk->size);
@@ -313,7 +363,24 @@ OPERATE_RET tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_E type, TUYA_FLASH_BASE_
     if (type >= TUYA_FLASH_TYPE_MAX || info == NULL) {
         return OPRT_INVALID_PARM;
     }
-    if (!gd32h77x_cnvm_is_initialized()) {
+    const gd32h77x_layout_partition_t *tuya_partition =
+        &gd32h77x_layout_partitions[GD32H77X_LAYOUT_PART_TUYA];
+    if (tuya_partition->segment_count == 0U || tuya_partition->first_segment >=
+                                                  GD32H77X_LAYOUT_SEGMENT_COUNT) {
+        return OPRT_INVALID_PARM;
+    }
+    const gd32h77x_layout_segment_t *tuya_segment =
+        &gd32h77x_layout_segments[tuya_partition->first_segment];
+    if (tuya_segment->device_index >= GD32H77X_LAYOUT_DEVICE_COUNT) {
+        return OPRT_INVALID_PARM;
+    }
+    const gd32h77x_layout_device_t *tuya_device =
+        &gd32h77x_layout_devices[tuya_segment->device_index];
+    const bool backend_ready =
+        (tuya_device->region != NULL && strcmp(tuya_device->region, "ECNVM") == 0)
+            ? gd32h77x_ecnvm_is_initialized()
+            : gd32h77x_cnvm_is_initialized();
+    if (!backend_ready) {
         return OPRT_RESOURCE_NOT_READY;
     }
 
@@ -322,30 +389,27 @@ OPERATE_RET tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_E type, TUYA_FLASH_BASE_
     uint32_t block_size = gd32h77x_layout_partitions[GD32H77X_LAYOUT_PART_TUYA].erase_bytes;
     switch (type) {
     case TUYA_FLASH_TYPE_UF:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE;
+        start = TUYA_FLASH_UF_START;
         size = TUYA_FLASH_UF_SIZE;
-        if (size > GD32H77X_LAYOUT_TUYA_SIZE_BYTES) {
-            size = GD32H77X_LAYOUT_TUYA_SIZE_BYTES;
-        }
         break;
     case TUYA_FLASH_TYPE_KV_DATA:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + TUYA_FLASH_KV_DATA_OFFSET;
+        start = TUYA_FLASH_KV_DATA_START;
         size = TUYA_FLASH_KV_DATA_SIZE;
         break;
     case TUYA_FLASH_TYPE_KV_KEY:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + TUYA_FLASH_KV_KEY_OFFSET;
+        start = TUYA_FLASH_KV_KEY_START;
         size = TUYA_FLASH_KV_KEY_SIZE;
         break;
     case TUYA_FLASH_TYPE_KV_SWAP:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + TUYA_FLASH_KV_SWAP_OFFSET;
+        start = TUYA_FLASH_KV_SWAP_START;
         size = TUYA_FLASH_KV_SWAP_SIZE;
         break;
     case TUYA_FLASH_TYPE_KV_PROTECT:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + TUYA_FLASH_KV_PROTECT_OFFSET;
+        start = TUYA_FLASH_KV_PROTECT_START;
         size = TUYA_FLASH_KV_PROTECT_SIZE;
         break;
     case TUYA_FLASH_TYPE_USER0:
-        start = GD32H77X_LAYOUT_TUYA_LOGICAL_BASE + TUYA_FLASH_USER0_OFFSET;
+        start = TUYA_FLASH_USER0_START;
         size = TUYA_FLASH_USER0_SIZE;
         break;
     case TUYA_FLASH_TYPE_APP:

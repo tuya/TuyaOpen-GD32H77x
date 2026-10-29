@@ -35,6 +35,15 @@ def _write_board(root, partitions=None, devices=None):
     return board
 
 
+def _write_h779_board(root, partitions):
+    board = root / "boards" / "GD32H77X" / "GD32H779V_START"
+    board.mkdir(parents=True, exist_ok=True)
+    (board / "partitions.csv").write_bytes(partitions)
+    (board / "flash_devices.csv").write_bytes(
+        (ROOT / "boards/GD32H77X/GD32H779V_START/flash_devices.csv").read_bytes())
+    return board
+
+
 def _resolve(root, chip="GD32H77D", board="GD32H77D_GINO"):
     return resolver.resolve_build_layout(_params(root, chip, board), platform_root=PLATFORM)
 
@@ -47,17 +56,66 @@ def _platform_copy(temp):
 
 
 class MemoryLayoutResolverTests(unittest.TestCase):
-    def test_h779_start_declares_only_first_ecnvm_sector_as_executable_layout(self):
+    def test_h779_start_keeps_ecnvm_tail_for_runtime_kv(self):
         manifest = resolver.resolve_build_layout(
             _params(ROOT, "GD32H779VW", "GD32H779V_START"),
             platform_root=PLATFORM, boards_root=ROOT / "boards")
         layout = manifest["layout"]
         self.assertEqual(layout["partitions"]["ecnvm_code"]["logical_base"], 0x08200000)
-        self.assertEqual(layout["partitions"]["ecnvm_code"]["size_bytes"], 0x10000)
+        self.assertEqual(layout["partitions"]["ecnvm_code"]["size_bytes"], 0x700000)
         self.assertEqual(layout["partitions"]["ecnvm_code"]["role"], "data")
+        self.assertEqual(layout["partitions"]["kv"]["logical_base"], 0x08900000)
+        self.assertEqual(layout["partitions"]["kv"]["size_bytes"], 0x00080000)
+        self.assertEqual(layout["partitions"]["kv"]["erase_bytes"], 0x1000)
+        self.assertEqual(layout["partitions"]["kv"]["program_bytes"], 8)
+        self.assertEqual(layout["partitions"]["cnvm_reserved"]["logical_base"], 0x08180000)
+        self.assertEqual(layout["partitions"]["cnvm_reserved"]["size_bytes"], 0x00080000)
         self.assertIn({"name": "ECNVM", "origin": 0x08200000,
-                       "length": 0x10000, "attributes": "rx"}, layout["linker_memory"])
-        self.assertEqual(layout["flash_image"]["end_address"], 0x080E0000)
+                       "length": 0x700000, "attributes": "rx"}, layout["linker_memory"])
+        ecnvm = next(item for item in layout["devices"] if item["region"] == "ECNVM")
+        self.assertEqual(ecnvm["erase_bytes"], 0x1000)
+        self.assertEqual(ecnvm["page_bytes"], 0x1000)
+        self.assertEqual(ecnvm["program_bytes"], 8)
+        self.assertEqual(ecnvm["swd_erase_bytes"], 0x10000)
+        self.assertEqual(ecnvm["swd_program_bytes"], 32)
+        self.assertEqual(ecnvm["backend_status"], "implemented")
+        self.assertEqual(layout["flash_image"]["end_address"], 0x08090000)
+        subareas = {item["id"]: item for item in layout["tuya_subareas"]}
+        self.assertEqual(set(subareas), {
+            "tuya_uf", "tuya_kv_data", "tuya_kv_key",
+            "tuya_kv_swap", "tuya_user0", "tuya_kv_protect",
+        })
+        self.assertEqual(subareas["tuya_uf"]["logical_base"], 0x08900000)
+        self.assertEqual(subareas["tuya_uf"]["size_bytes"], 0x00040000)
+        self.assertEqual(subareas["tuya_kv_data"]["logical_base"], 0x08940000)
+        self.assertEqual(subareas["tuya_kv_data"]["size_bytes"], 0x00010000)
+        self.assertEqual(subareas["tuya_user0"]["logical_base"], 0x08955000)
+        self.assertEqual(subareas["tuya_user0"]["size_bytes"], 0x00020000)
+        self.assertEqual(subareas["tuya_kv_protect"]["logical_base"], 0x08975000)
+        self.assertEqual(subareas["tuya_kv_protect"]["size_bytes"], 0x00002000)
+
+    def test_h779_ecnvm_code_and_kv_boundaries_are_fail_closed(self):
+        source = (ROOT / "boards/GD32H77X/GD32H779V_START/partitions.csv").read_text()
+        cases = (
+            (source.replace("ecnvm_code,internal_ecnvm,0K,7168K,0x08200000",
+                            "ecnvm_code,internal_ecnvm,0K,7164K,0x08200000"),
+             "ecnvm_code must end immediately before the kv partition"),
+            (source.replace("ecnvm_code,internal_ecnvm,0K,7168K,0x08200000",
+                            "ecnvm_code,internal_ecnvm,0K,7424K,0x08200000"),
+             "overlap in logical address space"),
+            (source.replace("kv,internal_ecnvm,7168K,512K,0x08900000",
+                            "kv,internal_ecnvm,7168K,256K,0x08900000"),
+             "outside kv partition"),
+            (source.replace("tuya_uf,internal_ecnvm,7168K,256K,0x08900000",
+                            "tuya_uf,internal_ecnvm,7424K,256K,0x08940000"),
+             "overlap"),
+        )
+        for partitions, error in cases:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                _write_h779_board(root, partitions.encode())
+                with self.assertRaisesRegex(resolver.LayoutError, error):
+                    _resolve(root, "GD32H779VW", "GD32H779V_START")
 
     def test_all_pack_h77_devices_resolve_to_distinct_official_geometries(self):
         expected = {
@@ -88,9 +146,14 @@ class MemoryLayoutResolverTests(unittest.TestCase):
                 self.assertEqual(identity["cnvm_vendor_algorithm"], facts[2])
                 manifest = _resolve(Path(temp), chip, "GENERIC_BOARD")
                 self.assertEqual(manifest["layout"]["target_chip"], chip)
-                self.assertEqual(manifest["layout"]["devices"][0]["capacity_bytes"], facts[0])
+                devices = {item["id"]: item for item in manifest["layout"]["devices"]}
+                self.assertEqual(devices["internal_flash"]["capacity_bytes"], facts[0])
                 self.assertEqual(manifest["layout"]["ota_policy"]["status"], "planned_not_implemented")
-                self.assertEqual(sum(p["size_bytes"] for p in manifest["layout"]["partitions"].values()), facts[0])
+                internal_size = sum(
+                    item["size_bytes"] for item in manifest["layout"]["partitions"].values()
+                    if item["segments"] and all(segment["device"] == "internal_flash"
+                                                for segment in item["segments"]))
+                self.assertEqual(internal_size, facts[0])
 
     def test_family_alias_is_gino_only_and_exact_variant_works_for_new_board(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -146,27 +209,27 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             with self.assertRaisesRegex(resolver.LayoutError, "vendor_algorithm"):
                 resolver.resolve_build_layout(_params(ROOT), platform_root=platform)
 
-    def test_board_override_is_complete_and_external_driver_is_not_claimed(self):
+    def test_board_override_is_complete_and_reports_current_nor_capability(self):
         manifest = _resolve(ROOT)
         layout = manifest["layout"]
         devices = {item["id"]: item for item in layout["devices"]}
         self.assertEqual(manifest["source"]["sourceKind"], "board_override")
         self.assertEqual(set(devices), {"internal_flash", "ospi0_flash"})
-        self.assertEqual(devices["ospi0_flash"]["backend_status"], "not_implemented")
+        self.assertEqual(devices["ospi0_flash"]["backend_status"], "implemented")
         self.assertEqual(devices["ospi0_flash"]["program_bytes"], None)
-        self.assertEqual(layout["partitions"]["primary"]["size_bytes"], 1728 * 1024)
-        self.assertEqual(layout["ota_policy"]["backup"], "old_backup")
-        self.assertEqual(layout["ota_policy"]["install_strategy"], "copy_with_backup")
+        self.assertEqual(layout["partitions"]["primary"]["size_bytes"], 1984 * 1024)
+        self.assertNotIn("backup", layout["ota_policy"])
+        self.assertEqual(layout["ota_policy"]["install_strategy"], "copy_in_place")
 
     def test_generated_kv_macros_follow_nondefault_external_csv_partition(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             partitions = (BOARD_DIR / "partitions.csv").read_text()
             partitions = partitions.replace(
-                "kv,internal_flash,1920K,128K,0x081E0000",
+                "tuya,ospi0_flash,2176K,288K,0x70220000",
                 "kv,ospi0_flash,4M,128K,0x70400000")
             partitions = partitions.replace(
-                "filesystem,ospi0_flash,4M,4M,0x70400000",
+                "filesystem,ospi0_flash,2464K,5728K,0x70268000",
                 "filesystem,ospi0_flash,4224K,3968K,0x70420000")
             _write_board(root, partitions.encode("utf-8"),
                          (BOARD_DIR / "flash_devices.csv").read_bytes())
@@ -175,11 +238,11 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             resolver.write_outputs(manifest, output)
             header = (output / "include" / "gd32h77x_memory_layout.h").read_text()
 
-        self.assertIn("#define GD32H77X_LAYOUT_KV_LOGICAL_BASE UINT32_C(0x70400000)", header)
-        self.assertIn("#define GD32H77X_LAYOUT_KV_SIZE_BYTES UINT32_C(0x00020000)", header)
-        self.assertIn("#define GD32H77X_LAYOUT_KV_END UINT32_C(0x70420000)", header)
-        self.assertIn("#define GD32H77X_LAYOUT_KV_ERASE_BYTES UINT32_C(0x00001000)", header)
-        self.assertIn("#define GD32H77X_LAYOUT_KV_PROGRAM_BYTES 0U", header)
+        self.assertIn("#define GD32H77X_LAYOUT_TUYA_LOGICAL_BASE UINT32_C(0x70400000)", header)
+        self.assertIn("#define GD32H77X_LAYOUT_TUYA_SIZE_BYTES UINT32_C(0x00020000)", header)
+        self.assertIn("#define GD32H77X_LAYOUT_TUYA_END UINT32_C(0x70420000)", header)
+        self.assertIn("#define GD32H77X_LAYOUT_TUYA_ERASE_BYTES UINT32_C(0x00001000)", header)
+        self.assertIn("#define GD32H77X_LAYOUT_TUYA_PROGRAM_BYTES 0U", header)
 
     def test_default_layout_uses_scratch_without_backup(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -242,7 +305,12 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_csv_accepts_bom_crlf_comments_and_units(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text().replace("64K", "65536").replace("\n", "\r\n")
+            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = partitions.replace("boot,internal_flash,0,64K,0x08000000",
+                                            "boot,internal_flash,0,65536,0x08000000")
+            partitions = partitions.replace("primary,internal_flash,64K,1984K,0x08010000",
+                                            "primary,internal_flash,65536,1984K,0x08010000")
+            partitions = partitions.replace("\n", "\r\n")
             partitions = ("\ufeff# generated file\r\n\r\n" + partitions).encode("utf-8")
             _write_board(root, partitions, (BOARD_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
@@ -283,10 +351,12 @@ class MemoryLayoutResolverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             partitions = (BOARD_DIR / "partitions.csv").read_text()
-            # Move the KV boundary to make one 64 KiB internal segment available.
-            partitions = partitions.replace("kv,internal_flash,1920K,128K,0x081E0000", "kv,internal_flash,1984K,64K,0x081F0000")
-            partitions = partitions.replace("filesystem,ospi0_flash,4M,4M,0x70400000\n", "")
-            partitions += "user_data,internal_flash,1920K,64K,0x71000000\nuser_data,ospi0_flash,4M,4032K,0x71010000\n"
+            partitions = partitions.replace(
+                "primary,internal_flash,64K,1984K,0x08010000",
+                "primary,internal_flash,64K,1920K,0x08010000")
+            partitions = partitions.replace(
+                "filesystem,ospi0_flash,2464K,5728K,0x70268000\n", "")
+            partitions += "user_data,internal_flash,1984K,64K,0x71000000\nuser_data,ospi0_flash,4M,4032K,0x71010000\n"
             _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
             user = manifest["layout"]["partitions"]["user_data"]
@@ -301,8 +371,8 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             partitions = (BOARD_DIR / "partitions.csv").read_text()
             partitions = partitions.replace("boot,internal_flash,0,64K,0x08000000",
                                             "boot,internal_flash,64K,64K,0x08010000")
-            partitions = partitions.replace("primary,internal_flash,64K,1728K,0x08010000",
-                                            "primary,internal_flash,128K,1664K,0x08020000")
+            partitions = partitions.replace("primary,internal_flash,64K,1984K,0x08010000",
+                                            "primary,internal_flash,128K,1920K,0x08020000")
             _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "ROM boot ABI"):
                 _resolve(root)

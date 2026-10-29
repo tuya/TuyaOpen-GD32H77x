@@ -112,9 +112,11 @@ LAYOUT=examples/system/gd32h77x_bringup/.build/bin/gd32h77x_bringup_1.0.0.layout
 
 原版 `dfu-util` 后端已禁用：ROM descriptor 报告 4 KiB unit，而 H77 CNVM registry 使用 64 KiB sector；原工具在该 ROM 上的擦除行为未作为本平台可信路径。使用原生 `dfu`、`swd` 或 `uart`。原生 DFU 只接受 DFU-mode protocol 2 alternate、DfuSe 1.1a、支持 download 且默认回读时支持 upload 的 alternate，并检查 alt 名称仍标识从 `0x08000000` 开始的 internal flash。此信息能确认内部 flash bank，不能自动探测具体料号或容量；bridge 以 build manifest 的 canonical chip 与板级 `CONFIG_FLASH_TARGET_CHIP` 交叉核对，VID/PID、USB serial、端口路径和 alt 均只是可选筛选条件。
 
-### GD32H779V START 的诊断代码 ECNVM 分段
+### GD32H779V START 的 CNVM + ECNVM 双区执行
 
-`CONFIG_GD32H77X_ECNVM_CODE` 默认关闭，仅在 `GD32H779V_START` 且启用 `GD32H77X_DIAG_CLI` 时可选。板级布局始终声明 `0x08200000` 起的首个 64 KiB `ecnvm_code` 区；打开选项后，诊断 CLI 的 `.text/.rodata` 链接到该区域，`.tufw` 会携带独立的 ECNVM payload 和布局/摘要绑定信息。此配置必须使用完整 `.tufw`，bridge 会拒绝 raw BIN 和非 SWD 后端；SWD 先按 ECNVM 扇区擦写并强制读回，再写 CNVM。`CONFIG_FLASH_VERIFY=n` 不会关闭 ECNVM 读回。ECNVM runtime 擦写及 OTA 仍未实现；本次正式双区包尚待板级回归验证，不能据此视为硬件烧录验收。
+`GD32H779V_START` 声明 7 MiB `ecnvm_code` 分区和末尾 512 KiB `kv` 分区。启用 `CONFIG_GD32H77X_ECNVM_CODE` 后，应用 `.text/.rodata` 链接到 `0x08200000` 起的 ECNVM；boot table、向量表和 RAM 初始化数据装载段仍保留在 CNVM，KV 位于独立的 Data ECNVM1 `[0x08900000,0x08980000)`。`.tufw` 同时携带 CNVM 启动镜像和独立 ECNVM 应用 payload，SWD bridge 只按 ECNVM 代码区扇区擦写并强制回读，再写 CNVM；不会写 KV。该配置必须使用完整 `.tufw`，raw BIN 和非 SWD 后端会被拒绝；`CONFIG_FLASH_VERIFY=n` 不会关闭 ECNVM 回读。
+
+2026-10-29 已在 H779VW 实板验证：当前镜像 CNVM 71,276 字节、ECNVM 433,652 字节，reset entry 为 `0x08200b45`，设备从 ECNVM 启动。ECNVM KV runtime 4 KiB page erase、8 B 最小/32 B burst program、AXI SRAM resident 执行和回读路径已实现；`ecnvm_kv_selftest run` 在 `0x08977000` reserved 页完成擦除、32 B 编程、回读比较/CRC 和最终擦除并 PASS。通过 `tal_cli auth` 写入 ECNVM KV 后，复位前后两次 `auth-read` 均读取成功。OTA 下载、安装、回滚仍单独保持未实现，不能据此宣称在线升级或完整网络验收已可用。
 
 平台的器件身份来自 `gd32h77x_os/chips/platform_chips.json`，共支持 D/E/779/RAP 的 16 个 canonical DFP target。`GD32H77D` 是兼容 alias，仅允许已有 GinoPi board 使用，映射到 `GD32H77DIW`；其他 variant 必须在 build identity 中选具体料号。Flash registry 的容量、64 KiB sector 和算法名必须与本地原厂 pack 一致。2 MiB 使用 `GD32H77x_78x_CNVM_2M.FLM`，1.625 MiB 使用 `GD32H77x_78x_CNVM_1M_640K.FLM`。SWD target 不能覆盖 layout/manifest 的 canonical target。
 
@@ -200,6 +202,30 @@ PY="${OPEN_SDK_PYTHON:-./.venv/bin/python}"
 | KV 预留 | `0x081E0000` 至 `0x081FFFFF`，128 KiB | 两个 64 KiB 扇区，当前未开放写入接口 |
 | AXI SRAM | `0x24000000`，768 KiB | 启动阶段初始化 ECC；FreeRTOS heap 384 KiB，独立 libc arena 16 KiB，MSP 栈 8 KiB |
 
+GD32H779V_START 的 board override 使用以下专用布局。NVMC 头文件同时明确给出
+`MAIN_ECNVM_DECNVM1_BASE_ADDRESS=0x08900000`、`MAIN_ECNVM_DECNVM1_SIZE=0x80000`，
+因此 KV 与当前从 `0x08200000` 起执行的代码位于不同 ECNVM 数据区。
+
+| 区域 | 地址与大小 | 说明 |
+| --- | --- | --- |
+| `ecnvm_code` | `[0x08200000,0x08900000)`，7 MiB | `.text/.rodata` 可执行负载；SWD 烧录上限严格为 7 MiB |
+| `kv` | `[0x08900000,0x08980000)`，512 KiB | Data ECNVM1；runtime 4 KiB 页擦除、8/32 B 编程 |
+| `tuya_uf` | `[0x08900000,0x08940000)`，256 KiB | Tuya UF 子区 |
+| `tuya_kv_data` | `[0x08940000,0x08950000)`，64 KiB | 授权及 KV 数据 |
+| `tuya_kv_key` | `[0x08950000,0x08951000)`，4 KiB | KV key |
+| `tuya_kv_swap` | `[0x08951000,0x08955000)`，16 KiB | KV swap |
+| `tuya_user0` | `[0x08955000,0x08975000)`，128 KiB | user0 |
+| `tuya_kv_protect` | `[0x08975000,0x08977000)`，8 KiB | KV protect |
+| reserved test page | `[0x08977000,0x08978000)`，4 KiB | 仅用于显式 ECNVM 擦写回环；其余 32 KiB reserved |
+
+ECNVM 命令函数放在 AXI SRAM，执行期间关闭中断；返回 ECNVM 前必须等待 BUSY
+清零。写入源只接受生成布局中的 AXISRAM `[0x24000000,0x240C0000)`；ECNVM、
+CNVM、未映射地址和越界指针均拒绝。KV 位于独立的 Data ECNVM1，但当前应用代码
+与擦写命令仍属于同一个 ECNVM 存储块，不能在目标 KV 页取指或读取数据。
+`ecnvm_kv_selftest run` 只操作 `0x08977000` 的 reserved 页：擦除、
+写 32 B pattern、回读比较/CRC、再擦除并全页校验 `0xFF`；不会访问
+`tuya_uf`、`tuya_kv_data` 或授权数据。
+
 启动文件保留原厂中断向量，单独实现 GinoPi 复位入口，初始化 AXI SRAM 后复制 `.data`，调用原厂 `SystemInit()`、C 初始化及 `main()`。当前使用原厂默认 600 MHz 时钟配置、25 MHz HXTAL，板级初始化将 VTOR 设为 `0x08010000`。这些参数需要上板核对。
 
 日志使用 USART1 PA2/PA3，115200 8N1。主机通信使用 UART4 PB12/PB13 AF14，553 NRST 为 PC5；当前 bring-up 镜像不复位或重配 553。
@@ -234,6 +260,7 @@ tos.py config set CONFIG_CLI_CMD_FS=n CONFIG_CLI_CMD_KV=n   # KV/Flash 尚未开
 | `diag_echo <单参数>` | 原样回显一个含 `%` 的参数，验证回显不当作格式串 |
 | `diag_kv_raw_test ERASE_KV_SECTOR0` | 显式破坏性 TKL 原始路径诊断：仅擦除生成布局中 KV 的首个 64 KiB 扇区，验证擦除态、写入并读回固定 32 字节 |
 | `diag_nor_probe` | 仅初始化受支持 NOR、报告 JEDEC，并只读 offset 0 的固定 32 字节和 FNV-1a 32 位摘要 |
+| `ecnvm_kv_selftest run` | switch_demo 受控诊断：只对 H779V_START reserved 页 `0x08977000` 做 4 KiB 擦除、32 B 编程、回读/CRC 和最终擦除 |
 | `sys_heap` / `sys_thread` / `sys_version` / `sys_status` / `sys_tick` | 框架 `sys_*` 命令组在本平台的可用性 |
 | `sys_random [count [range]]` | 逐次调用 `tal_system_get_random()` → `tkl_system_get_random()`，默认 16 次、范围 256；`range=0` 使用 TKL 兼容的 8-bit 范围，检查返回值边界并打印十进制/十六进制样本 |
 

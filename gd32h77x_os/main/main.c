@@ -9,6 +9,7 @@
 #include "task.h"
 #include "gd32h77x_platform.h"
 #include "gd32h77x_cnvm.h"
+#include "gd32h77x_ecnvm.h"
 #include "tkl_output.h"
 #include "tuya_kconfig.h"
 #if defined(GD32H77X_DIAG_CLI) && (GD32H77X_DIAG_CLI == 1)
@@ -41,6 +42,9 @@ int main(void)
     gd32h77x_platform_init();
     if (gd32h77x_cnvm_init() != OPRT_OK) {
         gd32h77x_platform_panic("CNVM initialization failed");
+    }
+    if (gd32h77x_ecnvm_is_present() && gd32h77x_ecnvm_init() != OPRT_OK) {
+        gd32h77x_platform_panic("ECNVM initialization failed");
     }
     configASSERT(xTaskCreate(app_entry, "tuya_entry", 2048, NULL, 4, NULL) == pdPASS);
     vTaskStartScheduler();

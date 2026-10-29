@@ -10,6 +10,8 @@ def main():
     parser.add_argument("--platform-root", type=Path, required=True)
     parser.add_argument("--boards-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--chip", default="GD32H77D")
+    parser.add_argument("--board", default="GD32H77D_GINO")
     args = parser.parse_args()
     resolver_path = args.platform_root / "gd32h77x_os/tools/firmware/resolve_memory_layout.py"
     spec = importlib.util.spec_from_file_location("gd32h77x_layout_resolver", resolver_path)
@@ -18,11 +20,11 @@ def main():
     repo_root = args.boards_root.resolve().parent
     params = {
         "OPEN_ROOT": str(repo_root),
-        "PLATFORM_CHIP": "GD32H77D",
-        "PLATFORM_BOARD": "GD32H77D_GINO",
+        "PLATFORM_CHIP": args.chip,
+        "PLATFORM_BOARD": args.board,
         "CONFIG_PLATFORM_CHOICE": "GD32H77X",
-        "CONFIG_BOARD_CHOICE": "GD32H77D_GINO",
-        "CONFIG_CHIP_CHOICE": "GD32H77D",
+        "CONFIG_BOARD_CHOICE": args.board,
+        "CONFIG_CHIP_CHOICE": args.chip,
     }
     manifest = resolver.resolve_build_layout(
         params, platform_root=args.platform_root.resolve(), boards_root=args.boards_root.resolve())

@@ -141,24 +141,23 @@ class FlashPackageTests(unittest.TestCase):
 
     def test_explicit_external_payloads_are_partition_routed_and_erase_padded(self):
         (self.dir / "stage.bin").write_bytes(b"stage-data")
-        (self.dir / "backup.bin").write_bytes(b"old-image")
         (self.dir / "fs.bin").write_bytes(b"filesystem-data")
         csv_path = self.dir / "payloads.csv"
-        csv_path.write_text("partition,file\nstaging,stage.bin\nold_backup,backup.bin\nfilesystem,fs.bin\n")
+        csv_path.write_text("partition,file\nstaging,stage.bin\nfilesystem,fs.bin\n")
         manifest = self._create(csv_path)
         self.assertEqual({item["partition"] for item in manifest["external_payloads"]},
-                         {"staging", "old_backup", "filesystem"})
+                         {"staging", "filesystem"})
         self.assertTrue(all(item["explicit_payload"] for item in manifest["external_payloads"]))
         self.assertTrue(all(item["explicit_payload"] for item in manifest["external_payloads"]
-                            if item["role"] in ("ota_staging", "ota_backup")))
+                            if item["role"] == "ota_staging"))
         extract = self.dir / "extract"
         result = package.validate_package(self.output, self.layout, extract_dir=extract)
-        self.assertEqual(len(result["external_payloads"]), 3)
+        self.assertEqual(len(result["external_payloads"]), 2)
         for item in result["external_payloads"]:
             payload = Path(item["path"]).read_bytes()
             self.assertEqual(len(payload), item["padded_size_bytes"])
             self.assertEqual(payload[:item["source_size_bytes"]],
-                             (self.dir / {"staging": "stage.bin", "old_backup": "backup.bin",
+                             (self.dir / {"staging": "stage.bin",
                                           "filesystem": "fs.bin"}[item["partition"]]).read_bytes())
             self.assertEqual(set(byte for byte in payload[item["source_size_bytes"]:]), {0xFF})
             self.assertTrue(all(segment["region"] == "NOR" for segment in item["segments"]))
@@ -166,7 +165,7 @@ class FlashPackageTests(unittest.TestCase):
     def test_protected_ota_kv_metadata_are_never_added_implicitly(self):
         manifest = self._create()
         listed = {item["partition"] for item in manifest["external_payloads"]}
-        self.assertTrue(listed.isdisjoint({"staging", "old_backup", "metadata", "kv"}))
+        self.assertTrue(listed.isdisjoint({"staging", "metadata", "tuya"}))
 
     def test_external_csv_rejects_duplicate_partition_traversal_and_bad_header(self):
         (self.dir / "payload.bin").write_bytes(b"data")
@@ -184,7 +183,8 @@ class FlashPackageTests(unittest.TestCase):
 
     def test_payload_boundaries_and_internal_partition_override_are_rejected(self):
         csv_path = self.dir / "payloads.csv"
-        (self.dir / "too-large.bin").write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        filesystem_size = self.layout["layout"]["partitions"]["filesystem"]["size_bytes"]
+        (self.dir / "too-large.bin").write_bytes(b"x" * (filesystem_size + 4096))
         csv_path.write_text("partition,file\nfilesystem,too-large.bin\n")
         with self.assertRaisesRegex(package.PackageError, "after erase padding"):
             self._create(csv_path)

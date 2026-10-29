@@ -110,13 +110,14 @@ static gd32h77x_flash_route_status_t gd32h77x_validate_segments(
             return GD32H77X_FLASH_ROUTE_INVALID;
         }
         if (operation == GD32H77X_FLASH_OP_READ) {
-            const bool mapped_cnvm = device->access == GD32H77X_LAYOUT_ACCESS_MAPPED &&
-                                     device->cpu_base != 0U && device->region != NULL &&
-                                     strcmp(device->region, "CNVM") == 0;
+            const bool mapped_nvm = device->access == GD32H77X_LAYOUT_ACCESS_MAPPED &&
+                                    device->cpu_base != 0U && device->region != NULL &&
+                                    (strcmp(device->region, "CNVM") == 0 ||
+                                     strcmp(device->region, "ECNVM") == 0);
             const bool indirect_nor = device->access == GD32H77X_LAYOUT_ACCESS_INDIRECT &&
                                       device->region != NULL && strcmp(device->region, "NOR") == 0 &&
                                       device->backend_status == GD32H77X_LAYOUT_BACKEND_IMPLEMENTED;
-            if (!mapped_cnvm && !indirect_nor) {
+            if (!mapped_nvm && !indirect_nor) {
                 unsupported = true;
             }
         } else {

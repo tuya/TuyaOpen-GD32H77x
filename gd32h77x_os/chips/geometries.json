@@ -309,15 +309,17 @@
       "part_number": "GD32H779VW",
       "region": "ECNVM",
       "capacity_bytes": 7864320,
-      "erase_bytes": 65536,
+      "erase_bytes": 4096,
       "program_bytes": 8,
-      "page_bytes": null,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
       "cpu_base": "0x08200000",
       "executable": true,
-      "allowed_backend_status": ["partial"],
-      "default_backend_status": "partial",
+      "allowed_backend_status": ["implemented"],
+      "default_backend_status": "implemented",
       "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
-      "evidence": "GD32H779VW ECNVM mapped base 0x08200000, capacity 7.5 MiB, 64 KiB erase sectors; vendor nvmc_ecnvm_doubleword_program supports the minimum 8-byte programming unit and a separate 32-byte mode; SWD FlashDevice page size is validated separately; runtime ECNVM erase/write is not implemented"
+      "evidence": "GD32H779VW ECNVM mapped base 0x08200000, capacity 7.5 MiB; User Manual page erase is 4 KiB (ECNVM_PAGE_SIZE=0x1000) and program units are 8/32 bytes; runtime uses an AXI SRAM command routine; SWD vendor algorithm keeps its separate 64 KiB FlashDevice erase geometry"
     },
     "GD32H779VW_AXISRAM": {
       "kind": "ram",
