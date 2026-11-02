@@ -12,10 +12,6 @@
 
 #include "tkl_wifi.h"
 
-#ifdef ENABLE_HOSTAPD
-#include "tkl_wifi_hostap.h"
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,22 +57,6 @@ typedef struct {
  * @return OPRT_OK on success. Others on error, please refer to tuya_error_code.h
  */
 TKL_WIFI_DESC_T *tkl_wifi_desc_get(void);
-
-/**
- *
- * @brief the description of tuya kernel adapter layer wifi hostap api
- *
- */
-typedef struct {
-    OPERATE_RET (*ioctl)(int dev, int vif_index, uint32_t cmd, uint32_t arg);
-} TKL_WIFI_HOSTAP_DESC_T;
-
-/**
- * @brief register wifi hostap description to tuya object manage
- *
- * @return OPRT_OK on success. Others on error, please refer to tuya_error_code.h
- */
-TKL_WIFI_HOSTAP_DESC_T *tkl_wifi_hostap_desc_get(void);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -122,6 +122,7 @@ add_executable(firmware
     gd32h77x_os/main/startup_gd32h77d.S
     gd32h77x_os/wireless/vw553/vw553_at_parser.c
     gd32h77x_os/wireless/vw553/vw553_at_client.c
+    gd32h77x_os/wireless/vw553/vw553_event_queue.c
     gd32h77x_os/wireless/vw553/vw553_uart_policy.c
     gd32h77x_os/wireless/vw553/vw553_uart_transport.c
     gd32h77x_os/wireless/vw553/vw553_probe.c

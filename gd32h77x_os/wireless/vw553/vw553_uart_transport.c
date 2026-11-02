@@ -17,16 +17,16 @@
 #include "stream_buffer.h"
 #include "task.h"
 #include "vw553_at_parser.h"
+#include "vw553_event_queue.h"
 #include "vw553_uart_policy.h"
 #include "tuya_error_code.h"
 
 #include <string.h>
 
-#define VW553_RX_STREAM_SIZE       8192U
-#define VW553_EVENT_QUEUE_DEPTH    64U
-#define VW553_EVENT_DATA_SIZE      256U
+#define VW553_RX_STREAM_SIZE       12288U
+#define VW553_RX_READ_SIZE         2048U
 #define VW553_COMMAND_TX_SIZE      (VW553_AT_COMMAND_SIZE + 2U)
-#define VW553_RX_TASK_STACK        1024U
+#define VW553_RX_TASK_STACK        1536U
 /* Subscriber callbacks can run TAL BLE connection handling and an AT RPC,
  * including newlib formatting, on this task. FreeRTOS sizes are in words. */
 #define VW553_EVENT_TASK_STACK     2048U
@@ -65,42 +65,7 @@ static volatile uint32_t s_rx_dma_pos;
 /* The stock +IPD frame ends with a bare OK. If a caller queues an AT
  * command exactly between the payload and that trailer, let RX drain the
  * trailer before starting the command instead of failing a valid request. */
-#define VW553_IPD_TRAILER_WAIT_MS  100U
-
-typedef enum {
-    EVENT_LINE,
-    EVENT_DATA,
-    EVENT_BLE_DATA,
-    EVENT_PROMPT,
-    EVENT_FAULT,
-    EVENT_DATAGRAM,
-    EVENT_ACCEPT,
-    EVENT_ACCEPT_V2,
-    EVENT_CLOSE_V2,
-} event_kind_t;
-
-typedef struct {
-    event_kind_t kind;
-    uint32_t sequence;
-    size_t length;
-    int remote_fd;
-    uint8_t conn_id;
-    int listener_fd;
-    int client_fd;
-    int lwip_fd;
-    uint32_t con_id;
-    uint32_t generation;
-    uint32_t listener_generation;
-    char peer_ipv4[16];
-    char reason[24];
-    uint16_t peer_port;
-    bool final;
-    vw553_at_fault_t fault;
-    union {
-        char line[VW553_AT_LINE_SIZE];
-        uint8_t data[VW553_EVENT_DATA_SIZE];
-    } payload;
-} queued_event_t;
+#define VW553_REQUEST_FRAME_HOLD_MS (VW553_FRAME_IDLE_TIMEOUT_MS + 100U)
 
 typedef struct {
     char command[VW553_AT_COMMAND_SIZE + 1U];
@@ -133,10 +98,11 @@ typedef struct {
     void *event_context;
     StreamBufferHandle_t rx_stream;
     QueueHandle_t request_queue;
-    QueueHandle_t event_queue;
+    vw553_event_queue_t *event_queue;
     SemaphoreHandle_t caller_mutex;
     SemaphoreHandle_t result_ready;
     SemaphoreHandle_t event_progress;
+    SemaphoreHandle_t event_available;
     SemaphoreHandle_t tasks_exited;
     TaskHandle_t rx_task;
     TaskHandle_t event_task;
@@ -148,6 +114,9 @@ typedef struct {
     bool request_started;
     volatile uint32_t event_enqueued;
     volatile uint32_t event_dispatched;
+    volatile uint32_t rx_stream_high_water;
+    volatile uint32_t rx_dma_burst_high_water;
+    volatile uint32_t rx_stream_overflow;
     bool capability_negotiated;
     uint8_t rx_trace[64];
     size_t rx_trace_used;
@@ -204,32 +173,25 @@ static void set_poison(uint32_t fault)
     taskEXIT_CRITICAL();
 }
 
-static bool enqueue_event(const queued_event_t *event)
+static bool enqueue_event(const vw553_queued_event_t *event)
 {
     if (!s_transport.events.line && !s_transport.events.data && !s_transport.events.ble_data && !s_transport.events.prompt &&
         !s_transport.events.fault && !s_transport.events.datagram && !s_transport.events.accept &&
         !s_transport.events.accept_v2 && !s_transport.events.close_v2) {
         return true;
     }
-    queued_event_t queued = *event;
-    queued.sequence = ++s_transport.event_enqueued;
-    /* RX runs above the event task. A zero-time send makes large TLS
-     * certificate bursts fill this queue before the event task can run,
-     * turning a healthy connection into a transport fault. Backpressure RX
-     * briefly instead; the 8 KiB UART stream buffer absorbs the line rate. */
-    const TickType_t wait = (event->kind == EVENT_DATA || event->kind == EVENT_BLE_DATA || event->kind == EVENT_DATAGRAM)
-                                ? pdMS_TO_TICKS(100U)
-                                : 0U;
-    if (xQueueSend(s_transport.event_queue, &queued, wait) != pdPASS) {
-        VW553_LOG("event queue full kind=%d wait=%lums depth=%u enqueued=%lu dispatched=%lu",
-                  (int)event->kind, (unsigned long)(wait * portTICK_PERIOD_MS),
-                  (unsigned)uxQueueMessagesWaiting(s_transport.event_queue),
+    vw553_queued_event_t queued = *event;
+    if (!vw553_event_queue_enqueue(s_transport.event_queue, &queued)) {
+        VW553_LOG("event queue full kind=%d depth=%u pending=%lu enqueued=%lu dispatched=%lu",
+                  (int)event->kind, (unsigned)VW553_EVENT_QUEUE_DEPTH,
+                  (unsigned long)vw553_event_queue_pending(s_transport.event_queue),
                   (unsigned long)s_transport.event_enqueued,
                   (unsigned long)s_transport.event_dispatched);
-        --s_transport.event_enqueued;
         set_poison(ISR_FAULT_RX_OVERFLOW);
         return false;
     }
+    s_transport.event_enqueued = queued.sequence;
+    xSemaphoreGive(s_transport.event_available);
     return true;
 }
 
@@ -263,13 +225,26 @@ static void client_line(void *context, const char *line, size_t length)
         set_poison(ISR_FAULT_RX_OVERFLOW);
         return;
     }
-    queued_event_t event = {.kind = EVENT_LINE, .length = length};
-    if (length > sizeof(event.payload.line)) {
+    char *slot = vw553_event_queue_line_acquire(s_transport.event_queue);
+    if (!slot) {
+        VW553_SUMMARY("event line slots exhausted len=%lu pending=%lu", (unsigned long)length,
+                      (unsigned long)vw553_event_queue_pending(s_transport.event_queue));
         set_poison(ISR_FAULT_RX_OVERFLOW);
         return;
     }
-    memcpy(event.payload.line, line, length);
-    (void)enqueue_event(&event);
+    const uint8_t line_slot = vw553_event_queue_slot_for_line(s_transport.event_queue, slot);
+    vw553_queued_event_t event = {.kind = VW553_EVENT_LINE, .length = length, .line_slot = line_slot};
+    if (length > VW553_EVENT_LINE_SLOT_SIZE || line_slot == VW553_EVENT_LINE_SLOT_NONE) {
+        if (line_slot != VW553_EVENT_LINE_SLOT_NONE) {
+            vw553_event_queue_line_release(s_transport.event_queue, line_slot);
+        }
+        set_poison(ISR_FAULT_RX_OVERFLOW);
+        return;
+    }
+    memcpy(slot, line, length);
+    if (!enqueue_event(&event)) {
+        vw553_event_queue_line_release(s_transport.event_queue, line_slot);
+    }
 }
 
 static void client_ipd_trailer_dropped(void *context)
@@ -278,50 +253,68 @@ static void client_ipd_trailer_dropped(void *context)
     VW553_SUMMARY("AT stale IPD trailer overtaken by prompt");
 }
 
+static bool enqueue_data_event(vw553_event_kind_t kind, int remote_fd, uint8_t conn_id, int listener_fd,
+                               const char *peer_ipv4, uint16_t peer_port, const uint8_t *data, size_t length,
+                               bool final)
+{
+    size_t offset = 0U;
+    do {
+        vw553_queued_event_t event = {.kind = kind,
+                                      .remote_fd = remote_fd,
+                                      .conn_id = conn_id,
+                                      .listener_fd = listener_fd,
+                                      .peer_port = peer_port,
+                                      .final = false,
+                                      .data_slot = VW553_EVENT_DATA_SLOT_NONE,
+                                      .line_slot = VW553_EVENT_LINE_SLOT_NONE};
+        size_t chunk = length - offset;
+        if (chunk > VW553_EVENT_DATA_SLOT_SIZE) {
+            chunk = VW553_EVENT_DATA_SLOT_SIZE;
+        }
+        event.length = chunk;
+        if (chunk) {
+            uint8_t *slot = vw553_event_queue_data_acquire(s_transport.event_queue);
+            if (!slot) {
+                VW553_SUMMARY("event data slots exhausted kind=%d len=%lu pending=%lu",
+                              (int)kind, (unsigned long)length,
+                              (unsigned long)vw553_event_queue_pending(s_transport.event_queue));
+                set_poison(ISR_FAULT_RX_OVERFLOW);
+                return false;
+            }
+            event.data_slot = vw553_event_queue_slot_for_data(s_transport.event_queue, slot);
+            if (event.data_slot == VW553_EVENT_DATA_SLOT_NONE) {
+                set_poison(ISR_FAULT_RX_OVERFLOW);
+                return false;
+            }
+            memcpy(slot, data + offset, chunk);
+        }
+        offset += chunk;
+        event.final = final && offset == length;
+        if (peer_ipv4 && kind == VW553_EVENT_DATAGRAM) {
+            memcpy(event.peer_ipv4, peer_ipv4, sizeof(event.peer_ipv4));
+        }
+        if (!enqueue_event(&event)) {
+            if (event.data_slot != VW553_EVENT_DATA_SLOT_NONE) {
+                vw553_event_queue_data_release(s_transport.event_queue, event.data_slot);
+            }
+            return false;
+        }
+    } while (offset < length);
+    return true;
+}
+
 static void client_data(void *context, int remote_fd, const uint8_t *data, size_t length, bool final)
 {
     (void)context;
     VW553_LOG("AT DATA fd=%d len=%lu final=%d first=0x%02x", remote_fd, (unsigned long)length,
               final ? 1 : 0, data && length ? data[0] : 0U);
-    size_t offset = 0;
-    do {
-        queued_event_t event = {.kind = EVENT_DATA, .remote_fd = remote_fd, .final = false};
-        size_t chunk = length - offset;
-        if (chunk > sizeof(event.payload.data)) {
-            chunk = sizeof(event.payload.data);
-        }
-        event.length = chunk;
-        if (chunk) {
-            memcpy(event.payload.data, data + offset, chunk);
-        }
-        offset += chunk;
-        event.final = final && offset == length;
-        if (!enqueue_event(&event)) {
-            return;
-        }
-    } while (offset < length);
+    (void)enqueue_data_event(VW553_EVENT_DATA, remote_fd, 0U, 0, NULL, 0U, data, length, final);
 }
 
 static void client_ble_data(void *context, uint8_t conn_id, const uint8_t *data, size_t length, bool final)
 {
     (void)context;
-    size_t offset = 0U;
-    do {
-        queued_event_t event = {.kind = EVENT_BLE_DATA, .conn_id = conn_id, .final = false};
-        size_t chunk = length - offset;
-        if (chunk > sizeof(event.payload.data)) {
-            chunk = sizeof(event.payload.data);
-        }
-        event.length = chunk;
-        if (chunk) {
-            memcpy(event.payload.data, data + offset, chunk);
-        }
-        offset += chunk;
-        event.final = final && offset == length;
-        if (!enqueue_event(&event)) {
-            return;
-        }
-    } while (offset < length);
+    (void)enqueue_data_event(VW553_EVENT_BLE_DATA, 0, conn_id, 0, NULL, 0U, data, length, final);
 }
 
 static void client_prompt(void *context)
@@ -330,6 +323,13 @@ static void client_prompt(void *context)
     VW553_LOG("AT PROMPT active=%d wait=%d payload=%lu phase=%d", s_transport.request_active ? 1 : 0,
               s_transport.request.wait_prompt ? 1 : 0, (unsigned long)s_transport.request.payload_length,
               (int)s_transport.client.phase);
+    if (!s_transport.request_active) {
+        /* A CIPSEND prompt can arrive after its transaction timed out. With no
+         * active request there is no payload to send, so consume the stale
+         * prompt instead of poisoning an otherwise synchronized transport. */
+        VW553_SUMMARY("AT stale prompt ignored phase=%d", (int)s_transport.client.phase);
+        return;
+    }
     if (!vw553_uart_policy_accept_prompt(s_transport.request_active, s_transport.request.wait_prompt,
                                          s_transport.request.payload_length, s_transport.request.prompt_seen,
                                          s_transport.request.payload_sent)) {
@@ -368,7 +368,7 @@ static void client_prompt(void *context)
         preview[take] = '\0';
         VW553_LOG("AT PAYLOAD preview=%s", preview);
     }
-    const queued_event_t event = {.kind = EVENT_PROMPT};
+    const vw553_queued_event_t event = {.kind = VW553_EVENT_PROMPT};
     (void)enqueue_event(&event);
 }
 
@@ -378,7 +378,7 @@ static void client_fault(void *context, vw553_at_fault_t fault)
 {
     (void)context;
     rx_trace_dump("RX FAULT", fault);
-    const queued_event_t event = {.kind = EVENT_FAULT, .fault = fault};
+    const vw553_queued_event_t event = {.kind = VW553_EVENT_FAULT, .fault = fault};
     (void)enqueue_event(&event);
 }
 
@@ -424,32 +424,14 @@ static void client_datagram(void *context, int listener_fd, const char *peer_ipv
                             const uint8_t *data, size_t length, bool final)
 {
     (void)context;
-    size_t offset = 0;
-    do {
-        queued_event_t event = {.kind = EVENT_DATAGRAM, .listener_fd = listener_fd, .peer_port = peer_port,
-                                .final = false};
-        size_t chunk = length - offset;
-        if (chunk > sizeof(event.payload.data)) {
-            chunk = sizeof(event.payload.data);
-        }
-        event.length = chunk;
-        memcpy(event.peer_ipv4, peer_ipv4, sizeof(event.peer_ipv4));
-        if (chunk) {
-            memcpy(event.payload.data, data + offset, chunk);
-        }
-        offset += chunk;
-        event.final = final && offset == length;
-        if (!enqueue_event(&event)) {
-            return;
-        }
-    } while (offset < length);
+    (void)enqueue_data_event(VW553_EVENT_DATAGRAM, 0, 0U, listener_fd, peer_ipv4, peer_port, data, length, final);
 }
 
 static void client_accept(void *context, int listener_fd, int client_fd, const char *peer_ipv4, uint16_t peer_port)
 {
     (void)context;
-    queued_event_t event = {
-        .kind = EVENT_ACCEPT, .listener_fd = listener_fd, .client_fd = client_fd, .peer_port = peer_port};
+    vw553_queued_event_t event = {
+        .kind = VW553_EVENT_ACCEPT, .listener_fd = listener_fd, .client_fd = client_fd, .peer_port = peer_port};
     memcpy(event.peer_ipv4, peer_ipv4, sizeof(event.peer_ipv4));
     (void)enqueue_event(&event);
 }
@@ -461,7 +443,7 @@ static void client_accept_v2(void *context, uint32_t con_id, uint32_t generation
     VW553_LOG("AT ACCEPT con_id=%lu gen=%lu listener=%d lgen=%lu fd=%d peer=%s:%u",
               (unsigned long)con_id, (unsigned long)generation, listener_fd,
               (unsigned long)listener_generation, lwip_fd, peer_ipv4 ? peer_ipv4 : "", (unsigned)peer_port);
-    queued_event_t event = {.kind = EVENT_ACCEPT_V2, .con_id = con_id, .generation = generation,
+    vw553_queued_event_t event = {.kind = VW553_EVENT_ACCEPT_V2, .con_id = con_id, .generation = generation,
                             .listener_fd = listener_fd, .listener_generation = listener_generation,
                             .lwip_fd = lwip_fd, .peer_port = peer_port};
     memcpy(event.peer_ipv4, peer_ipv4, sizeof(event.peer_ipv4));
@@ -473,7 +455,7 @@ static void client_close_v2(void *context, uint32_t con_id, int lwip_fd, uint32_
     (void)context;
     VW553_LOG("AT CLOSE con_id=%lu gen=%lu fd=%d reason=%s", (unsigned long)con_id,
               (unsigned long)generation, lwip_fd, reason ? reason : "");
-    queued_event_t event = {.kind = EVENT_CLOSE_V2, .con_id = con_id, .generation = generation, .lwip_fd = lwip_fd};
+    vw553_queued_event_t event = {.kind = VW553_EVENT_CLOSE_V2, .con_id = con_id, .generation = generation, .lwip_fd = lwip_fd};
     size_t length = reason ? strlen(reason) : 0U;
     if (!length || length >= sizeof(event.reason)) {
         set_poison(ISR_FAULT_NOISE);
@@ -483,56 +465,62 @@ static void client_close_v2(void *context, uint32_t con_id, int lwip_fd, uint32_
     (void)enqueue_event(&event);
 }
 
-static void dispatch_event(const queued_event_t *event)
+static void dispatch_event(const vw553_queued_event_t *event)
 {
     switch (event->kind) {
-        case EVENT_LINE:
+        case VW553_EVENT_LINE:
             if (s_transport.events.line) {
-                s_transport.events.line(s_transport.event_context, event->payload.line, event->length);
+                s_transport.events.line(s_transport.event_context,
+                                        vw553_event_queue_line(s_transport.event_queue, event->line_slot),
+                                        event->length);
             }
             break;
-        case EVENT_DATA:
+        case VW553_EVENT_DATA:
             if (s_transport.events.data) {
-                s_transport.events.data(s_transport.event_context, event->remote_fd, event->payload.data,
+                s_transport.events.data(s_transport.event_context, event->remote_fd,
+                                        vw553_event_queue_data(s_transport.event_queue, event->data_slot),
                                         event->length, event->final);
             }
             break;
-        case EVENT_BLE_DATA:
+        case VW553_EVENT_BLE_DATA:
             if (s_transport.events.ble_data) {
-                s_transport.events.ble_data(s_transport.event_context, event->conn_id, event->payload.data,
+                s_transport.events.ble_data(s_transport.event_context, event->conn_id,
+                                            vw553_event_queue_data(s_transport.event_queue, event->data_slot),
                                             event->length, event->final);
             }
             break;
-        case EVENT_PROMPT:
+        case VW553_EVENT_PROMPT:
             if (s_transport.events.prompt) {
                 s_transport.events.prompt(s_transport.event_context);
             }
             break;
-        case EVENT_FAULT:
+        case VW553_EVENT_FAULT:
             if (s_transport.events.fault) {
                 s_transport.events.fault(s_transport.event_context, event->fault);
             }
             break;
-        case EVENT_DATAGRAM:
+        case VW553_EVENT_DATAGRAM:
             if (s_transport.events.datagram) {
                 s_transport.events.datagram(s_transport.event_context, event->listener_fd, event->peer_ipv4,
-                                            event->peer_port, event->payload.data, event->length, event->final);
+                                            event->peer_port,
+                                            vw553_event_queue_data(s_transport.event_queue, event->data_slot),
+                                            event->length, event->final);
             }
             break;
-        case EVENT_ACCEPT:
+        case VW553_EVENT_ACCEPT:
             if (s_transport.events.accept) {
                 s_transport.events.accept(s_transport.event_context, event->listener_fd, event->client_fd,
                                           event->peer_ipv4, event->peer_port);
             }
             break;
-        case EVENT_ACCEPT_V2:
+        case VW553_EVENT_ACCEPT_V2:
             if (s_transport.events.accept_v2) {
                 s_transport.events.accept_v2(s_transport.event_context, event->con_id, event->generation,
                                              event->listener_fd, event->listener_generation, event->lwip_fd,
                                              event->peer_ipv4, event->peer_port);
             }
             break;
-        case EVENT_CLOSE_V2:
+        case VW553_EVENT_CLOSE_V2:
             if (s_transport.events.close_v2) {
                 s_transport.events.close_v2(s_transport.event_context, event->con_id, event->lwip_fd,
                                             event->generation, event->reason);
@@ -546,10 +534,18 @@ static void dispatch_event(const queued_event_t *event)
 static void event_task(void *argument)
 {
     (void)argument;
-    queued_event_t event;
+    vw553_queued_event_t event;
     while (!s_transport.stopping) {
-        if (xQueueReceive(s_transport.event_queue, &event, pdMS_TO_TICKS(VW553_IO_POLL_MS)) == pdPASS) {
+        (void)xSemaphoreTake(s_transport.event_available, pdMS_TO_TICKS(VW553_IO_POLL_MS));
+        while (vw553_event_queue_dequeue(s_transport.event_queue, &event)) {
             dispatch_event(&event);
+            if ((event.kind == VW553_EVENT_DATA || event.kind == VW553_EVENT_BLE_DATA ||
+                 event.kind == VW553_EVENT_DATAGRAM) && event.data_slot != VW553_EVENT_DATA_SLOT_NONE) {
+                vw553_event_queue_data_release(s_transport.event_queue, event.data_slot);
+            }
+            if (event.kind == VW553_EVENT_LINE && event.line_slot != VW553_EVENT_LINE_SLOT_NONE) {
+                vw553_event_queue_line_release(s_transport.event_queue, event.line_slot);
+            }
             s_transport.event_dispatched = event.sequence;
             xSemaphoreGive(s_transport.event_progress);
         }
@@ -699,6 +695,22 @@ static void handle_client_result(void)
     }
 }
 
+static void log_transport_high_water(const char *tag)
+{
+    vw553_event_queue_stats_t queue_stats;
+    vw553_event_queue_get_stats(s_transport.event_queue, &queue_stats);
+    VW553_SUMMARY("%s rx_stream=%lu/%u rx_dma=%lu/%u events=%lu/%u data_slots=%lu/%u "
+                  "slot_exhausted=%lu line_slots=%lu/%u line_exhausted=%lu rx_overflow=%lu",
+                  tag, (unsigned long)s_transport.rx_stream_high_water, (unsigned)VW553_RX_STREAM_SIZE,
+                  (unsigned long)s_transport.rx_dma_burst_high_water, (unsigned)VW553_RX_DMA_SIZE,
+                  (unsigned long)queue_stats.event_queue_high_water, (unsigned)VW553_EVENT_QUEUE_DEPTH,
+                  (unsigned long)queue_stats.data_slot_high_water, (unsigned)VW553_EVENT_DATA_SLOTS,
+                  (unsigned long)queue_stats.data_slot_exhausted,
+                  (unsigned long)queue_stats.line_slot_high_water, (unsigned)VW553_EVENT_LINE_SLOTS,
+                  (unsigned long)queue_stats.line_slot_exhausted,
+                  (unsigned long)s_transport.rx_stream_overflow);
+}
+
 static void process_poison(void)
 {
     if (!s_transport.poisoned || s_transport.poison_processed) {
@@ -708,6 +720,7 @@ static void process_poison(void)
     vw553_at_result_t reason = poison_result();
     VW553_SUMMARY("transport poison reason=%d faults=0x%08lX", (int)reason,
                   (unsigned long)s_transport.isr_fault);
+    log_transport_high_water("transport high-water");
     usart_interrupt_disable(s_transport.config.usart, USART_INT_RBNE);
     usart_interrupt_disable(s_transport.config.usart, USART_INT_ERR);
     nvic_irq_disable(s_transport.config.irq);
@@ -746,7 +759,7 @@ static void rx_task(void *argument)
     vw553_at_callbacks_t parser_callbacks = vw553_at_client_parser_callbacks();
     vw553_at_parser_init(&s_transport.parser, &parser_callbacks, &s_transport.client);
 
-    uint8_t bytes[128];
+    uint8_t bytes[VW553_RX_READ_SIZE];
     request_t *request = NULL;
     while (!s_transport.stopping) {
         if (!s_transport.request_active && xQueueReceive(s_transport.request_queue, &request, 0) == pdPASS) {
@@ -768,6 +781,10 @@ static void rx_task(void *argument)
             }
         }
         start_pending_request();
+        const size_t stream_used = xStreamBufferBytesAvailable(s_transport.rx_stream);
+        if (stream_used > s_transport.rx_stream_high_water) {
+            s_transport.rx_stream_high_water = (uint32_t)stream_used;
+        }
         size_t count = xStreamBufferReceive(s_transport.rx_stream, bytes, sizeof(bytes), pdMS_TO_TICKS(VW553_IO_POLL_MS));
         if (count) {
             s_transport.rx_last_byte_ms = now_ms();
@@ -790,10 +807,14 @@ static void rx_task(void *argument)
         vw553_at_client_poll(&s_transport.client, now_ms());
         process_poison();
         handle_client_result();
-        if (s_transport.request_active && !s_transport.request_started && !s_transport.poisoned &&
-            (uint32_t)(now_ms() - s_transport.request.started_ms) >= VW553_IPD_TRAILER_WAIT_MS) {
-            VW553_SUMMARY("AT request held for IPD trailer timeout=%lums",
-                          (unsigned long)VW553_IPD_TRAILER_WAIT_MS);
+        const uint32_t request_wait_ms = (uint32_t)(now_ms() - s_transport.request.started_ms);
+        if (vw553_uart_policy_request_frame_hold_expired(
+                s_transport.request_active, s_transport.request_started, s_transport.poisoned,
+                vw553_at_parser_in_frame(&s_transport.parser), request_wait_ms,
+                VW553_REQUEST_FRAME_HOLD_MS)) {
+            VW553_SUMMARY("AT request frame hold expired wait=%lums limit=%lums",
+                          (unsigned long)request_wait_ms,
+                          (unsigned long)VW553_REQUEST_FRAME_HOLD_MS);
             set_poison(ISR_FAULT_NOISE);
             finish_request(VW553_AT_RESULT_PROTOCOL);
         }
@@ -822,6 +843,13 @@ static uint32_t rx_dma_drain(void)
     if (written > VW553_RX_DMA_SIZE) {
         written = VW553_RX_DMA_SIZE;
     }
+    uint32_t burst_size = (written + VW553_RX_DMA_SIZE - s_rx_dma_pos) % VW553_RX_DMA_SIZE;
+    if (written == VW553_RX_DMA_SIZE && s_rx_dma_pos == 0U) {
+        burst_size = VW553_RX_DMA_SIZE;
+    }
+    if (burst_size > s_transport.rx_dma_burst_high_water) {
+        s_transport.rx_dma_burst_high_water = burst_size;
+    }
     /* A wrap makes 'written' jump back to 0 while 'pos' is still near the end
      * of the ring; the modulo walk below covers that case. The loop is bounded
      * by the ring size because 'written' is constant for this pass. */
@@ -829,6 +857,7 @@ static uint32_t rx_dma_drain(void)
         uint8_t byte = s_rx_dma_buffer[s_rx_dma_pos];
         s_rx_dma_pos = (s_rx_dma_pos + 1U) % VW553_RX_DMA_SIZE;
         if (xStreamBufferSendFromISR(s_transport.rx_stream, &byte, 1U, &wake) != 1U) {
+            ++s_transport.rx_stream_overflow;
             fault |= ISR_FAULT_RX_OVERFLOW;
         }
     }
@@ -883,17 +912,20 @@ static void configure_uart(const vw553_uart_transport_config_t *config)
      * following AT frame. usart_fifo_enable() clears UEN, so re-enable after. */
     usart_fifo_enable(config->usart);
     usart_receive_fifo_threshold_config(config->usart, 0U);
-    usart_enable(config->usart);
 #if VW553_RX_DMA_ENABLE
+    /* Arm the DMA ring before UEN. Enabling RX first permits an IDLE/error
+     * interrupt to run rx_dma_drain() while the transfer is still at reset
+     * defaults, which can starve the caller before DMA configuration finishes. */
+    rx_dma_configure(config->usart, config->irq_priority);
     usart_interrupt_enable(config->usart, USART_INT_IDLE);
 #else
     usart_interrupt_enable(config->usart, USART_INT_RBNE);
 #endif
     usart_interrupt_enable(config->usart, USART_INT_ERR);
-    nvic_irq_enable(config->irq, config->irq_priority, 0U);
 #if VW553_RX_DMA_ENABLE
-    rx_dma_configure(config->usart, config->irq_priority);
+    nvic_irq_enable(config->irq, config->irq_priority, 0U);
 #endif
+    usart_enable(config->usart);
 }
 
 static void release_unstarted_primitives(void)
@@ -904,9 +936,6 @@ static void release_unstarted_primitives(void)
     if (s_transport.request_queue) {
         vQueueDelete(s_transport.request_queue);
     }
-    if (s_transport.event_queue) {
-        vQueueDelete(s_transport.event_queue);
-    }
     if (s_transport.caller_mutex) {
         vSemaphoreDelete(s_transport.caller_mutex);
     }
@@ -915,6 +944,12 @@ static void release_unstarted_primitives(void)
     }
     if (s_transport.event_progress) {
         vSemaphoreDelete(s_transport.event_progress);
+    }
+    if (s_transport.event_available) {
+        vSemaphoreDelete(s_transport.event_available);
+    }
+    if (s_transport.event_queue) {
+        vPortFree(s_transport.event_queue);
     }
     if (s_transport.tasks_exited) {
         vSemaphoreDelete(s_transport.tasks_exited);
@@ -925,7 +960,7 @@ static void release_unstarted_primitives(void)
 int32_t vw553_uart_transport_init(const vw553_uart_transport_config_t *config,
                                   const vw553_uart_transport_events_t *events, void *context)
 {
-    VW553_LOG("UART transport init");
+    VW553_SUMMARY("UART transport init");
     if (!config_valid(config)) {
         VW553_LOG("UART config invalid");
         return OPRT_INVALID_PARM;
@@ -943,15 +978,25 @@ int32_t vw553_uart_transport_init(const vw553_uart_transport_config_t *config,
     s_transport.rx_stream = xStreamBufferCreate(VW553_RX_STREAM_SIZE, 1U);
     s_transport.request_queue = xQueueCreate(1U, sizeof(request_t *));
     if (has_events) {
-        s_transport.event_queue = xQueueCreate(VW553_EVENT_QUEUE_DEPTH, sizeof(queued_event_t));
+        s_transport.event_queue = pvPortMalloc(sizeof(*s_transport.event_queue));
+        if (s_transport.event_queue) {
+            vw553_event_queue_init(s_transport.event_queue);
+            VW553_SUMMARY("event queue pool bytes=%u free_heap=%u",
+                          (unsigned)sizeof(*s_transport.event_queue), (unsigned)xPortGetFreeHeapSize());
+        } else {
+            VW553_SUMMARY("event queue pool allocation failed bytes=%u",
+                          (unsigned)sizeof(*s_transport.event_queue));
+        }
     }
     s_transport.caller_mutex = xSemaphoreCreateMutex();
     s_transport.result_ready = xSemaphoreCreateBinary();
     s_transport.event_progress = xSemaphoreCreateBinary();
+    s_transport.event_available = xSemaphoreCreateBinary();
     s_transport.tasks_exited = xSemaphoreCreateCounting(2U, 0U);
     if (!s_transport.rx_stream || !s_transport.request_queue || (has_events && !s_transport.event_queue) ||
         !s_transport.caller_mutex ||
-        !s_transport.result_ready || !s_transport.event_progress || !s_transport.tasks_exited) {
+        !s_transport.result_ready || !s_transport.event_progress || !s_transport.event_available ||
+        !s_transport.tasks_exited) {
         release_unstarted_primitives();
         return OPRT_COM_ERROR;
     }
@@ -971,7 +1016,10 @@ int32_t vw553_uart_transport_init(const vw553_uart_transport_config_t *config,
     }
     s_transport.initialized = true;
     configure_uart(config);
-    VW553_LOG("UART transport ready");
+    VW553_SUMMARY("UART transport ready rx_stream=%u rx_dma=%u event_depth=%u data_slots=%u line_slots=%u",
+                  (unsigned)VW553_RX_STREAM_SIZE, (unsigned)VW553_RX_DMA_SIZE,
+                  (unsigned)VW553_EVENT_QUEUE_DEPTH, (unsigned)VW553_EVENT_DATA_SLOTS,
+                  (unsigned)VW553_EVENT_LINE_SLOTS);
     return OPRT_OK;
 }
 
@@ -1257,6 +1305,31 @@ int32_t vw553_uart_transport_wait_events(uint32_t watermark, uint32_t timeout_ms
     return OPRT_OK;
 }
 
+int32_t vw553_uart_transport_get_stats(vw553_uart_transport_stats_t *stats)
+{
+    if (!stats || !s_transport.initialized || !s_transport.event_queue) {
+        return OPRT_INVALID_PARM;
+    }
+    vw553_event_queue_stats_t queue_stats;
+    vw553_event_queue_get_stats(s_transport.event_queue, &queue_stats);
+    *stats = (vw553_uart_transport_stats_t){
+        .rx_stream_high_water = s_transport.rx_stream_high_water,
+        .rx_stream_capacity = VW553_RX_STREAM_SIZE,
+        .rx_dma_burst_high_water = s_transport.rx_dma_burst_high_water,
+        .rx_dma_capacity = VW553_RX_DMA_SIZE,
+        .event_queue_high_water = queue_stats.event_queue_high_water,
+        .event_queue_capacity = VW553_EVENT_QUEUE_DEPTH,
+        .data_slot_high_water = queue_stats.data_slot_high_water,
+        .data_slot_capacity = VW553_EVENT_DATA_SLOTS,
+        .data_slot_exhausted = queue_stats.data_slot_exhausted,
+        .line_slot_high_water = queue_stats.line_slot_high_water,
+        .line_slot_capacity = VW553_EVENT_LINE_SLOTS,
+        .line_slot_exhausted = queue_stats.line_slot_exhausted,
+        .rx_stream_overflow = s_transport.rx_stream_overflow,
+    };
+    return OPRT_OK;
+}
+
 bool vw553_uart_transport_is_poisoned(void)
 {
     return s_transport.poisoned;
@@ -1323,6 +1396,7 @@ void VW553_UART_IRQ_HANDLER(void)
     while (usart_flag_get(usart, USART_FLAG_RBNE) == SET) {
         uint8_t byte = (uint8_t)usart_data_receive(usart);
         if (xStreamBufferSendFromISR(s_transport.rx_stream, &byte, 1U, &wake) != 1U) {
+            ++s_transport.rx_stream_overflow;
             fault |= ISR_FAULT_RX_OVERFLOW;
         }
     }

@@ -51,6 +51,22 @@ typedef struct {
 } vw553_uart_request_t;
 
 typedef struct {
+    uint32_t rx_stream_high_water;
+    uint32_t rx_stream_capacity;
+    uint32_t rx_dma_burst_high_water;
+    uint32_t rx_dma_capacity;
+    uint32_t event_queue_high_water;
+    uint32_t event_queue_capacity;
+    uint32_t data_slot_high_water;
+    uint32_t data_slot_capacity;
+    uint32_t data_slot_exhausted;
+    uint32_t line_slot_high_water;
+    uint32_t line_slot_capacity;
+    uint32_t line_slot_exhausted;
+    uint32_t rx_stream_overflow;
+} vw553_uart_transport_stats_t;
+
+typedef struct {
     void (*line)(void *context, const char *line, size_t length);
     void (*data)(void *context, int remote_fd, const uint8_t *data, size_t length, bool final);
     void (*ble_data)(void *context, uint8_t conn_id, const uint8_t *data, size_t length, bool final);
@@ -83,6 +99,7 @@ int32_t vw553_uart_transport_transact(const char *command, size_t length, bool w
 int32_t vw553_uart_transport_negotiate(uint32_t timeout_ms);
 int32_t vw553_uart_transport_get_capabilities(vw553_uart_capabilities_t *capabilities);
 int32_t vw553_uart_transport_wait_events(uint32_t watermark, uint32_t timeout_ms);
+int32_t vw553_uart_transport_get_stats(vw553_uart_transport_stats_t *stats);
 bool vw553_uart_transport_is_poisoned(void);
 /* Dumps the most recent raw RX bytes; diagnostics only. */
 void vw553_uart_transport_dump_rx_trace(const char *tag);

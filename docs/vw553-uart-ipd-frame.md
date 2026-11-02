@@ -1,5 +1,10 @@
 # VW553 UART IPD frame patch
 
+> **历史补丁/验证记录，不是当前构建入口。**
+> 当前 VW553 AT gateway canonical 构建入口见
+> [`platform/GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md`](../../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)。
+> 下文中的旧 SDK、overlay/staging、`/tmp` 路径和 `patch -p*` 命令只用于复现历史实验，不参与当前构建。
+
 `vw553-uart-ipd-frame.patch` is an unapplied patch for the pinned VW553 SDK 1.0.3g archive at
 `.cache/gino-validation/vendor/GD32VW55x_RELEASE_V1.0.3g.zip` (SHA256
 `49995f9c482136e7b9be02fa4b1f1a6ea7716a215a0b993c1538a6d2f0792cea`). It was generated against the

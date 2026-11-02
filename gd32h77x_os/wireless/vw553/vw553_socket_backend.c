@@ -152,6 +152,7 @@ static dns_cache_entry_t s_dns_cache[DNS_CACHE_SIZE];
 
 static bool state_lock(void);
 static void state_unlock(void);
+static int32_t ensure_multi_connection_mode(uint16_t max_clients);
 
 int vw553_socket_backend_errno(void) { return s_last_errno; }
 
@@ -390,12 +391,11 @@ int32_t vw553_socket_backend_init(void)
         s_max_clients = caps.max_clients < SOCKET_COUNT ? caps.max_clients : SOCKET_COUNT;
         s_max_servers = caps.max_servers < SOCKET_COUNT ? caps.max_servers : SOCKET_COUNT;
         /* CIPMUX=1 is the stock multi-client wire mode used by the validated
-         * vendor image. CAP2 keeps the same client command syntax. */
-        status = run_at("AT+CIPMODE=0", NULL, 0, false, NULL, 0, NULL, NULL);
-        if (status == OPRT_OK)
-            status = run_at("AT+CIPMUX=1", NULL, 0, false, NULL, 0, NULL, NULL);
-        if (status != OPRT_OK) VW553_LOG("AT+CIPMODE=0/CIPMUX=0 failed status=%ld", (long)status);
-        if (status == OPRT_OK) tkl_system_sleep(CIPMUX_SETTLE_MS);
+         * vendor image. The VW553 survives an H779 reset, so query first and
+         * preserve an already-enabled mode instead of reconfiguring it while
+         * legacy client slots are still owned by the module. */
+        status = ensure_multi_connection_mode(caps.max_clients);
+        if (status != OPRT_OK) VW553_LOG("CIPMUX setup failed status=%ld", (long)status);
     }
     if (state_lock()) {
         s_initializing = false;
@@ -403,6 +403,51 @@ int32_t vw553_socket_backend_init(void)
         state_unlock();
     }
     if (status == OPRT_OK) vw553_socket_dns_cache_flush();
+    return status;
+}
+
+static int32_t ensure_multi_connection_mode(uint16_t max_clients)
+{
+    char reply[96] = {0};
+    size_t reply_length = 0U;
+    int32_t status = run_at("AT+CIPMUX?", NULL, 0, false, reply, sizeof(reply), &reply_length, NULL);
+    if (status != OPRT_OK) {
+        VW553_LOG("CIPMUX query failed status=%ld", (long)status);
+        return status;
+    }
+
+    char *line = strstr(reply, "+CIPMUX:");
+    int mode = -1;
+    if (line == NULL || sscanf(line, "+CIPMUX:%d", &mode) != 1 || (mode != 0 && mode != 1)) {
+        VW553_LOG("CIPMUX query reply invalid len=%lu reply=%.*s",
+                  (unsigned long)reply_length, (int)reply_length, reply);
+        return OPRT_COM_ERROR;
+    }
+    if (mode == 1) {
+        VW553_SUMMARY("CIPMUX already enabled; keeping existing client slots");
+        return OPRT_OK;
+    }
+
+    status = run_at("AT+CIPMODE=0", NULL, 0, false, NULL, 0, NULL, NULL);
+    if (status != OPRT_OK) return status;
+    status = run_at("AT+CIPMUX=1", NULL, 0, false, NULL, 0, NULL, NULL);
+    if (status == OPRT_OK) {
+        tkl_system_sleep(CIPMUX_SETTLE_MS);
+        return OPRT_OK;
+    }
+
+    /* CIPMUX=0 is only valid for a single client. A previous host instance can
+     * leave that client owned by the module after the H779 resets. Close the
+     * client slot set once, then switch to multi-client mode; this is a defined
+     * recovery transition, not a retry of a failed request. */
+    char close_all[32];
+    (void)snprintf(close_all, sizeof(close_all), "AT+CIPCLOSE=%u", (unsigned)max_clients);
+    if (run_at(close_all, NULL, 0, false, NULL, 0, NULL, NULL) != OPRT_OK) {
+        return OPRT_COM_ERROR;
+    }
+    tkl_system_sleep(CIPMUX_SETTLE_MS);
+    status = run_at("AT+CIPMUX=1", NULL, 0, false, NULL, 0, NULL, NULL);
+    if (status == OPRT_OK) tkl_system_sleep(CIPMUX_SETTLE_MS);
     return status;
 }
 

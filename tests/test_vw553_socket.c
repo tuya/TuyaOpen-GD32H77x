@@ -46,6 +46,9 @@ static bool udp_server_active;
 static bool udp_server2_active;
 static bool listener_stop_timeout;
 static bool listener_stop_already_gone;
+static bool cipmux_enabled = true;
+static unsigned cipmux_query_count;
+static unsigned cipmux_set_count;
 
 uint32_t tkl_system_get_millisecond(void) { return now_ms; }
 void tkl_system_sleep(uint32_t ms) { now_ms += ms; }
@@ -75,7 +78,20 @@ int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_resul
     if (last_payload_len) memcpy(last_payload, request->payload, last_payload_len);
     *result = VW553_AT_RESULT_OK;
     if (!strcmp(last_command, "AT+CIPMODE=0")) return OPRT_OK;
-    if (!strcmp(last_command, "AT+CIPMUX=1")) return OPRT_OK;
+    if (!strcmp(last_command, "AT+CIPMUX?")) {
+        ++cipmux_query_count;
+        reply_set(request, cipmux_enabled ? "+CIPMUX:1\r\nOK\r\n" : "+CIPMUX:0\r\nOK\r\n");
+        return OPRT_OK;
+    }
+    if (!strcmp(last_command, "AT+CIPMUX=1")) {
+        ++cipmux_set_count;
+        if (cipmux_enabled) {
+            reply_set(request, "Please close all connections before setting multiple connections.\r\nERROR\r\n");
+            return OPRT_COM_ERROR;
+        }
+        cipmux_enabled = true;
+        return OPRT_OK;
+    }
     if (!strncmp(last_command, "AT+CIPSTART=", 12)) {
         int con_id = 0;
         (void)sscanf(last_command, "AT+CIPSTART=%d,", &con_id);
@@ -221,6 +237,9 @@ int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_resul
 int main(void)
 {
     assert(vw553_socket_backend_init() == OPRT_OK);
+    assert(cipmux_query_count == 1U);
+    assert(cipmux_set_count == 0U);
+    assert(strcmp(last_command, "AT+CIPMUX?") == 0);
     unsigned select_start = now_ms;
     assert(vw553_socket_select(1, NULL, NULL, NULL, 10000000U) == 0);
     assert(now_ms - select_start <= 11000U);

@@ -1,5 +1,10 @@
 # VW553 配网速度诊断与省电控制扩展
 
+> **历史补丁/验证记录，不是当前构建入口。**
+> 当前 VW553 AT gateway canonical 构建入口见
+> [`platform/GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md`](../../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)。
+> 下文中的旧 SDK、overlay/staging、`/tmp` 路径和 `patch -p*` 命令只用于复现历史实验，不参与当前构建。
+
 ## 现象
 
 最近的 App AP 配网成功日志中，H77 在 `00:01:08` 发出

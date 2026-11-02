@@ -1,5 +1,10 @@
 # VW553 minimum TCP/UDP AT extension candidate
 
+> **历史补丁/验证记录，不是当前构建入口。**
+> 当前 VW553 AT gateway canonical 构建入口见
+> [`platform/GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md`](../../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)。
+> 下文中的旧 SDK、overlay/staging、`/tmp` 路径和 `patch -p*` 命令只用于复现历史实验，不参与当前构建。
+
 This patch targets the pinned GigaDevice SDK archive `GD32VW55x_RELEASE_V1.0.3g.zip` (SHA-256 `49995f9c482136e7b9be02fa4b1f1a6ea7716a215a0b993c1538a6d2f0792cea`) and expects the existing `docs/handoffs/gd32h77x-20261016/vw553-reference-config/` and `docs/handoffs/gd32h77x-20261016/vw553-overlay/` overlays to be applied first. The four affected `MSDK/app/atcmd*.c` and `.h` files must be normalized from CRLF to LF before applying the patch. A clean independent copy of the pinned ZIP was extracted, both overlays copied, line endings normalized, and `patch -p1 --dry-run` and apply both succeeded. It does not change BLE behavior or claim BLE capability.
 
 The patch adds `AT+TY553XCAP?` and generic TCP/UDP listeners through `AT+TY553XSERVER=<TCP|UDP>,<port>`, query `AT+TY553XSERVER?`, and stop-by-type with port `0`. Legal listener ports are 1..65535. Legacy `AT+CIPSERVER` keeps its single-listener behavior and returns ERROR for every form while TY553XSERVER mode is active. TCP accepts emit `+TY553XCONN:<listener-fd>,<client-fd>,<peer-ip>,<peer-port>`; UDP payloads retain the vendor peer-address `+IPD` frame. CAP v1 responds `+TY553XCAP:1,ATOMIC_IPD,DUAL_SERVER,TCP_ACCEPT,UDP_SEND_ID=<MAX_CLIENT_NUM>,MAX_SEND=2048,MAX_CLIENTS=<MAX_CLIENT_NUM>`; numeric values are formatted from the compiled configuration. `MAX_CLIENTS` means ordinary connection ids are `0..MAX_CLIENTS-1`, while `UDP_SEND_ID` is the special `AT+CIPSEND` id for the UDP listener. With the default `MEMP_NUM_NETCONN=12`, the implementation reserves two listener and two local sockets, so `MAX_CLIENTS=8` and `UDP_SEND_ID=8`. A build with another `MEMP_NUM_NETCONN` reports its actual value.

@@ -305,3 +305,31 @@ python platform/GD32H77X/tests/test_image.py \
 ```
 
 配网所需的 553 能力与缺口见 [无线适配清单](docs/vw553-capabilities.md)。
+
+## VW553 无线协处理器
+
+当前 VW553 AT gateway 的唯一 canonical 构建入口位于：
+
+```text
+platform/GD32/gd32_os/MSDK/vw553_at_gateway
+```
+
+从 `platform/GD32/gd32_os` 执行：
+
+```bash
+./cmake_build.sh vw553_at_gateway clean
+./cmake_build.sh vw553_at_gateway
+```
+
+烧录镜像：
+
+```text
+platform/GD32/gd32_os/scripts/images/image-all.bin
+```
+
+应用说明见 [VW553 AT gateway](../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)，
+ISP 烧录见 [VW553 UART ISP](docs/vw553-isp-flashing.md)。
+
+不要再使用旧的 `/tmp/gd32vw553-diag`、`MSDK/projects/vw553_at_gateway`、
+外部 `cmake_build` 工程目录、overlay/staging 或手工 `patch -p*` 作为当前构建步骤。
+这些内容只允许作为历史证据保留，并应明确标注为历史记录。

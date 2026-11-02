@@ -6,7 +6,7 @@ import tempfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-SOURCE = ROOT / "platform/GD32H77X/tuyaos/tuyaos_adapter/src/tkl_system.c"
+SOURCE = ROOT / "platform/GD32H77X/tuyaos/tuyaos_adapter/src/system/tkl_system.c"
 
 
 def extract_function(source: str, signature: str) -> str:

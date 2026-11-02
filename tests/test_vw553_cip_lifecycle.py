@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / "patches" / "vw553-ginopi-at-fixes.patch"
 SOCKET_BACKEND = ROOT / "gd32h77x_os" / "wireless" / "vw553" / "vw553_socket_backend.c"
-NETWORK_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "tkl_network.c"
-WIFI_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "tkl_wifi.c"
+NETWORK_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "system" / "tkl_network.c"
+WIFI_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "driver" / "tkl_wifi.c"
 
 STALE_FLAG = 'if ((cip_task_started == 0) || (!sys_task_exist((const uint8_t *)"Cip Rcv")))'
 

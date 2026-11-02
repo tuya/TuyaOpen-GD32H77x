@@ -28,6 +28,8 @@ bool vw553_uart_policy_payload_valid(bool wait_prompt, const void *payload, size
 bool vw553_uart_policy_tx_complete(size_t requested, size_t sent, bool transmit_complete);
 bool vw553_uart_policy_accept_prompt(bool request_active, bool wait_prompt, size_t payload_length,
                                      bool prompt_seen, bool payload_sent);
+bool vw553_uart_policy_request_frame_hold_expired(bool request_active, bool request_started, bool poisoned,
+                                                   bool in_frame, uint32_t waited_ms, uint32_t limit_ms);
 bool vw553_uart_policy_payload_result(size_t payload_length, bool prompt_seen, bool payload_sent,
                                       bool saw_send_ok, bool saw_send_fail, bool final_ok);
 bool vw553_uart_policy_ble_payload_uses_plain_ok(const char *command, size_t length);
