@@ -235,6 +235,8 @@ add_test(NAME vw553_payload_encoding
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_vw553_payload_encoding.py")
 add_test(NAME vw553_cip_lifecycle
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_vw553_cip_lifecycle.py")
+add_test(NAME vw553_ble_security_policy
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_vw553_ble_security.py")
 
 # Optional real-source regression against an external TuyaOpen VW553 SDK candidate.
 # The default host suite must remain independent of SDK staging paths.

@@ -188,9 +188,19 @@ OPERATE_RET tkl_ble_stack_init(uint8_t role)
     /* H77 can reboot while the independently powered module keeps advertising.
      * Close its old BLE session before creating a fresh local adapter session.
      * Module commands acknowledge only after disable/enable has completed. */
+    /* VW553 defaults to bonded pairing for peripheral links and sends a
+     * Security Request on every connection, which makes phones show an OS
+     * pairing dialog. Tuya provisioning already uses its own application
+     * encryption, so keep the BLE link unpaired. BLEENABLE resets the vendor
+     * defaults, so apply this after every enable and before advertising. */
     if (ble_execute("AT+BLEDISABLE", NULL, 0U) != OPRT_OK ||
-        ble_execute("AT+BLEENABLE", NULL, 0U) != OPRT_OK ||
-        ble_execute("AT+BLEDADATRANS=1", NULL, 0U) != OPRT_OK) return OPRT_COM_ERROR;
+        ble_execute("AT+BLEENABLE", NULL, 0U) != OPRT_OK) return OPRT_COM_ERROR;
+    if (ble_execute("AT+BLESETAUTH=0,0,0,0,0,16", NULL, 0U) != OPRT_OK) {
+        VW553_SUMMARY("BLE bonding override failed");
+        return OPRT_COM_ERROR;
+    }
+    VW553_SUMMARY("BLE layer bonding disabled");
+    if (ble_execute("AT+BLEDADATRANS=1", NULL, 0U) != OPRT_OK) return OPRT_COM_ERROR;
     s_ble_initialized = true;
     ble_gap_event(TKL_BLE_EVT_STACK_INIT, TKL_BLE_GATT_INVALID_HANDLE, 0);
     return OPRT_OK;
