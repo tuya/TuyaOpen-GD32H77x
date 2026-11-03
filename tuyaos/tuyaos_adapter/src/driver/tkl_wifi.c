@@ -540,18 +540,10 @@ static OPERATE_RET wifi_switch_to_station(void)
 OPERATE_RET tkl_wifi_init(WIFI_EVENT_CB cb)
 {
     // --- BEGIN: user implements ---
-#ifndef GD32H77X_TKL_WIFI_TEST
-    vw553_device_reset();
-#endif
     taskENTER_CRITICAL();
     s_wifi_event_cb = cb;
     taskEXIT_CRITICAL();
-    OPERATE_RET status = OPRT_COM_ERROR;
-    for (unsigned attempt = 0U; attempt < 20U; ++attempt) {
-        status = wifi_ensure_initialized();
-        if (status == OPRT_OK) break;
-        vTaskDelay(pdMS_TO_TICKS(250U) ? pdMS_TO_TICKS(250U) : 1U);
-    }
+    OPERATE_RET status = wifi_ensure_initialized();
     if (status != OPRT_OK) return status;
     status = wifi_command("AT+CWMODE_CUR=1");
     if (status == OPRT_OK) {

@@ -8,6 +8,8 @@ static void default_command_gate_is_narrow(void)
 {
     assert(vw553_uart_policy_command_supported("AT", 2U, false));
     assert(!vw553_uart_policy_command_supported("AT", 2U, true));
+    assert(vw553_uart_policy_command_supported("AT+RST", 6U, false));
+    assert(!vw553_uart_policy_command_supported("AT+RST", 6U, true));
     assert(vw553_uart_policy_command_supported("AT+TY553XCAP?", 13U, false));
     assert(!vw553_uart_policy_command_supported("AT+TY553XCAP?", 13U, true));
     assert(!vw553_uart_policy_command_supported("AT+GMR", 6U, false));

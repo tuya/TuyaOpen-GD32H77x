@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Default firmware is limited to AT and the fixed read-only capability query. */
+/* Probe-only mode permits AT, the fixed read-only capability query, and AT+RST. */
 typedef struct {
     uint8_t version;
     uint16_t udp_send_id;

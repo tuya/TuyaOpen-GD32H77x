@@ -22,6 +22,8 @@ PATCH = ROOT / "patches" / "vw553-ginopi-at-fixes.patch"
 SOCKET_BACKEND = ROOT / "gd32h77x_os" / "wireless" / "vw553" / "vw553_socket_backend.c"
 NETWORK_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "system" / "tkl_network.c"
 WIFI_TKL = ROOT / "tuyaos" / "tuyaos_adapter" / "src" / "driver" / "tkl_wifi.c"
+VW553_DEVICE = ROOT / "gd32h77x_os" / "wireless" / "vw553" / "vw553_device.c"
+MODULE_RESET = ROOT / "gd32h77x_os" / "wireless" / "vw553" / "vw553_module_reset.c"
 
 STALE_FLAG = 'if ((cip_task_started == 0) || (!sys_task_exist((const uint8_t *)"Cip Rcv")))'
 
@@ -74,6 +76,10 @@ def main() -> int:
         failures.append("AP broadcast gate is after the backend call")
 
     wifi_tkl = WIFI_TKL.read_text(errors="replace")
+    if "vw553_device_reset();" in wifi_tkl:
+        failures.append("tkl_wifi_init still hard-resets VW553")
+    if re.search(r"for \(unsigned attempt = 0U; attempt < 20U; \+\+attempt\)", wifi_tkl):
+        failures.append("tkl_wifi_init still masks startup communication failures with retries")
     if "vw553_socket_ap_listeners_invalidate(true)" not in wifi_tkl:
         failures.append("tkl_wifi does not invalidate AP listeners when leaving SoftAP")
     if "ap start: leaving station" not in wifi_tkl:
@@ -84,6 +90,19 @@ def main() -> int:
         failures.append("Wi-Fi status poll is not gated during CWJAP")
     if backend.count("if (s_wifi_join_active)") < 4:
         failures.append("socket backend is missing join gates for DNS/connect/send/listener")
+
+    device = VW553_DEVICE.read_text(errors="replace")
+    reset_sequence = MODULE_RESET.read_text(errors="replace")
+    if 'vw553_uart_transport_transact("AT+RST"' not in device:
+        failures.append("H77 does not request VW553 soft reset with AT+RST")
+    if "VW553_MODULE_RESET_STARTUP" not in device or "VW553_MODULE_RESET_SOFT_FIRST" not in device:
+        failures.append("H77 recovery does not prefer soft reset before hardware reset")
+    if "request = !s_module_reset_active;" not in device:
+        failures.append("READY/fault notifications can recursively trigger module reset")
+    if "hardware_reset_path(ops, context, result)" not in reset_sequence:
+        failures.append("module reset has no hardware fallback path")
+    if "for (" in reset_sequence:
+        failures.append("module reset orchestration reintroduced an implicit retry loop")
 
     if "at_cip_stop_all_listeners" not in joined:
         failures.append("VW553 does not close AP listeners on the STA switch")

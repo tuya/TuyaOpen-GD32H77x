@@ -32,6 +32,7 @@ bool vw553_uart_policy_command_supported(const char *command, size_t length, boo
         return false;
     }
     return (length == 2U && memcmp(command, "AT", 2U) == 0) ||
+           (length == sizeof("AT+RST") - 1U && memcmp(command, "AT+RST", length) == 0) ||
            (length == sizeof("AT+TY553XCAP?") - 1U && memcmp(command, "AT+TY553XCAP?", length) == 0);
 }
 

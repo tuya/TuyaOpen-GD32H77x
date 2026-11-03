@@ -40,6 +40,11 @@ add_executable(test_vw553_uart_policy test_vw553_uart_policy.c
 target_include_directories(test_vw553_uart_policy PRIVATE ../gd32h77x_os/wireless/vw553)
 add_test(NAME vw553_uart_transport_policy COMMAND test_vw553_uart_policy)
 
+add_executable(test_vw553_module_reset test_vw553_module_reset.c
+    ../gd32h77x_os/wireless/vw553/vw553_module_reset.c)
+target_include_directories(test_vw553_module_reset PRIVATE ../gd32h77x_os/wireless/vw553)
+add_test(NAME vw553_module_reset_sequence COMMAND test_vw553_module_reset)
+
 add_executable(test_tkl_network_basics test_tkl_network_basics.c
     ../tuyaos/tuyaos_adapter/src/system/tkl_network.c)
 target_include_directories(test_tkl_network_basics PRIVATE
@@ -213,7 +218,7 @@ add_test(NAME gd32h77x_entropy_state COMMAND test_entropy)
 add_test(NAME gd32h77x_tkl_random_adapter
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_tkl_random_source.py")
 
-set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_vw553_socket test_vw553_uart_policy test_tkl_network_basics test_storage_bounds test_flash_info_partial
+set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_vw553_socket test_vw553_uart_policy test_vw553_module_reset test_tkl_network_basics test_storage_bounds test_flash_info_partial
     test_flash_routing test_flash_layout_generated test_ecnvm_flash_layout test_nor_protocol test_entropy test_http_response_content_length)
 foreach(test_target IN LISTS GD32H77X_HOST_TESTS)
     target_compile_options(${test_target} PRIVATE -Wall -Wextra -Werror -UNDEBUG)

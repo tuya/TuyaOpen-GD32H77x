@@ -139,13 +139,9 @@ bool vw553_at_client_begin(vw553_at_client_t *client, const char *command, size_
         client->tainted || client->suppress_ipd_ok) {
         return false;
     }
-    if (client->wire_mode == VW553_AT_WIRE_PROBE_ONLY) {
-        bool plain_probe = length == 2U && memcmp(command, "AT", 2U) == 0;
-        bool capability_query = length == sizeof("AT+TY553XCAP?") - 1U &&
-                                memcmp(command, "AT+TY553XCAP?", length) == 0;
-        if (wait_prompt || (!plain_probe && !capability_query)) {
-            return false;
-        }
+    if (client->wire_mode == VW553_AT_WIRE_PROBE_ONLY &&
+        !vw553_uart_policy_command_supported(command, length, wait_prompt)) {
+        return false;
     }
     for (size_t i = 0; i < length; ++i) {
         unsigned char byte = (unsigned char)command[i];

@@ -454,6 +454,10 @@ static void bounded_and_probe_only(void)
     assert(vw553_at_client_begin(&client, "AT", 2, false, 0, 10));
     vw553_at_client_line(&client, "OK", 2);
     take_result(&client, VW553_AT_RESULT_OK);
+    assert(vw553_at_client_begin(&client, "AT+RST", 6, false, 1, 10));
+    vw553_at_client_line(&client, "OK", 2);
+    take_result(&client, VW553_AT_RESULT_OK);
+    assert(!vw553_at_client_begin(&client, "AT+RST", 6, true, 2, 10));
 }
 
 static void prefixed_ok_completes_cipstart(void)

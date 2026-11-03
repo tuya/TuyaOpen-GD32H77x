@@ -4,6 +4,7 @@
  */
 #include "vw553_device.h"
 #include "vw553_log.h"
+#include "vw553_module_reset.h"
 #include "vw553_uart_binding.h"
 
 #include "FreeRTOS.h"
@@ -19,6 +20,10 @@
 #define VW553_RESET_MIN_INTERVAL_MS 30000U
 #define VW553_RESET_WINDOW_MS 600000U
 #define VW553_RESET_MAX_IN_WINDOW 3U
+#define VW553_RESET_MUTEX_TIMEOUT_MS 30000U
+#define VW553_READY_TIMEOUT_MS 5000U
+#define VW553_SOFT_RESET_TIMEOUT_MS 3000U
+#define VW553_AT_PROBE_TIMEOUT_MS 1000U
 
 typedef struct {
     vw553_device_event_handler_t handler;
@@ -31,10 +36,16 @@ static bool s_transport_start_failed;
 static bool s_transport_starting;
 static SemaphoreHandle_t s_recovery_signal;
 static bool s_recovery_task_started;
+static bool s_reset_attempted;
 static uint32_t s_last_reset_ms;
 static uint32_t s_reset_window_start_ms;
 static uint32_t s_reset_window_count;
 static volatile bool s_isp_mode;
+static SemaphoreHandle_t s_module_reset_mutex;
+static bool s_module_initialized;
+static bool s_module_initialization_failed;
+static volatile bool s_module_reset_active;
+static volatile bool s_ready_observed;
 
 static uint32_t device_now_ms(void)
 {
@@ -100,7 +111,15 @@ static void dispatch(const vw553_device_event_t *event)
 static void event_line(void *context, const char *line, size_t length)
 {
     (void)context;
-    if (length == 5U && memcmp(line, "READY", 5U) == 0) request_recovery();
+    if (length == 5U && memcmp(line, "READY", 5U) == 0) {
+        bool reset_active = false;
+        taskENTER_CRITICAL();
+        s_ready_observed = true;
+        reset_active = s_module_reset_active;
+        taskEXIT_CRITICAL();
+        VW553_SUMMARY("module READY observed reset_active=%d", reset_active ? 1 : 0);
+        if (!reset_active) request_recovery();
+    }
     const vw553_device_event_t event = {.kind = VW553_DEVICE_EVENT_LINE, .value.line = {line, length}};
     dispatch(&event);
 }
@@ -132,7 +151,11 @@ static void event_fault(void *context, vw553_at_fault_t fault)
 {
     (void)context;
     VW553_LOG("transport fault=%d", (int)fault);
-    request_recovery();
+    bool request = false;
+    taskENTER_CRITICAL();
+    request = !s_module_reset_active;
+    taskEXIT_CRITICAL();
+    if (request) request_recovery();
     const vw553_device_event_t event = {.kind = VW553_DEVICE_EVENT_FAULT, .value.fault = fault};
     dispatch(&event);
 }
@@ -181,8 +204,20 @@ static bool reset_allowed(uint32_t now)
         s_reset_window_start_ms = now;
         s_reset_window_count = 0U;
     }
-    if (s_last_reset_ms != 0U && (uint32_t)(now - s_last_reset_ms) < VW553_RESET_MIN_INTERVAL_MS) return false;
+    if (s_reset_attempted && (uint32_t)(now - s_last_reset_ms) < VW553_RESET_MIN_INTERVAL_MS) return false;
     return s_reset_window_count < VW553_RESET_MAX_IN_WINDOW;
+}
+
+static void record_reset_attempt(const vw553_module_reset_result_t *result, uint32_t now)
+{
+    if (!result->software_reset_requested && !result->hardware_reset_attempted) return;
+    if (s_reset_window_count == 0U || (uint32_t)(now - s_reset_window_start_ms) >= VW553_RESET_WINDOW_MS) {
+        s_reset_window_start_ms = now;
+        s_reset_window_count = 0U;
+    }
+    ++s_reset_window_count;
+    s_last_reset_ms = now;
+    s_reset_attempted = true;
 }
 
 static int32_t recover_transport_when_idle(void)
@@ -196,15 +231,166 @@ static int32_t recover_transport_when_idle(void)
     return status;
 }
 
-static bool probe_module(void)
+static bool probe_module_once(void)
 {
-    for (unsigned attempt = 0U; attempt < 5U; ++attempt) {
-        vw553_at_result_t result = VW553_AT_RESULT_NONE;
-        if (vw553_uart_transport_transact("AT", 2U, false, 1000U, &result) == OPRT_OK &&
-            result == VW553_AT_RESULT_OK) return true;
-        vTaskDelay(pdMS_TO_TICKS(200U) ? pdMS_TO_TICKS(200U) : 1U);
+    vw553_at_result_t result = VW553_AT_RESULT_NONE;
+    int32_t status = vw553_uart_transport_transact("AT", 2U, false, VW553_AT_PROBE_TIMEOUT_MS, &result);
+    return status == OPRT_OK && result == VW553_AT_RESULT_OK;
+}
+
+static bool probe_module_callback(void *context)
+{
+    (void)context;
+    return probe_module_once();
+}
+
+static bool request_module_soft_reset(void *context)
+{
+    (void)context;
+    taskENTER_CRITICAL();
+    s_ready_observed = false;
+    taskEXIT_CRITICAL();
+    vw553_at_result_t result = VW553_AT_RESULT_NONE;
+    int32_t status = vw553_uart_transport_transact("AT+RST", sizeof("AT+RST") - 1U, false,
+                                                   VW553_SOFT_RESET_TIMEOUT_MS, &result);
+    bool accepted = status == OPRT_OK && result == VW553_AT_RESULT_OK;
+    VW553_SUMMARY("module AT+RST %s status=%ld result=%d", accepted ? "accepted" : "failed",
+                  (long)status, (int)result);
+    return accepted;
+}
+
+static bool wait_module_ready(void *context, uint32_t timeout_ms)
+{
+    (void)context;
+    uint32_t start = device_now_ms();
+    for (;;) {
+        bool ready = false;
+        taskENTER_CRITICAL();
+        ready = s_ready_observed;
+        taskEXIT_CRITICAL();
+        if (ready) return true;
+        if ((uint32_t)(device_now_ms() - start) >= timeout_ms) return false;
+        vTaskDelay(pdMS_TO_TICKS(10U) ? pdMS_TO_TICKS(10U) : 1U);
     }
-    return false;
+}
+
+static bool recover_module_transport(void *context)
+{
+    (void)context;
+    int32_t status = recover_transport_when_idle();
+    return status == OPRT_OK;
+}
+
+static bool reset_module_hardware(void *context)
+{
+    (void)context;
+    vw553_device_reset();
+    return true;
+}
+
+static const vw553_module_reset_ops_t s_module_reset_ops = {
+    .probe = probe_module_callback,
+    .request_soft_reset = request_module_soft_reset,
+    .wait_ready = wait_module_ready,
+    .recover_transport = recover_module_transport,
+    .hardware_reset = reset_module_hardware,
+};
+
+static int32_t run_module_reset_locked(vw553_module_reset_mode_t mode)
+{
+    taskENTER_CRITICAL();
+    s_module_reset_active = true;
+    s_ready_observed = false;
+    taskEXIT_CRITICAL();
+
+    vw553_module_reset_result_t result = {0};
+    bool ok = vw553_module_reset_run(mode, &s_module_reset_ops, NULL, VW553_READY_TIMEOUT_MS, &result);
+
+    taskENTER_CRITICAL();
+    s_module_reset_active = false;
+    s_ready_observed = false;
+    taskEXIT_CRITICAL();
+
+    record_reset_attempt(&result, device_now_ms());
+    if (result.software_reset_requested || result.hardware_reset_attempted) {
+        const vw553_device_event_t event = {.kind = VW553_DEVICE_EVENT_RESET};
+        dispatch(&event);
+    }
+    if (result.software_reset_requested) VW553_SUMMARY("module soft reset complete ok=%d", ok ? 1 : 0);
+    if (result.hardware_reset_attempted) VW553_SUMMARY("module hardware reset fallback complete ok=%d", ok ? 1 : 0);
+    return ok ? OPRT_OK : OPRT_COM_ERROR;
+}
+
+static void mark_module_initialized(void)
+{
+    taskENTER_CRITICAL();
+    s_module_initialized = true;
+    s_module_initialization_failed = false;
+    taskEXIT_CRITICAL();
+}
+
+static int32_t ensure_module_startup_reset(void)
+{
+    if (!s_module_reset_mutex) return OPRT_RESOURCE_NOT_READY;
+    if (xSemaphoreTake(s_module_reset_mutex, pdMS_TO_TICKS(VW553_RESET_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        return OPRT_RESOURCE_NOT_READY;
+    }
+
+    int32_t status = OPRT_OK;
+    bool initialized;
+    bool failed;
+    taskENTER_CRITICAL();
+    initialized = s_module_initialized;
+    failed = s_module_initialization_failed;
+    taskEXIT_CRITICAL();
+    if (!initialized) {
+        if (failed) {
+            status = OPRT_COM_ERROR;
+        } else {
+            status = run_module_reset_locked(VW553_MODULE_RESET_STARTUP);
+            if (status == OPRT_OK) {
+                mark_module_initialized();
+                VW553_SUMMARY("module startup reset complete");
+            } else {
+                taskENTER_CRITICAL();
+                s_module_initialization_failed = true;
+                taskEXIT_CRITICAL();
+                VW553_SUMMARY("module startup reset failed status=%ld", (long)status);
+                request_recovery();
+            }
+        }
+    }
+    xSemaphoreGive(s_module_reset_mutex);
+    return status;
+}
+
+static int32_t recover_module_after_fault(void)
+{
+    if (!s_module_reset_mutex) return OPRT_RESOURCE_NOT_READY;
+    if (xSemaphoreTake(s_module_reset_mutex, pdMS_TO_TICKS(VW553_RESET_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+        return OPRT_RESOURCE_NOT_READY;
+    }
+
+    int32_t status = recover_transport_when_idle();
+    bool probed = status == OPRT_OK && probe_module_once();
+    if (!probed) {
+        uint32_t now = device_now_ms();
+        if (!reset_allowed(now)) {
+            VW553_SUMMARY("module reset suppressed by recovery policy");
+            xSemaphoreGive(s_module_reset_mutex);
+            return OPRT_COM_ERROR;
+        }
+        status = run_module_reset_locked(VW553_MODULE_RESET_SOFT_FIRST);
+        probed = status == OPRT_OK;
+    }
+    if (probed) {
+        mark_module_initialized();
+        status = vw553_uart_transport_negotiate(10000U);
+    } else {
+        status = OPRT_COM_ERROR;
+    }
+    xSemaphoreGive(s_module_reset_mutex);
+    return status;
 }
 
 static void recovery_task(void *argument)
@@ -218,51 +404,20 @@ static void recovery_task(void *argument)
         vTaskDelay(pdMS_TO_TICKS(50U) ? pdMS_TO_TICKS(50U) : 1U);
         if (s_isp_mode) continue;
 
-        int32_t status = OPRT_COM_ERROR;
-        for (unsigned attempt = 0U; attempt < 3U; ++attempt) {
-            status = recover_transport_when_idle();
-            if (status == OPRT_OK) status = vw553_device_negotiate(10000U);
-            if (status == OPRT_OK) break;
-            /* A poisoned link usually clears by itself within a few hundred
-             * milliseconds. Resetting the module wipes the SoftAP/Wi-Fi state
-             * that the application layer will not re-apply, so keep probing
-             * before falling back to a destructive reset. */
-            if (attempt + 1U < 3U) {
-                vTaskDelay(pdMS_TO_TICKS(300U) ? pdMS_TO_TICKS(300U) : 1U);
-            }
-        }
-        if (status == OPRT_OK) {
-            VW553_LOG("transport recovered without module reset");
-            continue;
-        }
-
-        uint32_t now = device_now_ms();
-        if (!reset_allowed(now)) {
-            VW553_LOG("module reset suppressed by recovery policy");
-            continue;
-        }
-        ++s_reset_window_count;
-        s_last_reset_ms = now;
-        VW553_LOG("module reset recovery count=%lu", (unsigned long)s_reset_window_count);
-
-        vw553_device_reset();
-        status = vw553_uart_transport_recover();
-        if (status == OPRT_OK && probe_module()) status = vw553_device_negotiate(10000U);
-        else status = OPRT_COM_ERROR;
-
-        const vw553_device_event_t event = {.kind = VW553_DEVICE_EVENT_RESET};
-        dispatch(&event);
-        if (status == OPRT_OK) VW553_LOG("module reset recovery complete");
-        else VW553_LOG("module reset recovery failed status=%ld", (long)status);
+        int32_t status = recover_module_after_fault();
+        if (status == OPRT_OK) VW553_SUMMARY("module transport recovery complete");
+        else VW553_SUMMARY("module transport recovery failed status=%ld", (long)status);
     }
 }
 
 static void start_recovery_task(void)
 {
+    if (!s_module_reset_mutex) s_module_reset_mutex = xSemaphoreCreateMutex();
     if (s_recovery_task_started) return;
     if (!s_recovery_signal) s_recovery_signal = xSemaphoreCreateBinary();
-    if (s_recovery_signal && xTaskCreate(recovery_task, "553_recovery", VW553_RECOVERY_STACK_SIZE, NULL,
-                                        VW553_RECOVERY_PRIORITY, NULL) == pdPASS) {
+    if (s_module_reset_mutex && s_recovery_signal &&
+        xTaskCreate(recovery_task, "553_recovery", VW553_RECOVERY_STACK_SIZE, NULL,
+                    VW553_RECOVERY_PRIORITY, NULL) == pdPASS) {
         s_recovery_task_started = true;
     } else {
         VW553_LOG("recovery task start failed");
@@ -347,6 +502,8 @@ int32_t vw553_device_negotiate(uint32_t timeout_ms)
     if (s_isp_mode) return OPRT_RESOURCE_NOT_READY;
     int32_t status = vw553_device_init();
     if (status != OPRT_OK) return status;
+    status = ensure_module_startup_reset();
+    if (status != OPRT_OK) return status;
     status = vw553_uart_transport_negotiate(timeout_ms);
     if (status != OPRT_OK && vw553_uart_transport_is_poisoned()) request_recovery();
     return status;
@@ -356,6 +513,8 @@ int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_resul
 {
     if (s_isp_mode) return OPRT_RESOURCE_NOT_READY;
     int32_t status = vw553_device_init();
+    if (status != OPRT_OK) return status;
+    status = ensure_module_startup_reset();
     if (status != OPRT_OK) return status;
     status = vw553_uart_transport_execute(request, result);
     if (status != OPRT_OK && vw553_uart_transport_is_poisoned()) request_recovery();
