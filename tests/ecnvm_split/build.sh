@@ -5,20 +5,25 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 tool_bin="/opt/gcc-arm-none-eabi-10.3-2021.10/bin"
 out_dir="${repo_root}/.cache/gd32h779v_start/ecnvm-split"
 gd_dir="${repo_root}/platform/GD32H77X/gd32h77x_os/gd32"
-main_dir="${repo_root}/platform/GD32H77X/gd32h77x_os/main"
+target_dir="${repo_root}/platform/GD32H77X/gd32h77x_os/target"
 cmsis="${gd_dir}/CMSIS/GD/GD32H77x_78x"
 periph="${gd_dir}/GD32H77x_78x_standard_peripheral"
-board="${repo_root}/boards/GD32H77X/GD32H779V_START"
+config_dir="${out_dir}/platform_config"
 src_dir="${repo_root}/platform/GD32H77X/tests/ecnvm_split"
 cc="${tool_bin}/arm-none-eabi-gcc"
 objcopy="${tool_bin}/arm-none-eabi-objcopy"
 
 mkdir -p "${out_dir}"
+"${repo_root}/.venv/bin/python" "${repo_root}/platform/GD32H77X/platform_config.py" \
+    --platform-root "${repo_root}/platform/GD32H77X" \
+    --boards-root "${repo_root}/boards" \
+    --chip GD32H779VW --board GD32H779V_START \
+    --out-dir "${config_dir}"
 common=(
     -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
     -ffunction-sections -fdata-sections -fno-common -Os -g3
     -DGD32H779XW -DUSE_STDPERIPH_DRIVER -DHXTAL_VALUE=25000000U
-    -I"${board}" -I"${main_dir}" -I"${cmsis}/Include" -I"${cmsis}/Source" -I"${gd_dir}/CMSIS" -I"${periph}/Include"
+    -I"${config_dir}/include" -I"${target_dir}" -I"${cmsis}/Include" -I"${cmsis}/Source" -I"${gd_dir}/CMSIS" -I"${periph}/Include"
 )
 
 "${cc}" "${common[@]}" -c "${src_dir}/ecnvm_split.c" -o "${out_dir}/ecnvm_split.o"

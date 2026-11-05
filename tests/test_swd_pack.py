@@ -26,14 +26,15 @@ def _official_pack():
     configured = os.environ.get("GD32H77X_DFP_PACK", "")
     if configured:
         return Path(configured).expanduser()
-    return None
+    return (ROOT / "gd32h77x_os/tools/packs"
+            / "GigaDevice.GD32H77x_78x_DFP.0.6.1.pack")
 
 
 class TestGd32h77xSwdPack(unittest.TestCase):
     def setUp(self):
         self.pack = _official_pack()
         if self.pack is None or not self.pack.is_file():
-            self.skipTest("set GD32H77X_DFP_PACK to the approved local GigaDevice DFP 0.6.1")
+            self.skipTest("approved in-repository GigaDevice DFP 0.6.1 is unavailable")
 
     def _validate(self, chip):
         identity = resolver.resolve_chip_identity(chip, ROOT)
@@ -95,7 +96,7 @@ class TestGd32h77xSwdPack(unittest.TestCase):
     def test_pack_rejects_registry_capacity_mismatch(self):
         identity, geometry = self._validate("GD32H77DII")
         geometry["capacity_bytes"] = 2 * 1024 * 1024
-        with self.assertRaisesRegex(swd_pack.PackValidationError, "IROM1 region"):
+        with self.assertRaisesRegex(swd_pack.PackValidationError, "CNVM region"):
             swd_pack.validate_pack(self.pack, identity["canonical_chip"], geometry)
 
     def test_pack_rejects_hash_mismatch(self):

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Geometry-driven flash bridge for the GD32H77X platform.
 
-``flash.cfg`` selects the backend:
+Flash settings come from the platform-owned Kconfig. Target identity is derived from
+``CHIP_CHOICE`` and the build-bound canonical device registry:
 
 ``dfu``
     Native DfuSe over libusb. Erase sectors and capacity come from the resolved
@@ -35,35 +36,101 @@ import sys
 import tempfile
 import json
 import csv
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from platform_config import backend_from_config, resolve_config
+
+
 _PLATFORM = "GD32H77X"
 _BACKENDS = ("dfu", "swd", "uart")
+
+# GD32 ROM DFU protocol constants. These are fixed by the ROM loader and are
+# not board/application configuration.
+_DFU_USB_VID = "28e9"
+_DFU_USB_PID = "0189"
+_DFU_ALT = "0"
+_DFU_ALT_NAME = "InternalFlash"
+_DFU_LEAVE = "n"
+_UART_ISP_ERASE_MODE = "extended"
 _DFUSE_MODULE = None
 _FLASH_PACKAGE_MODULE = None
 _OSPI_MODULE = None
 _UART_ISP_MODULE = None
+_SWD_PACK_NAME = "GigaDevice.GD32H77x_78x_DFP.0.6.1.pack"
+
+
+def _resolve_swd_pack(config=None) -> str:
+    """Resolve the approved DFP with environment override and local auto-discovery."""
+    configured = ((config or {}).get("CONFIG_FLASH_SWD_PACK", "").strip()
+                  or os.environ.get("GD32H77X_DFP_PACK", "").strip())
+    if configured:
+        return str(Path(configured).expanduser().resolve())
+
+    platform_root = Path(__file__).resolve().parent
+    open_root = platform_root.parents[1]
+    home = Path.home()
+    direct_candidates = (
+        platform_root / "gd32h77x_os" / "tools" / "packs" / _SWD_PACK_NAME,
+        platform_root / "tools" / "packs" / _SWD_PACK_NAME,
+        open_root / "tools" / "packs" / _SWD_PACK_NAME,
+    )
+    search_roots = (
+        open_root / ".tools",
+        open_root / ".cache",
+        home / ".cache" / "pyocd" / "packs",
+        home / ".pyocd" / "packs",
+    )
+    for candidate in direct_candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.rglob(_SWD_PACK_NAME)):
+            if candidate.is_file():
+                return str(candidate.resolve())
+
+    # Development workspaces often keep the vendor SDK beside TuyaOpen.
+    workspace = platform_root.parents[2]
+    sibling_sdk = workspace / "H779_553"
+    if sibling_sdk.is_dir():
+        for candidate in sorted(sibling_sdk.rglob(_SWD_PACK_NAME)):
+            if candidate.is_file():
+                return str(candidate.resolve())
+    return ""
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-def _parse_cfg_file(path: str) -> Dict[str, str]:
-    values: Dict[str, str] = {}
-    if not os.path.isfile(path):
-        return values
-    with open(path, "r", encoding="utf-8") as cfg:
-        for line in cfg:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if key.startswith("CONFIG_"):
-                values[key] = value.strip().strip('"')
-    return values
+def _platform_config(using_data: dict, boards_root: str) -> Dict[str, str]:
+    board = using_data.get("CONFIG_BOARD_CHOICE", "")
+    chip = _chip_from_using(using_data)
+    project_config = (Path(boards_root) / _PLATFORM / board / "platform_config"
+                      / "gd32h77x.config")
+    return resolve_config(
+        Path(__file__).resolve().parent, chip,
+        project_config if project_config.is_file() else None)
+
+
+def _uart_expected_id(platform_root: Path, canonical_chip: str) -> str:
+    path = (platform_root / "gd32h77x_os" / "chips" / canonical_chip
+            / "uart_isp.json")
+    if not path.is_file():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid UART ISP identity file {path}: {exc}") from exc
+    expected_id = data.get("expected_id", "")
+    if not isinstance(expected_id, str) or not expected_id.strip():
+        raise ValueError(f"Invalid expected_id in {path}")
+    return expected_id.strip()
 
 
 def _board_flash_config(using_data: dict, boards_root: str) -> Dict[str, str]:
@@ -74,18 +141,46 @@ def _board_flash_config(using_data: dict, boards_root: str) -> Dict[str, str]:
     if platform != _PLATFORM:
         raise ValueError(
             f"GD32H77X flash bridge called for platform {platform}")
-    path = os.path.join(boards_root, platform, board, "flash.cfg")
-    config = _parse_cfg_file(path)
-    if not config:
-        raise ValueError(f"No board flash configuration found: {path}")
-    config["_CONFIG_DIR"] = os.path.dirname(path)
+
+    platform_root = Path(__file__).resolve().parent
+    platform_config = _platform_config(using_data, boards_root)
+    backend = backend_from_config(platform_config)
+    identity = _load_platform_device(_chip_from_using(using_data))
+    canonical_chip = identity["canonical_chip"]
+    board_dir = Path(boards_root) / platform / board / "platform_config"
+    config: Dict[str, str] = {
+        "CONFIG_FLASH_BACKEND": backend,
+        "CONFIG_FLASH_VERIFY": "y",
+        "CONFIG_FLASH_USB_VID": _DFU_USB_VID,
+        "CONFIG_FLASH_USB_PID": _DFU_USB_PID,
+        "CONFIG_FLASH_USB_SERIAL": "",
+        "CONFIG_FLASH_DFU_ALT": _DFU_ALT,
+        "CONFIG_FLASH_DFU_ALT_NAME": _DFU_ALT_NAME,
+        "CONFIG_FLASH_DFU_LEAVE": _DFU_LEAVE,
+        "CONFIG_FLASH_UART_PORT": "",
+        "CONFIG_FLASH_UART_BAUD": "auto",
+        "CONFIG_FLASH_UART_EXPECTED_ID": _uart_expected_id(
+            platform_root, canonical_chip),
+        "CONFIG_FLASH_UART_OSPI_PROFILES": "",
+        "CONFIG_FLASH_UART_VERIFY": "",
+        "CONFIG_FLASH_UART_ERASE_MODE": _UART_ISP_ERASE_MODE,
+        "CONFIG_FLASH_SWD_PACK": _resolve_swd_pack(),
+        "CONFIG_FLASH_SWD_PROBE": "",
+        "CONFIG_FLASH_TARGET_CHIP": canonical_chip,
+        "CONFIG_FLASH_SWD_TARGET": canonical_chip,
+        "_CONFIG_DIR": str(board_dir if board_dir.is_dir()
+                           else platform_root),
+    }
+    profiles = board_dir / "ospi_profiles.csv"
+    if profiles.is_file():
+        config["CONFIG_FLASH_UART_OSPI_PROFILES"] = profiles.name
     return config
 
 
 def _required(config: Dict[str, str], key: str) -> str:
     value = config.get(key, "").strip()
     if not value:
-        raise ValueError(f"Missing {key} in board flash.cfg")
+        raise ValueError(f"Missing {key} in GD32H77X flash configuration")
     return value
 
 
@@ -101,34 +196,21 @@ def _boolean(config: Dict[str, str], key: str, default: bool) -> bool:
 
 
 def _backend(config: Dict[str, str]) -> str:
-    backend = (config.get("CONFIG_FLASH_BACKEND", "dfu").strip() or "dfu").lower()
+    backend = (config.get("CONFIG_FLASH_BACKEND", "swd").strip() or "swd").lower()
     if backend == "dfuse":
         backend = "dfu"
     if backend in ("serial", "isp"):
         backend = "uart"
     if backend == "dfu-util":
         raise ValueError(
-            "CONFIG_FLASH_BACKEND=dfu-util is disabled for GD32H77X: stock-tool erase behavior "
+            "The dfu-util backend is disabled for GD32H77X: stock-tool erase behavior "
             "against the ROM's 4 KiB descriptor is not verified for 64 KiB CNVM sectors. "
             "Use native 'dfu', 'swd', or 'uart'.")
     if backend not in _BACKENDS:
         raise ValueError(
-            "Unsupported CONFIG_FLASH_BACKEND={}; choose {}".format(
+            "Unsupported flash backend '{}'; choose {}".format(
                 backend, ", ".join(_BACKENDS)))
     return backend
-
-
-def get_flash_artifact(using_data: dict, default_bin):
-    """Prefer the self-contained build package when the platform emitted it."""
-    package = Path(default_bin).with_suffix(".tufw")
-    app_root = Path(default_bin).resolve().parent.parent.parent
-    external_csv = app_root / "flash_payloads.csv"
-    if package.is_file():
-        return package
-    if external_csv.is_file():
-        raise ValueError(
-            f"{external_csv} requests external flash payloads but its .tufw package is missing; rebuild")
-    return None
 
 
 def _flash_package_module():
@@ -329,10 +411,10 @@ def _validate_manifest(image: Path, boards_root: str, using_data: dict) -> Tuple
     chip = _chip_from_using(using_data)
     if (report["board"], report["chip"]) != (board, chip):
         raise ValueError("Build-bound layout report board/chip does not match selected target")
-    config_ecnvm = str(using_data.get("CONFIG_GD32H77X_ECNVM_CODE", "n")).lower() in ("y", "1", "true")
-    if bool(report.get("ecnvmCodeEnabled", False)) != config_ecnvm:
-        raise ValueError("Build ECNVM_CODE configuration differs from selected configuration; rebuild")
     current = _resolve_current_layout(boards_root, board, chip)
+    layout_ecnvm = "ecnvm_code" in current.get("layout", {}).get("partitions", {})
+    if bool(report.get("ecnvmCodeEnabled", False)) != layout_ecnvm:
+        raise ValueError("Build report ECNVM mode differs from the current board layout; rebuild")
     source = current.get("source", {})
     if (report["sourceKind"] != source.get("sourceKind")
             or report["sourceDigest"] != source.get("sourceDigest")
@@ -354,9 +436,9 @@ def _validate_manifest(image: Path, boards_root: str, using_data: dict) -> Tuple
     if not elf.is_file() or _sha256_file(elf) != report["elfSha256"]:
         raise ValueError("Firmware ELF is missing or its digest does not match the build-bound report")
     mapped = report.get("mapped_payloads", [])
-    if config_ecnvm:
+    if layout_ecnvm:
         if not isinstance(mapped, list) or len(mapped) != 1:
-            raise ValueError("ECNVM_CODE is enabled but report has no unique ECNVM payload")
+            raise ValueError("Layout declares ecnvm_code but report has no unique ECNVM payload")
         item = mapped[0]
         filename = item.get("file") if isinstance(item, dict) else None
         if (not isinstance(filename, str) or not filename or filename in (".", "..")
@@ -377,7 +459,7 @@ def _validate_manifest(image: Path, boards_root: str, using_data: dict) -> Tuple
         if (not sidecar.is_file() or _sha256_file(sidecar) != item.get("sha256")):
             raise ValueError("ECNVM sidecar is missing or differs from its build-bound report")
     elif mapped:
-        raise ValueError("ECNVM payload is present while ECNVM_CODE is disabled")
+        raise ValueError("ECNVM payload is present while the current layout has no ecnvm_code partition")
 
     layout = current.get("layout", {})
     flash_image = layout.get("flash_image", {})
@@ -618,11 +700,13 @@ def _select_dfu_interface(interfaces: List[dict], alt: int, name_marker: str,
         f"0x08000000; detected names: {names or '(empty)'}")
 
 
-def _choose_dfu_device(candidates, usb_path: str, expected_serial: str, logger):
-    if usb_path:
-        candidates = [entry for entry in candidates if entry[0].path == usb_path]
+def _choose_dfu_device(candidates, selector: str, expected_serial: str, logger):
+    if selector:
+        candidates = [entry for entry in candidates
+                      if entry[0].path == selector or entry[0].serial == selector]
         if not candidates:
-            raise RuntimeError(f"No DFU device at USB path {usb_path}")
+            raise RuntimeError(
+                f"No DFU device matches configured USB path or serial {selector!r}")
     if expected_serial:
         candidates = [entry for entry in candidates if entry[0].serial == expected_serial]
         if not candidates:
@@ -737,7 +821,7 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
         if leave:
             protocol.leave()
         message = ("DfuSe download and verification complete" if verify else
-                   "DfuSe download complete; readback verification skipped by CONFIG_FLASH_VERIFY=n")
+                   "DfuSe download complete; readback verification disabled by internal flash policy")
         return {"success": True, "message": message}
     finally:
         for opened in opened_devices:
@@ -755,20 +839,25 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
 def _flash_uart(config, report, current_layout, image, external_payloads,
                 port, baud, start, limit, capacity, device_geometry, logger):
     uart = _uart_isp_module()
-    expected_id = _hex_config_bytes(
-        config, "CONFIG_FLASH_UART_EXPECTED_ID", "", None)
+    try:
+        expected_id = _hex_config_bytes(
+            config, "CONFIG_FLASH_UART_EXPECTED_ID", "", None)
+    except ValueError as exc:
+        raise ValueError(
+            "UART ISP expected ID is missing or invalid in "
+            "chips/<canonical_chip>/uart_isp.json") from exc
     expected_chip = _required(config, "CONFIG_FLASH_TARGET_CHIP")
     ospi_profiles = None
     if external_payloads:
         profile_file = _required(config, "CONFIG_FLASH_UART_OSPI_PROFILES")
         configured_path = Path(profile_file)
         if configured_path.is_absolute():
-            raise ValueError("CONFIG_FLASH_UART_OSPI_PROFILES must be relative to flash.cfg")
+            raise ValueError("UART OSPI profile path must be relative to the board/platform directory")
         config_dir = Path(config["_CONFIG_DIR"]).resolve()
         profile_path = (config_dir / configured_path).resolve()
         if not profile_path.is_relative_to(config_dir):
             raise ValueError(
-                "CONFIG_FLASH_UART_OSPI_PROFILES must stay within the flash.cfg directory")
+                "UART OSPI profile path must stay within the board/platform directory")
         if not profile_path.is_file():
             raise ValueError(f"UART OSPI profile CSV does not exist: {profile_path}")
         ospi_profiles = {}
@@ -798,8 +887,6 @@ def _flash_uart(config, report, current_layout, image, external_payloads,
         except (OSError, UnicodeError, csv.Error) as exc:
             raise ValueError(f"Cannot read UART OSPI profile CSV {profile_path}: {exc}") from exc
     port_value = str(port or "").strip()
-    if not port_value:
-        port_value = config.get("CONFIG_FLASH_UART_PORT", "").strip()
     if not port_value:
         try:
             from serial.tools import list_ports
@@ -841,14 +928,12 @@ def _flash_uart(config, report, current_layout, image, external_payloads,
     configured_baud = config.get("CONFIG_FLASH_UART_BAUD", "").strip()
     if baud:
         selected_baud = int(baud)
-    elif configured_baud.lower() in ("auto", "0"):
+    elif configured_baud.lower() in ("auto", "0", ""):
         selected_baud = "auto"
-    elif configured_baud:
-        selected_baud = int(configured_baud, 0)
     else:
-        selected_baud = "auto"
+        selected_baud = int(configured_baud, 0)
     if selected_baud != "auto" and selected_baud <= 0:
-        raise ValueError("CONFIG_FLASH_UART_BAUD must be a positive integer or auto")
+        raise ValueError("UART baud must be a positive integer or auto")
 
     start = int(start)
     limit = int(limit)
@@ -872,15 +957,9 @@ def _flash_uart(config, report, current_layout, image, external_payloads,
     if external_payloads and current_layout is None:
         raise ValueError("UART external payloads require the current resolved layout")
 
-    uart_verify_override = bool(config.get("CONFIG_FLASH_UART_VERIFY", "").strip())
-    verify = _boolean(
-        config, "CONFIG_FLASH_UART_VERIFY",
-        _boolean(config, "CONFIG_FLASH_VERIFY", True))
-    verify_key = ("CONFIG_FLASH_UART_VERIFY" if uart_verify_override
-                  else "CONFIG_FLASH_VERIFY")
-    erase_mode = config.get("CONFIG_FLASH_UART_ERASE_MODE", "extended").strip().lower()
-    if erase_mode not in ("extended", "base"):
-        raise ValueError("CONFIG_FLASH_UART_ERASE_MODE must be extended or base")
+    verify = _boolean(config, "CONFIG_FLASH_VERIFY", True)
+    verify_key = "readback verification"
+    erase_mode = _UART_ISP_ERASE_MODE
 
     if logger:
         baud_text = ("auto (ROM baud capture)" if selected_baud == "auto"
@@ -922,7 +1001,7 @@ def _flash_uart(config, report, current_layout, image, external_payloads,
     else:
         stage = "CNVM"
     verification = ("readback verified" if verify else
-                    f"readback verification skipped by {verify_key}=n")
+                    "readback verification disabled")
     return {
         "success": True,
         "message": f"UART ROM ISP complete on {port_value} at {actual_baud} 8E1; "
@@ -940,7 +1019,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
         pyocd_version = importlib.metadata.version("pyocd")
     except importlib.metadata.PackageNotFoundError:
         raise RuntimeError(
-            "CONFIG_FLASH_BACKEND=swd needs pyocd; install the pinned optional "
+            "SWD flashing needs pyocd; install the pinned optional "
             "dependencies in the SDK Python environment")
     if pyocd_version != "0.46.0":
         raise RuntimeError(
@@ -957,19 +1036,13 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
     chip = report["chip"]
     identity = resolver.resolve_chip_identity(chip, platform_root)
     target = report.get("layout", {}).get("target_chip", "")
-    configured_target = config.get("CONFIG_FLASH_SWD_TARGET", "").strip()
     if target != identity["canonical_chip"]:
         raise ValueError("Build-bound canonical target does not match the selected device registry")
-    if configured_target and configured_target.upper() != target:
-        raise ValueError(
-            f"CONFIG_FLASH_SWD_TARGET={configured_target} conflicts with build target {target}; "
-            "SWD target override cannot change the selected flash geometry")
-    pack = (config.get("CONFIG_FLASH_SWD_PACK", "").strip()
-            or os.environ.get("GD32H77X_DFP_PACK", "").strip())
+    pack = _resolve_swd_pack(config)
     if not pack:
         raise ValueError(
-            "SWD requires CONFIG_FLASH_SWD_PACK or GD32H77X_DFP_PACK pointing to "
-            "GigaDevice.GD32H77x_78x_DFP.0.6.1.pack")
+            "SWD requires the approved GigaDevice.GD32H77x_78x_DFP.0.6.1.pack; "
+            "install it in a standard PyOCD/TuyaOpen location or set GD32H77X_DFP_PACK")
     pack = str(Path(pack).expanduser().resolve())
     geometry = {
         "capacity_bytes": identity["cnvm_capacity_bytes"],
@@ -1052,11 +1125,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
             raise RuntimeError(
                 f"pyOCD did not expose exactly one {target} target from the selected DFP")
 
-        configured_probe = config.get("CONFIG_FLASH_SWD_PROBE", "").strip()
-        port_probe = str(port or "").strip()
-        if port_probe and configured_probe and port_probe != configured_probe:
-            raise ValueError("-p/--port probe selector conflicts with CONFIG_FLASH_SWD_PROBE")
-        probe_hint = port_probe or configured_probe
+        probe_hint = str(port or "").strip()
         probe_result = _run_pyocd(
             [*pyocd, "json", "--probes", *common], logger, isolated, env)
         if probe_result[0] != 0:
@@ -1143,7 +1212,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
                 message = f"SWD download complete; {transfer_size} padded CNVM bytes read back and verified"
             else:
                 message = ("SWD download complete; readback verification skipped by "
-                           "CONFIG_FLASH_VERIFY=n")
+                           "GD32H77X_FLASH_VERIFY=0")
             return {"success": True, "message": message}
         finally:
             if os.path.exists(temp_image):
@@ -1169,17 +1238,13 @@ def _preflight_swd_external(config, report, image, port, start, limit,
     spec.loader.exec_module(resolver)
     identity = resolver.resolve_chip_identity(report["chip"], platform_root)
     target = report.get("layout", {}).get("target_chip", "")
-    configured_target = config.get("CONFIG_FLASH_SWD_TARGET", "").strip()
     if target != identity["canonical_chip"]:
         raise ValueError("Build-bound canonical target does not match the selected device registry")
-    if configured_target and configured_target.upper() != target:
-        raise ValueError(
-            f"CONFIG_FLASH_SWD_TARGET={configured_target} conflicts with build target {target}")
 
-    pack = (config.get("CONFIG_FLASH_SWD_PACK", "").strip()
-            or os.environ.get("GD32H77X_DFP_PACK", "").strip())
+    pack = _resolve_swd_pack(config)
     if not pack:
-        raise ValueError("External OSPI flashing requires CONFIG_FLASH_SWD_PACK or GD32H77X_DFP_PACK")
+        raise ValueError(
+            "External OSPI flashing requires the approved GD32H77x CMSIS-Pack")
     pack = str(Path(pack).expanduser().resolve())
     geometry = {
         "capacity_bytes": identity["cnvm_capacity_bytes"],
@@ -1220,13 +1285,7 @@ def _preflight_swd_external(config, report, image, port, start, limit,
              and entry.get("source") == "pack"]
     if len(found) != 1:
         raise RuntimeError(f"pyOCD did not expose exactly one {target} target from the selected DFP")
-    configured_probe = config.get("CONFIG_FLASH_SWD_PROBE", "").strip()
-    port_probe = str(port or "").strip()
-    if (port_probe and configured_probe
-            and port_probe not in configured_probe
-            and configured_probe not in port_probe):
-        raise ValueError("-p/--port probe selector conflicts with CONFIG_FLASH_SWD_PROBE")
-    probe_hint = max((port_probe, configured_probe), key=len)
+    probe_hint = str(port or "").strip()
     with tempfile.TemporaryDirectory(prefix="gd32h77x-pyocd-probes-") as temp_dir:
         isolated = Path(temp_dir)
         env = os.environ.copy()
@@ -1258,8 +1317,7 @@ def _flash_swd_with_ospi(config, report, current_layout, image, external_payload
     flash = getattr(ospi, "flash_ospi", None)
     if not callable(prepare) or not callable(flash):
         raise RuntimeError("GD32H77X OSPI writer has no preflight/program API")
-    pack_path = (_pack or config.get("CONFIG_FLASH_SWD_PACK", "").strip()
-                 or os.environ.get("GD32H77X_DFP_PACK", "").strip())
+    pack_path = _pack or _resolve_swd_pack(config)
     try:
         plan = prepare(current_layout, external_payloads, pack_path, probe_hint or None)
     except Exception as exc:
@@ -1313,14 +1371,10 @@ def _execute_ospi_then_cnvm(config, report, image, external_payloads,
         if verify:
             logger.info("OSPI explicit payload readback verified on probe {}".format(selected_probe))
         else:
-            logger.info("OSPI explicit payload programmed; readback verification skipped by CONFIG_FLASH_VERIFY=n")
-    swd_config = dict(config)
-    # Bind the second stage to the exact probe selected during OSPI preflight,
-    # even when the user's original selector was a unique substring.
-    swd_config["CONFIG_FLASH_SWD_PROBE"] = selected_probe
+            logger.info("OSPI explicit payload programmed; readback verification disabled by internal flash policy")
     try:
         internal_result = _flash_swd(
-            swd_config, report, image, selected_probe,
+            config, report, image, selected_probe,
             start, limit, capacity, logger)
     except Exception as exc:
         return {"success": False,
@@ -1333,7 +1387,7 @@ def _execute_ospi_then_cnvm(config, report, image, external_payloads,
                     partition_names or "explicit partitions", selected_probe,
                     internal_result.get("message", "unknown error"))}
     verification = ("OSPI and CNVM payloads read back and verified" if verify else
-                    "OSPI and CNVM programmed; readback verification skipped by CONFIG_FLASH_VERIFY=n")
+                    "OSPI and CNVM programmed; readback verification disabled by internal flash policy")
     return {"success": True,
             "message": f"{verification}; OSPI partitions {partition_names or '(package payloads)'} completed before CNVM boot+primary"}
 
@@ -1368,7 +1422,7 @@ def _select_swd_probe(probes: List[dict], selector: str):
             matches = [entry for entry in probes
                        if selector in entry.get("unique_id", "")]
         if not matches:
-            raise RuntimeError(f"No SWD probe matches -p/CONFIG_FLASH_SWD_PROBE {selector!r}")
+            raise RuntimeError(f"No SWD probe matches -p/--port {selector!r}")
     else:
         matches = list(probes)
     if not matches:
@@ -1382,7 +1436,7 @@ def _select_swd_probe(probes: List[dict], selector: str):
         identifiers = ", ".join(entry.get("unique_id", "?") for entry in matches)
         raise RuntimeError(
             "Multiple SWD probes are connected in non-interactive mode; rerun with "
-            f"-p/--port or CONFIG_FLASH_SWD_PROBE and one probe ID ({identifiers})")
+            f"-p/--port with one probe ID ({identifiers})")
     for _ in range(3):
         try:
             answer = input("Select SWD probe by number (q to cancel): ").strip()
@@ -1404,40 +1458,46 @@ def _select_swd_probe(probes: List[dict], selector: str):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def platform_flash(using_data, binfile, port, baud, boards_root, logger):
+def platform_flash(using_data, binfile, port, baud, boards_root, logger,
+                   verify=True):
     """Called by tos.py flash after the standard build artifact check."""
     package_temp = None
     try:
         config = _board_flash_config(using_data, boards_root)
+        config["CONFIG_FLASH_VERIFY"] = "y" if verify else "n"
+        port = str(port or "").strip()
         backend = _backend(config)
         if baud and backend != "uart":
             raise ValueError(
-                "GD32H77X -b/--baud is only valid with CONFIG_FLASH_BACKEND=uart; "
-                f"backend {backend} does not use a UART baud rate")
+                "GD32H77X -b/--baud is only valid with the uart backend; "
+                f"selected backend is {backend}")
         artifact = Path(binfile)
         if not artifact.is_file():
             raise ValueError(f"Firmware artifact not found: {artifact}")
         external_payloads = []
         mapped_payloads = []
-        config_ecnvm = str(using_data.get("CONFIG_GD32H77X_ECNVM_CODE", "n")).lower() in ("y", "1", "true")
-        if config_ecnvm and artifact.suffix.lower() != ".tufw":
-            raise ValueError("ECNVM_CODE is enabled; a complete .tufw package is required, raw BIN is incomplete")
-        if artifact.suffix.lower() == ".tufw":
-            package_temp = tempfile.TemporaryDirectory(prefix="gd32h77x-package-")
+        if zipfile.is_zipfile(artifact) or artifact.suffix.lower() == ".tufw":
+            package_temp = tempfile.TemporaryDirectory(prefix="gd32h77x-qio-package-")
             image, external_payloads, mapped_payloads = _extract_validated_package(
                 artifact, boards_root, using_data, Path(package_temp.name))
         elif artifact.suffix.lower() == ".bin":
             image = artifact
         else:
-            raise ValueError("GD32H77X accepts a verified .tufw package or legacy .bin image")
+            raise ValueError("GD32H77X accepts a complete QIO package or legacy raw BIN image")
         if external_payloads and mapped_payloads:
-            raise ValueError("Packages mixing indirect NOR and mapped ECNVM payloads are unsupported; no device opened")
+            raise ValueError("QIO packages mixing indirect NOR and mapped ECNVM payloads are unsupported; no device opened")
         report, start, limit, capacity, device_geometry = _validate_manifest(
             image, boards_root, using_data)
-        if config_ecnvm and not mapped_payloads:
-            raise ValueError("ECNVM_CODE is enabled but package has no verified ECNVM payload")
+        if "ecnvm_code" in report.get("layout", {}).get("partitions", {}) and not mapped_payloads:
+            filename = report.get("mapped_payloads", [{}])[0].get("file")
+            if not isinstance(filename, str) or not filename:
+                raise ValueError("Layout declares ecnvm_code but report has no ECNVM payload")
+            sidecar = image.parent / filename
+            if not sidecar.is_file():
+                raise ValueError("Layout declares ecnvm_code but the QIO package is missing its ECNVM payload")
+            mapped_payloads = [dict(report["mapped_payloads"][0], path=str(sidecar))]
         if mapped_payloads and backend != "swd":
-            raise ValueError("ECNVM executable payloads require CONFIG_FLASH_BACKEND=swd; no probe opened")
+            raise ValueError("ECNVM executable payloads require the swd backend; no probe opened")
         image_size = image.stat().st_size
         if image_size <= 0 or image_size > capacity:
             raise ValueError(
@@ -1492,7 +1552,7 @@ def platform_flash(using_data, binfile, port, baud, boards_root, logger):
                             "External payload segment does not resolve to a registered indirect OSPI NOR device")
             if backend not in ("swd", "uart"):
                 raise ValueError(
-                    "External OSPI payloads require CONFIG_FLASH_BACKEND=swd or uart; "
+                    "External OSPI payloads require the swd or uart backend; "
                     "DFU mode cannot write NOR. "
                     "No device was opened or flash range modified.")
             if backend == "swd":

@@ -13,8 +13,10 @@
 #include "tkl_wifi.h"
 #include "tuya_error_code.h"
 #include "tal_memory.h"
-#include "vw553_device.h"
-#include "vw553_log.h"
+#include "at_device.h"
+#include "at_log.h"
+#include "at_commands.h"
+#include "at_status_map.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <errno.h>
@@ -24,15 +26,15 @@
 
 /* The socket facade owns the shared-UART stream state.  Keep this a narrow
  * declaration rather than importing its TKL-network-facing header here. */
-extern bool vw553_socket_backend_has_active_socket(void);
-extern void vw553_socket_ap_teardown_set(bool active);
-extern void vw553_socket_ap_listeners_invalidate(bool invalid);
-extern void vw553_socket_wifi_join_set(bool active);
-extern void vw553_socket_dns_cache_flush(void);
+extern bool at_socket_has_active_socket(void);
+extern void at_socket_ap_teardown_set(bool active);
+extern void at_socket_ap_listeners_invalidate(bool invalid);
+extern void at_socket_wifi_join_set(bool active);
+extern void at_socket_dns_cache_flush(void);
 
-#define VW553_WIFI_COMMAND_TIMEOUT_MS 30000U
-#define VW553_WIFI_REPLY_SIZE 2048U
-#define VW553_WIFI_DISCONNECT_SETTLE_MS 300U
+#define AT_WIFI_COMMAND_TIMEOUT_MS 30000U
+#define AT_WIFI_REPLY_SIZE 2048U
+#define AT_WIFI_DISCONNECT_SETTLE_MS 300U
 
 static WIFI_EVENT_CB s_wifi_event_cb;
 static WF_STATION_STAT_E s_wifi_station_status = WSS_IDLE;
@@ -117,24 +119,26 @@ static OPERATE_RET wifi_execute(const char *command, char *reply, size_t reply_c
                                 uint32_t timeout_ms)
 {
     if (!command || !reply || reply_capacity < 2U) return OPRT_INVALID_PARM;
-    if (vw553_device_negotiate(VW553_WIFI_COMMAND_TIMEOUT_MS) != OPRT_OK) return OPRT_COM_ERROR;
-    vw553_uart_request_t request = {.command = command,
+    if (tuya_at_status_to_oprt(at_device_negotiate(AT_WIFI_COMMAND_TIMEOUT_MS)) != OPRT_OK) {
+        return OPRT_COM_ERROR;
+    }
+    at_request_t request = {.command = command,
                                     .command_length = strlen(command),
                                     .reply = reply,
                                     .reply_capacity = reply_capacity,
                                     .reply_length = reply_length,
                                     .timeout_ms = timeout_ms};
-    vw553_at_result_t result = VW553_AT_RESULT_NONE;
-    int32_t status = vw553_device_execute(&request, &result);
+    at_result_t result = AT_RESULT_NONE;
+    OPERATE_RET status = tuya_at_status_to_oprt(at_device_execute(&request, &result));
     if (status != OPRT_OK) return status;
-    return result == VW553_AT_RESULT_OK ? OPRT_OK : OPRT_COM_ERROR;
+    return result == AT_RESULT_OK ? OPRT_OK : OPRT_COM_ERROR;
 }
 
 static OPERATE_RET wifi_command(const char *command)
 {
     char reply[512];
     size_t reply_length = 0U;
-    return wifi_execute(command, reply, sizeof(reply), &reply_length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    return wifi_execute(command, reply, sizeof(reply), &reply_length, AT_WIFI_COMMAND_TIMEOUT_MS);
 }
 
 static void wifi_ps_policy_set(bool enabled, uint8_t dtim)
@@ -151,7 +155,7 @@ static OPERATE_RET wifi_ps_apply(bool enabled, uint8_t dtim)
     char command[32];
     unsigned mode = enabled ? 2U : 0U;
     unsigned interval = enabled ? dtim : 0U;
-    int written = snprintf(command, sizeof(command), "AT+TY553XPS=%u,%u", mode, interval);
+    int written = snprintf(command, sizeof(command), AT_WIRE_POWER_SAVE_FMT, mode, interval);
     if (written < 0 || (size_t)written >= sizeof(command)) return OPRT_INVALID_PARM;
     OPERATE_RET status = wifi_command(command);
     if (status == OPRT_OK) {
@@ -161,7 +165,7 @@ static OPERATE_RET wifi_ps_apply(bool enabled, uint8_t dtim)
         s_wifi_ps_applied_dtim = enabled ? dtim : 0U;
         taskEXIT_CRITICAL();
     }
-    VW553_SUMMARY("wifi ps %s dtim=%u status=%d", enabled ? "on" : "off", interval, status);
+    AT_SUMMARY("wifi ps %s dtim=%u status=%d", enabled ? "on" : "off", interval, status);
     return status;
 }
 
@@ -189,7 +193,7 @@ static void wifi_ps_restore(void)
     if (known && applied == enabled && (!enabled || applied_dtim == dtim)) return;
     OPERATE_RET status = wifi_ps_apply(enabled, dtim);
     if (status != OPRT_OK)
-        VW553_SUMMARY("wifi ps restore failed enable=%d dtim=%u status=%d", enabled ? 1 : 0, dtim, status);
+        AT_SUMMARY("wifi ps restore failed enable=%d dtim=%u status=%d", enabled ? 1 : 0, dtim, status);
 }
 
 static bool parse_mac(const char *text, uint8_t mac[MAC_ADDR_LEN])
@@ -219,11 +223,11 @@ static bool parse_ipv4_field(const char *line, const char *prefix, char output[1
     return true;
 }
 
-static void wifi_event_line(void *context, const vw553_device_event_t *event)
+static void wifi_event_line(void *context, const at_device_event_t *event)
 {
     (void)context;
     if (!event) return;
-    if (event->kind == VW553_DEVICE_EVENT_RESET) {
+    if (event->kind == AT_DEVICE_EVENT_RESET) {
         WF_STATION_STAT_E previous;
         taskENTER_CRITICAL();
         previous = s_wifi_station_status;
@@ -233,11 +237,11 @@ static void wifi_event_line(void *context, const vw553_device_event_t *event)
         taskEXIT_CRITICAL();
         s_wifi_ps_applied = false;
         s_wifi_ps_applied_known = false;
-        VW553_LOG("device reset invalidated Wi-Fi state previous=%d", (int)previous);
+        AT_LOG("device reset invalidated Wi-Fi state previous=%d", (int)previous);
         if (previous == WSS_GOT_IP || previous == WSS_CONN_SUCCESS) wifi_notify(WFE_DISCONNECTED);
         return;
     }
-    if (event->kind != VW553_DEVICE_EVENT_LINE) return;
+    if (event->kind != AT_DEVICE_EVENT_LINE) return;
     const char *line = event->value.line.text;
     size_t length = event->value.line.length;
     taskENTER_CRITICAL();
@@ -264,11 +268,11 @@ static void wifi_notify(WF_EVENT_E event)
 static OPERATE_RET wifi_ensure_initialized(void)
 {
     if (!s_wifi_subscribed) {
-        int32_t status = vw553_device_subscribe(wifi_event_line, NULL);
+        OPERATE_RET status = tuya_at_status_to_oprt(at_device_subscribe(wifi_event_line, NULL));
         if (status != OPRT_OK) return status;
         s_wifi_subscribed = true;
     }
-    return vw553_device_negotiate(VW553_WIFI_COMMAND_TIMEOUT_MS);
+    return tuya_at_status_to_oprt(at_device_negotiate(AT_WIFI_COMMAND_TIMEOUT_MS));
 }
 
 static bool wifi_parse_cipsta(const char *reply, NW_IP_S *ip)
@@ -417,7 +421,7 @@ static OPERATE_RET wifi_fetch_station_ip(NW_IP_S *ip)
 {
     char reply[512];
     size_t length = 0U;
-    OPERATE_RET status = wifi_execute("AT+CIPSTA?", reply, sizeof(reply), &length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute("AT+CIPSTA?", reply, sizeof(reply), &length, AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK || !wifi_parse_cipsta(reply, ip)) return OPRT_COM_ERROR;
     if (wifi_nonzero_ip(ip)) wifi_station_ip_cache_store(ip);
     return OPRT_OK;
@@ -435,7 +439,7 @@ static void wifi_log_scan_for_ssid(const char *ssid, size_t ssid_len)
     if (written < 0 || (size_t)written >= sizeof(command)) return;
     OPERATE_RET status = wifi_execute(command, reply, sizeof(reply), &length, 20000U);
     if (status != OPRT_OK) {
-        VW553_SUMMARY("wifi scan failed status=%d", status);
+        AT_SUMMARY("wifi scan failed status=%d", status);
         return;
     }
     unsigned hits = 0U;
@@ -445,11 +449,11 @@ static void wifi_log_scan_for_ssid(const char *ssid, size_t ssid_len)
         size_t len = end ? (size_t)(end - line) : strlen(line);
         if (len > 7U && memcmp(line, "+CWLAP:", 7U) == 0) {
             ++hits;
-            VW553_LOG("scan hit %.*s", (int)len, line);
+            AT_LOG("scan hit %.*s", (int)len, line);
         }
         line = end ? end + 2 : NULL;
     }
-    VW553_SUMMARY("wifi scan ssid=%.*s hits=%u reply_len=%lu", (int)ssid_len, ssid, hits,
+    AT_SUMMARY("wifi scan ssid=%.*s hits=%u reply_len=%lu", (int)ssid_len, ssid, hits,
                   (unsigned long)length);
 }
 
@@ -468,7 +472,7 @@ static OPERATE_RET wifi_wait_station_ip(NW_IP_S *ip, uint32_t timeout_ms)
 }
 
 /**
- * VW553 posts the vif switch to its Wi-Fi manager event loop: AT+CWMODE_CUR=1
+ * AT posts the vif switch to its Wi-Fi manager event loop: AT+CWMODE_CUR=1
  * answers OK as soon as the request is queued, not when the mode has changed.
  * The join that follows immediately associates and is then torn down by the
  * late switch (CIPSTA stays 0.0.0.0), so wait for the module to report STA.
@@ -482,7 +486,7 @@ static OPERATE_RET wifi_wait_station_mode(uint32_t timeout_ms)
     if (!timeout) timeout = 1U;
     do {
         length = 0U;
-        if (wifi_execute("AT+CWMODE_CUR?", reply, sizeof(reply), &length, VW553_WIFI_COMMAND_TIMEOUT_MS) ==
+        if (wifi_execute("AT+CWMODE_CUR?", reply, sizeof(reply), &length, AT_WIFI_COMMAND_TIMEOUT_MS) ==
             OPRT_OK) {
             char *entry = strstr(reply, "+CWMODE_CUR:");
             int value = -1;
@@ -501,18 +505,18 @@ static OPERATE_RET wifi_switch_to_station(void)
      * flag set until a station IP arrives prevents it from reaching the AT
      * channel.  A redundant STA->STA sync has no AP socket to protect. */
     if (was_ap) {
-        vw553_socket_ap_teardown_set(true);
-        vw553_socket_dns_cache_flush();
-        /* VW553 closes all listeners inside AT+CWMODE_CUR=1. Mark them here so
+        at_socket_ap_teardown_set(true);
+        at_socket_dns_cache_flush();
+        /* AT closes all listeners inside AT+CWMODE_CUR=1. Mark them here so
          * the AP netcfg thread's later close does not send a stop that can
          * only be answered with ERROR. */
-        vw553_socket_ap_listeners_invalidate(true);
+        at_socket_ap_listeners_invalidate(true);
     }
     OPERATE_RET status = wifi_command("AT+CWMODE_CUR=1");
     if (status != OPRT_OK) {
         if (was_ap) {
-            vw553_socket_ap_teardown_set(false);
-            vw553_socket_ap_listeners_invalidate(false);
+            at_socket_ap_teardown_set(false);
+            at_socket_ap_listeners_invalidate(false);
         }
         return status;
     }
@@ -520,13 +524,13 @@ static OPERATE_RET wifi_switch_to_station(void)
      * default interface, which the module serializes with its AT task. */
     status = wifi_wait_station_mode(8000U);
     if (status != OPRT_OK) {
-        if (was_ap) vw553_socket_ap_teardown_set(false);
+        if (was_ap) at_socket_ap_teardown_set(false);
         return status;
     }
     /* One more beat so the vif restart that follows the mode event cannot tear
      * down the association the next CWJAP is about to build. */
     vTaskDelay(pdMS_TO_TICKS(150U));
-    if (!was_ap) vw553_socket_ap_teardown_set(false);
+    if (!was_ap) at_socket_ap_teardown_set(false);
     return OPRT_OK;
 }
 // --- END: user defines and implements ---
@@ -549,15 +553,15 @@ OPERATE_RET tkl_wifi_init(WIFI_EVENT_CB cb)
     if (status == OPRT_OK) {
         OPERATE_RET ps_status = wifi_ps_force_awake();
         if (ps_status != OPRT_OK) {
-            VW553_SUMMARY("wifi ps unsupported in mode set, continue status=%d", ps_status);
+            AT_SUMMARY("wifi ps unsupported in mode set, continue status=%d", ps_status);
         }
     }
     if (status == OPRT_OK) {
         s_wifi_work_mode = WWM_STATION;
-        vw553_socket_dns_cache_flush();
-        vw553_socket_ap_teardown_set(false);
+        at_socket_dns_cache_flush();
+        at_socket_ap_teardown_set(false);
         if (!s_wifi_monitor_started) {
-            if (xTaskCreate(wifi_monitor_task, "vw553_wifi_mon", 1024U, NULL, tskIDLE_PRIORITY + 1U, NULL) != pdPASS)
+            if (xTaskCreate(wifi_monitor_task, "at_wifi_mon", 1024U, NULL, tskIDLE_PRIORITY + 1U, NULL) != pdPASS)
                 return OPRT_RESOURCE_NOT_READY;
             s_wifi_monitor_started = true;
         }
@@ -594,13 +598,13 @@ OPERATE_RET tkl_wifi_scan_ap(const int8_t *ssid, AP_IF_S **ap_ary, uint32_t *num
     } else {
         memcpy(command, "AT+CWLAP", sizeof("AT+CWLAP"));
     }
-    char *reply = tal_malloc(VW553_WIFI_REPLY_SIZE);
+    char *reply = tal_malloc(AT_WIFI_REPLY_SIZE);
     if (!reply) return OPRT_MALLOC_FAILED;
     size_t reply_length = 0U;
-    OPERATE_RET status = wifi_execute(command, reply, VW553_WIFI_REPLY_SIZE, &reply_length,
-                                      VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute(command, reply, AT_WIFI_REPLY_SIZE, &reply_length,
+                                      AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) { tal_free(reply); return status; }
-    if (reply_length >= VW553_WIFI_REPLY_SIZE) { tal_free(reply); return OPRT_BUFFER_NOT_ENOUGH; }
+    if (reply_length >= AT_WIFI_REPLY_SIZE) { tal_free(reply); return OPRT_BUFFER_NOT_ENOUGH; }
     size_t count = 0U;
     const char *cursor = reply;
     while (*cursor) {
@@ -669,7 +673,7 @@ OPERATE_RET tkl_wifi_start_ap(const WF_AP_CFG_IF_S *cfg)
         (cfg->md != WAAM_OPEN && cfg->md != WAAM_WPA_WPA3_SAE) ||
         (cfg->md != WAAM_OPEN && (cfg->p_len < 8U || cfg->p_len > 63U))) return OPRT_NOT_SUPPORTED;
     /* A reset can restart AP provisioning immediately after CWJAP succeeded.
-     * VW553 refuses wifi_management_ap_start() while the default vif is still
+     * AT refuses wifi_management_ap_start() while the default vif is still
      * associated, so leave the station first. Do NOT send CWMODE_CUR=2: that
      * path starts a default AP and makes the following CWSAP_CUR fail. */
     WF_STATION_STAT_E station_status;
@@ -677,10 +681,10 @@ OPERATE_RET tkl_wifi_start_ap(const WF_AP_CFG_IF_S *cfg)
     station_status = s_wifi_station_status;
     taskEXIT_CRITICAL();
     if (station_status == WSS_CONNECTING || station_status == WSS_GOT_IP) {
-        VW553_SUMMARY("ap start: leaving station state=%d", (int)station_status);
+        AT_SUMMARY("ap start: leaving station state=%d", (int)station_status);
         (void)wifi_command("AT+CWQAP");
-        vTaskDelay(pdMS_TO_TICKS(VW553_WIFI_DISCONNECT_SETTLE_MS) ?
-                   pdMS_TO_TICKS(VW553_WIFI_DISCONNECT_SETTLE_MS) : 1U);
+        vTaskDelay(pdMS_TO_TICKS(AT_WIFI_DISCONNECT_SETTLE_MS) ?
+                   pdMS_TO_TICKS(AT_WIFI_DISCONNECT_SETTLE_MS) : 1U);
         taskENTER_CRITICAL(); s_wifi_station_status = WSS_IDLE; taskEXIT_CRITICAL();
         wifi_station_ip_cache_store(NULL);
     }
@@ -707,8 +711,8 @@ OPERATE_RET tkl_wifi_start_ap(const WF_AP_CFG_IF_S *cfg)
         wifi_ap_ip_cache_store(NULL);
     }
     s_wifi_work_mode = WWM_SOFTAP;
-    vw553_socket_dns_cache_flush();
-    vw553_socket_ap_teardown_set(false);
+    at_socket_dns_cache_flush();
+    at_socket_ap_teardown_set(false);
     return OPRT_OK;
     // --- END: user implements ---
 }
@@ -755,7 +759,7 @@ OPERATE_RET tkl_wifi_get_cur_channel(uint8_t *chan)
     if (!chan) return OPRT_INVALID_PARM;
     char reply[1024];
     size_t length = 0U;
-    OPERATE_RET status = wifi_execute("AT+CWSTATUS", reply, sizeof(reply), &length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute("AT+CWSTATUS", reply, sizeof(reply), &length, AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     char *line = strstr(reply, "+CWSTATUS: STA, connected,");
     if (line) return wifi_parse_channel_field(line, true, chan) ? OPRT_OK : OPRT_COM_ERROR;
@@ -795,11 +799,11 @@ OPERATE_RET tkl_wifi_get_ip(const WF_IF_E wf, NW_IP_S *ip)
     if (!ip || (wf != WF_STATION && wf != WF_AP)) return OPRT_INVALID_PARM;
     if (wf == WF_STATION && s_wifi_join_active) return OPRT_COM_ERROR;
     if (wf == WF_AP && wifi_ap_ip_cache_load(ip)) return OPRT_OK;
-    if (wf == WF_STATION && vw553_socket_backend_has_active_socket() && wifi_station_ip_cache_load(ip)) return OPRT_OK;
+    if (wf == WF_STATION && at_socket_has_active_socket() && wifi_station_ip_cache_load(ip)) return OPRT_OK;
     char reply[1024];
     size_t reply_length = 0U;
     const char *command = wf == WF_STATION ? "AT+CIPSTA?" : "AT+CIPAP?";
-    OPERATE_RET status = wifi_execute(command, reply, sizeof(reply), &reply_length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute(command, reply, sizeof(reply), &reply_length, AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     if (wf == WF_STATION) {
         if (!wifi_parse_cipsta(reply, ip) || !wifi_nonzero_ip(ip)) return OPRT_COM_ERROR;
@@ -906,7 +910,7 @@ OPERATE_RET tkl_wifi_get_mac(const WF_IF_E wf, NW_MAC_S *mac)
     if (!mac || (wf != WF_STATION && wf != WF_AP)) return OPRT_INVALID_PARM;
     char reply[512];
     size_t reply_length = 0U;
-    OPERATE_RET status = wifi_execute("AT+CIFSR", reply, sizeof(reply), &reply_length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute("AT+CIFSR", reply, sizeof(reply), &reply_length, AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     /* Without station+AP concurrency, the vendor AP start reuses VIF 0 and
      * its base MAC. The caller requests this before the AP is brought up. */
@@ -933,7 +937,7 @@ OPERATE_RET tkl_wifi_set_work_mode(const WF_WK_MD_E mode)
     if (mode == WWM_STATION) {
         /* Keep the original explicit mode transition. It is intentionally sent
          * even when cached state already says STA: after SoftAP provisioning it
-         * gives VW553 another synchronization point before LAN/TCP sockets start. */
+         * gives AT another synchronization point before LAN/TCP sockets start. */
         OPERATE_RET status = wifi_switch_to_station();
         if (status == OPRT_OK) s_wifi_work_mode = mode;
         return status;
@@ -956,7 +960,7 @@ OPERATE_RET tkl_wifi_get_work_mode(WF_WK_MD_E *mode)
     char reply[256];
     size_t reply_length = 0U;
     OPERATE_RET status = wifi_execute("AT+CWMODE_CUR?", reply, sizeof(reply), &reply_length,
-                                      VW553_WIFI_COMMAND_TIMEOUT_MS);
+                                      AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     char *entry = strstr(reply, "+CWMODE_CUR:");
     int value = -1;
@@ -1002,7 +1006,7 @@ OPERATE_RET tkl_wifi_get_bssid(uint8_t *mac)
  */
 OPERATE_RET tkl_wifi_set_country_code(const COUNTRY_CODE_E ccode)
 {
-    // VW553 exposes no country-code AT command. Returning OPRT_NOT_SUPPORTED
+    // AT exposes no country-code AT command. Returning OPRT_NOT_SUPPORTED
     // makes TuyaOpen's netconn_wifi_open() bail out before it loads the saved
     // netinfo, so a provisioned device never reconnects after a reboot.
     (void)ccode;
@@ -1077,7 +1081,7 @@ OPERATE_RET tkl_wifi_station_connect(const int8_t *ssid, const int8_t *passwd)
     int written = snprintf(command, sizeof(command), "AT+CWJAP_CUR=\"%.*s\",\"%.*s\"", (int)ssid_len,
                            (const char *)ssid, (int)password_len, (const char *)passwd);
     if (written < 0 || (size_t)written >= sizeof(command)) return OPRT_INVALID_PARM;
-    VW553_SUMMARY("wifi join start ssid=\"%.*s\" password=<redacted>", (int)ssid_len,
+    AT_SUMMARY("wifi join start ssid=\"%.*s\" password=<redacted>", (int)ssid_len,
                   (const char *)ssid);
     /* Never associate while the module is still switching out of SoftAP: the
      * queued vif change would drop the fresh link and leave CIPSTA at
@@ -1088,12 +1092,12 @@ OPERATE_RET tkl_wifi_station_connect(const int8_t *ssid, const int8_t *passwd)
         if (mode_status != OPRT_OK) {
             /* Best effort: the join below still reports the real failure and
              * the netmgr keeps its own retry policy. */
-            VW553_SUMMARY("wifi station mode switch failed status=%d, continue", mode_status);
+            AT_SUMMARY("wifi station mode switch failed status=%d, continue", mode_status);
         }
     }
     OPERATE_RET status = wifi_ps_force_awake();
     if (status != OPRT_OK) {
-        VW553_SUMMARY("wifi ps unsupported before join, continue status=%d", status);
+        AT_SUMMARY("wifi ps unsupported before join, continue status=%d", status);
     }
     taskENTER_CRITICAL(); s_wifi_station_status = WSS_CONNECTING; taskEXIT_CRITICAL();
     uint32_t connect_start_ms = wifi_now_ms();
@@ -1108,18 +1112,18 @@ OPERATE_RET tkl_wifi_station_connect(const int8_t *ssid, const int8_t *passwd)
     uint32_t attempt_start_ms = wifi_now_ms();
     /* A join attempt may land on a different AP/DNS server. Drop cached
      * answers before associating; the cache is gated during CWJAP anyway. */
-    vw553_socket_dns_cache_flush();
+    at_socket_dns_cache_flush();
     taskENTER_CRITICAL(); s_wifi_join_active = true; taskEXIT_CRITICAL();
-    vw553_socket_wifi_join_set(true);
+    at_socket_wifi_join_set(true);
     status = wifi_command(command);
     uint32_t attempt_done_ms = wifi_now_ms();
-    vw553_socket_wifi_join_set(false);
+    at_socket_wifi_join_set(false);
     taskENTER_CRITICAL(); s_wifi_join_active = false; taskEXIT_CRITICAL();
-    VW553_SUMMARY("CWJAP transaction finished ssid=%.*s attempt=1 status=%d elapsed=%lums",
+    AT_SUMMARY("CWJAP transaction finished ssid=%.*s attempt=1 status=%d elapsed=%lums",
                   (int)ssid_len, (const char *)ssid, status,
                   (unsigned long)(attempt_done_ms - attempt_start_ms));
     uint32_t at_done_ms = wifi_now_ms();
-    VW553_SUMMARY("CWJAP join finished ssid=%.*s status=%d total=%lums", (int)ssid_len,
+    AT_SUMMARY("CWJAP join finished ssid=%.*s status=%d total=%lums", (int)ssid_len,
                   (const char *)ssid, status, (unsigned long)(at_done_ms - connect_start_ms));
     if (status != OPRT_OK) {
         wifi_log_scan_for_ssid((const char *)ssid, ssid_len);
@@ -1135,12 +1139,12 @@ OPERATE_RET tkl_wifi_station_connect(const int8_t *ssid, const int8_t *passwd)
         return status;
     }
     uint32_t ready_ms = wifi_now_ms();
-    VW553_SUMMARY("wifi station ready ip=%s dhcp_wait=%lums total=%lums", ip.ip,
+    AT_SUMMARY("wifi station ready ip=%s dhcp_wait=%lums total=%lums", ip.ip,
                   (unsigned long)(ready_ms - at_done_ms), (unsigned long)(ready_ms - connect_start_ms));
     taskENTER_CRITICAL(); s_wifi_station_status = WSS_GOT_IP; taskEXIT_CRITICAL();
     /* The station owns a real interface now: AP-era broadcasts are gone and
      * LAN discovery may use broadcast again. */
-    vw553_socket_ap_teardown_set(false);
+    at_socket_ap_teardown_set(false);
     wifi_ps_restore();
     wifi_notify(WFE_CONNECTED);
     return OPRT_OK;
@@ -1155,14 +1159,14 @@ OPERATE_RET tkl_wifi_station_connect(const int8_t *ssid, const int8_t *passwd)
 OPERATE_RET tkl_wifi_station_disconnect(void)
 {
     // --- BEGIN: user implements ---
-    VW553_SUMMARY("wifi disconnect requested");
+    AT_SUMMARY("wifi disconnect requested");
     OPERATE_RET ps_status = wifi_ps_force_awake();
-    if (ps_status != OPRT_OK) VW553_SUMMARY("wifi ps force-awake failed status=%d", ps_status);
+    if (ps_status != OPRT_OK) AT_SUMMARY("wifi ps force-awake failed status=%d", ps_status);
     OPERATE_RET status = wifi_command("AT+CWQAP");
     if (status == OPRT_OK) {
         /* CAP2 acknowledges CWQAP before the radio has fully left the AP. */
-        vTaskDelay(pdMS_TO_TICKS(VW553_WIFI_DISCONNECT_SETTLE_MS));
-        vw553_socket_dns_cache_flush();
+        vTaskDelay(pdMS_TO_TICKS(AT_WIFI_DISCONNECT_SETTLE_MS));
+        at_socket_dns_cache_flush();
         taskENTER_CRITICAL(); s_wifi_station_status = WSS_IDLE; taskEXIT_CRITICAL();
         wifi_notify(WFE_DISCONNECTED);
     }
@@ -1183,7 +1187,7 @@ OPERATE_RET tkl_wifi_station_get_conn_ap_rssi(int8_t *rssi)
     if (s_wifi_join_active) return OPRT_COM_ERROR;
     char reply[512];
     size_t length = 0U;
-    OPERATE_RET status = wifi_execute("AT+CWJAP_CUR?", reply, sizeof(reply), &length, VW553_WIFI_COMMAND_TIMEOUT_MS);
+    OPERATE_RET status = wifi_execute("AT+CWJAP_CUR?", reply, sizeof(reply), &length, AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     char *entry = strstr(reply, "+CWJAP_CUR:");
     if (!entry) return OPRT_COM_ERROR;
@@ -1211,7 +1215,7 @@ OPERATE_RET tkl_wifi_station_get_status(WF_STATION_STAT_E *stat)
         *stat = WSS_CONNECTING;
         return OPRT_OK;
     }
-    if (vw553_socket_backend_has_active_socket()) {
+    if (at_socket_has_active_socket()) {
         NW_IP_S cached;
         if (wifi_station_ip_cache_load(&cached)) {
             *stat = WSS_GOT_IP;
@@ -1221,7 +1225,7 @@ OPERATE_RET tkl_wifi_station_get_status(WF_STATION_STAT_E *stat)
     char reply[1024];
     size_t reply_length = 0U;
     OPERATE_RET status = wifi_execute("AT+CWSTATUS", reply, sizeof(reply), &reply_length,
-                                      VW553_WIFI_COMMAND_TIMEOUT_MS);
+                                      AT_WIFI_COMMAND_TIMEOUT_MS);
     if (status != OPRT_OK) return status;
     WF_STATION_STAT_E next;
     char *station = strstr(reply, "+CWSTATUS: STA, ");
@@ -1241,7 +1245,7 @@ OPERATE_RET tkl_wifi_station_get_status(WF_STATION_STAT_E *stat)
         /* The vendor can drop/rejoin on its own, without going through
          * tkl_wifi_station_disconnect(). Treat losing the IP as a network
          * change and release cached DNS answers. */
-        vw553_socket_dns_cache_flush();
+        at_socket_dns_cache_flush();
         taskENTER_CRITICAL(); s_wifi_ps_applied_known = false; taskEXIT_CRITICAL();
         wifi_notify(WFE_DISCONNECTED);
     } else if (previous != WSS_GOT_IP && next == WSS_GOT_IP) {

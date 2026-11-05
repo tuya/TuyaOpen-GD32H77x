@@ -1,5 +1,5 @@
 #include "tkl_wifi.h"
-#include "vw553_device.h"
+#include "at_device.h"
 #include "tuya_error_code.h"
 #include "task.h"
 
@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static vw553_device_event_handler_t s_event_handler;
+static at_device_event_handler_t s_event_handler;
 static void *s_event_context;
 static const char *s_response;
 static const char *s_station_ip_response = "+CIPSTA: \"0.0.0.0\"\r\n+CIPSTA: \"0.0.0.0\"\r\n+CIPSTA: \"0.0.0.0\"\r\nOK\r\n";
@@ -22,7 +22,7 @@ static unsigned s_last_ps_off_index;
 static unsigned s_last_ps_on_index;
 static unsigned s_last_cwjap_index;
 static int32_t s_execute_status = OPRT_OK;
-static vw553_at_result_t s_execute_result = VW553_AT_RESULT_OK;
+static at_result_t s_execute_result = AT_RESULT_OK;
 static unsigned s_ip_queries;
 static unsigned s_ip_valid_after = UINT32_MAX;
 static TickType_t s_ticks;
@@ -36,30 +36,30 @@ static unsigned s_event_count;
 static bool s_ap_teardown_flag;
 static unsigned s_ap_teardown_true_count;
 
-int32_t vw553_device_subscribe(vw553_device_event_handler_t handler, void *context)
+at_status_t at_device_subscribe(at_device_event_handler_t handler, void *context)
 {
     s_event_handler = handler;
     s_event_context = context;
     return OPRT_OK;
 }
 
-bool vw553_socket_backend_has_active_socket(void) { return false; }
-void vw553_socket_ap_teardown_set(bool active)
+bool at_socket_has_active_socket(void) { return false; }
+void at_socket_ap_teardown_set(bool active)
 {
     s_ap_teardown_flag = active;
     if (active) ++s_ap_teardown_true_count;
 }
-void vw553_socket_ap_listeners_invalidate(bool invalid) { (void)invalid; }
-void vw553_socket_wifi_join_set(bool active) { (void)active; }
-void vw553_socket_dns_cache_flush(void) {}
+void at_socket_ap_listeners_invalidate(bool invalid) { (void)invalid; }
+void at_socket_wifi_join_set(bool active) { (void)active; }
+void at_socket_dns_cache_flush(void) {}
 
-int32_t vw553_device_negotiate(uint32_t timeout_ms)
+at_status_t at_device_negotiate(uint32_t timeout_ms)
 {
     (void)timeout_ms;
     return OPRT_OK;
 }
 
-int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_result_t *result)
+at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
 {
     assert(request && request->command && request->reply && result);
     snprintf(s_last_command, sizeof(s_last_command), "%s", request->command);
@@ -76,7 +76,7 @@ int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_resul
         const char ok[] = "OK\r\n";
         memcpy(request->reply, ok, sizeof(ok));
         if (request->reply_length) *request->reply_length = sizeof(ok) - 1U;
-        *result = VW553_AT_RESULT_OK;
+        *result = AT_RESULT_OK;
         return OPRT_OK;
     }
     if (strncmp(request->command, "AT+CWJAP_CUR=", sizeof("AT+CWJAP_CUR=") - 1U) == 0) {
@@ -106,10 +106,10 @@ int32_t vw553_device_execute(const vw553_uart_request_t *request, vw553_at_resul
     if (length + 1U > request->reply_capacity) return OPRT_BUFFER_NOT_ENOUGH;
     memcpy(request->reply, response, length + 1U);
     if (request->reply_length) *request->reply_length = length;
-    *result = VW553_AT_RESULT_OK;
+    *result = AT_RESULT_OK;
     if (strcmp(request->command, "AT+CWJAP_CUR=\"router\",\"12345678\"") == 0 && s_event_handler) {
         static const char connected[] = "WIFI CONNECTED";
-        const vw553_device_event_t event = {.kind = VW553_DEVICE_EVENT_LINE,
+        const at_device_event_t event = {.kind = AT_DEVICE_EVENT_LINE,
                                              .value.line = {connected, sizeof(connected) - 1U}};
         s_event_handler(s_event_context, &event);
     }
@@ -169,7 +169,7 @@ int main(void)
     assert(tkl_wifi_start_ap(&ap) == OPRT_OK);
     assert(!s_ap_teardown_flag);
     /* Match the board-verified AP sequence: CWSAP_CUR must run directly.
-     * Sending CWMODE_CUR=2 first makes this VW553 image reject CWSAP_CUR. */
+     * Sending CWMODE_CUR=2 first makes this AT image reject CWSAP_CUR. */
     assert(!s_saw_ap_mode && s_saw_ap_config && s_saw_ap_ip_config);
     assert(strcmp(s_ap_command, "AT+CWSAP_CUR=\"Tuya-setup\",\"\",6,0") == 0);
     assert(strcmp(s_last_command, "AT+CIPAP=\"192.168.176.1\",\"192.168.176.1\",\"255.255.255.0\"") == 0);
@@ -179,7 +179,7 @@ int main(void)
     NW_IP_S cached_ap_ip = {0};
     unsigned before_cached_get = s_execute_count;
     s_execute_status = OPRT_COM_ERROR;
-    s_execute_result = VW553_AT_RESULT_ERROR;
+    s_execute_result = AT_RESULT_ERROR;
     assert(tkl_wifi_get_ip(WF_AP, &cached_ap_ip) == OPRT_OK);
     assert(s_execute_count == before_cached_get);
     assert(strcmp(cached_ap_ip.ip, "192.168.176.1") == 0);
@@ -187,11 +187,11 @@ int main(void)
     assert(strcmp(cached_ap_ip.mask, "255.255.255.0") == 0);
     assert(cached_ap_ip.dhcpen == TRUE);
 
-    /* A VW553 reset invalidates the cache, so the next read must query again. */
-    const vw553_device_event_t reset_event = {.kind = VW553_DEVICE_EVENT_RESET};
+    /* A AT reset invalidates the cache, so the next read must query again. */
+    const at_device_event_t reset_event = {.kind = AT_DEVICE_EVENT_RESET};
     s_event_handler(s_event_context, &reset_event);
     s_execute_status = OPRT_OK;
-    s_execute_result = VW553_AT_RESULT_OK;
+    s_execute_result = AT_RESULT_OK;
     s_response = "+CIPAP:ip:\"192.168.176.1\"\r\n"
                  "+CIPAP:gateway:\"192.168.176.1\"\r\n"
                  "+CIPAP:netmask:\"255.255.255.0\"\r\nOK\r\n";
@@ -244,13 +244,13 @@ int main(void)
     s_event_count = 0U;
     s_cwjap_count = 0U;
     s_execute_status = OPRT_COM_ERROR;
-    s_execute_result = VW553_AT_RESULT_ERROR;
+    s_execute_result = AT_RESULT_ERROR;
     assert(tkl_wifi_station_connect((const int8_t *)"router", (const int8_t *)"12345678") == OPRT_COM_ERROR);
     assert(s_cwjap_count == 1U);
     assert(s_last_ps_off_index < s_last_cwjap_index);
     assert(s_event_count == 1U && s_last_event == WFE_CONNECT_FAILED);
     s_execute_status = OPRT_OK;
-    s_execute_result = VW553_AT_RESULT_OK;
+    s_execute_result = AT_RESULT_OK;
 
     s_event_count = 0U;
     s_ip_queries = 0U;
@@ -281,7 +281,7 @@ int main(void)
     assert(tkl_wifi_scan_ap(NULL, &aps, &count) == OPRT_COM_ERROR);
     assert(aps == NULL && count == 0U);
 
-    /* A reset can restart AP provisioning right after CWJAP succeeded.  VW553
+    /* A reset can restart AP provisioning right after CWJAP succeeded.  AT
      * refuses CWSAP_CUR while the station is associated, so disconnect first. */
     s_event_count = 0U;
     s_ip_queries = 0U;
@@ -293,6 +293,6 @@ int main(void)
     s_response = "OK\r\n";
     assert(tkl_wifi_start_ap(&ap) == OPRT_OK);
     assert(s_saw_cwqap && s_saw_ap_after_cwqap);
-    puts("VW553 TKL Wi-Fi host tests passed");
+    puts("AT TKL Wi-Fi host tests passed");
     return 0;
 }

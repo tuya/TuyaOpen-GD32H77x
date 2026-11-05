@@ -2,22 +2,21 @@ cmake_minimum_required(VERSION 3.20)
 project(gd32h77x_firmware LANGUAGES C CXX ASM)
 
 include("${BUILD_PARAM_PATH}/build_param.cmake")
-if(PLATFORM_CHIP STREQUAL "GD32H77D" AND PLATFORM_BOARD STREQUAL "GD32H77D_GINO")
-    set(GD32H77X_DEVICE_DEFINE GD32H77DXW)
-    set(GD32H77X_PMU_DEFINE SEL_PMU_SMPS_MODE=PMU_BYPASS)
-elseif(PLATFORM_CHIP STREQUAL "GD32H779VW" AND PLATFORM_BOARD STREQUAL "GD32H779V_START")
+if(NOT DEFINED GD32H77X_PROJECT_CONTEXT OR NOT EXISTS "${GD32H77X_PROJECT_CONTEXT}")
+    message(FATAL_ERROR "Missing GD32H77X project context: ${GD32H77X_PROJECT_CONTEXT}")
+endif()
+include("${GD32H77X_PROJECT_CONTEXT}")
+set(GD32H77X_PLATFORM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+if(NOT DEFINED GD32H77X_PROJECT_DIR OR
+        NOT EXISTS "${GD32H77X_PROJECT_DIR}/project.cmake")
+    message(FATAL_ERROR "Invalid GD32H77X_PROJECT_DIR: ${GD32H77X_PROJECT_DIR}")
+endif()
+if(PLATFORM_CHIP STREQUAL "GD32H779VW" AND PLATFORM_BOARD STREQUAL "GD32H779V_START")
     set(GD32H77X_DEVICE_DEFINE GD32H779XW)
 else()
     message(FATAL_ERROR
         "Unsupported GD32H77X board/chip combination: ${PLATFORM_BOARD}/${PLATFORM_CHIP}")
 endif()
-# Adapter capability selection is independent of runtime completeness. Each
-# TKL implementation remains fail-closed until its actual backend is available.
-set(GD "${CMAKE_CURRENT_SOURCE_DIR}/gd32h77x_os/gd32")
-set(CMSIS "${GD}/CMSIS/GD/GD32H77x_78x")
-set(PERIPH "${GD}/GD32H77x_78x_standard_peripheral")
-set(RTOS "${CMAKE_CURRENT_SOURCE_DIR}/gd32h77x_os/FreeRTOS")
-set(PORT "${RTOS}/portable/GCC/ARM_CM7/r0p1")
 # Resolve the selected platform default or complete board CSV override during
 # configure, so every build consumes one layout snapshot for C, linker and
 # image verification. Watch both board CSV paths for content and presence
@@ -34,23 +33,23 @@ string(JSON GD32H77X_TARGET_CHIP ERROR_VARIABLE GD32H77X_CHIP_ERROR
 if(GD32H77X_CHIP_ERROR)
     message(FATAL_ERROR "No memory layout registered for chip ${PLATFORM_CHIP}: ${GD32H77X_CHIP_ERROR}")
 endif()
-set(LINKER_TEMPLATE "${GD32H77X_CHIPS_ROOT}/${GD32H77X_TARGET_CHIP}/linker.ld")
+set(LINKER_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/gd32h77x_os/components/startup/gd32h77x_linker.ld.in")
 if(NOT EXISTS "${LINKER_TEMPLATE}")
-    message(FATAL_ERROR
-        "No linker template is available for canonical chip ${GD32H77X_TARGET_CHIP}: ${LINKER_TEMPLATE}")
+    message(FATAL_ERROR "Missing GD32H77X linker template: ${LINKER_TEMPLATE}")
 endif()
 set(GD32H77X_DEFAULT_PARTITIONS "${GD32H77X_CHIPS_ROOT}/${GD32H77X_TARGET_CHIP}/partitions.csv")
 set(GD32H77X_DEFAULT_DEVICES "${GD32H77X_CHIPS_ROOT}/${GD32H77X_TARGET_CHIP}/flash_devices.csv")
 set(GD32H77X_BOARD_DIR "${OPEN_ROOT}/boards/GD32H77X/${PLATFORM_BOARD}")
-set(GD32H77X_BOARD_PARTITIONS "${GD32H77X_BOARD_DIR}/partitions.csv")
-set(GD32H77X_BOARD_DEVICES "${GD32H77X_BOARD_DIR}/flash_devices.csv")
+set(GD32H77X_BOARD_PLATFORM_CONFIG_DIR "${GD32H77X_BOARD_DIR}/platform_config")
+set(GD32H77X_BOARD_PARTITIONS "${GD32H77X_BOARD_PLATFORM_CONFIG_DIR}/partitions.csv")
+set(GD32H77X_BOARD_DEVICES "${GD32H77X_BOARD_PLATFORM_CONFIG_DIR}/flash_devices.csv")
 file(GLOB GD32H77X_BOARD_LAYOUT_STATE CONFIGURE_DEPENDS
     "${GD32H77X_BOARD_PARTITIONS}" "${GD32H77X_BOARD_DEVICES}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${GD32H77X_LAYOUT_RESOLVER}" "${GD32H77X_DEFAULT_PARTITIONS}"
     "${GD32H77X_DEFAULT_DEVICES}"
     "${GD32H77X_GEOMETRIES}" "${GD32H77X_PLATFORM_CHIPS}" "${LINKER}"
-    "${BUILD_PARAM_PATH}/build_param.json")
+    "${BUILD_PARAM_PATH}/build_param.json" "${GD32H77X_PROJECT_CONTEXT}")
 if(EXISTS "${GD32H77X_BOARD_PARTITIONS}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GD32H77X_BOARD_PARTITIONS}")
 endif()
@@ -64,6 +63,52 @@ else()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(GD32H77X_PYTHON "${Python3_EXECUTABLE}")
 endif()
+
+# Platform-owned configuration is independent from TuyaOpen's Kconfig. The
+# generic backend consumes Kconfig defaults, chip defaults and one explicitly
+# selected project config. Board discovery and TuyaOpen staging happen in the
+# caller before this project is configured.
+set(GD32H77X_CONFIG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/platform_config.py")
+set(GD32H77X_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/platform_config")
+set(GD32H77X_CONFIG_HEADER "${GD32H77X_CONFIG_DIR}/include/gd32h77x_config.h")
+set(GD32H77X_CONFIG_CMAKE "${GD32H77X_CONFIG_DIR}/gd32h77x_config.cmake")
+if(NOT DEFINED GD32H77X_PROJECT_CONFIG OR GD32H77X_PROJECT_CONFIG STREQUAL "")
+    if(EXISTS "${GD32H77X_PROJECT_DIR}/project.config")
+        set(GD32H77X_PROJECT_CONFIG "${GD32H77X_PROJECT_DIR}/project.config")
+    else()
+        unset(GD32H77X_PROJECT_CONFIG)
+    endif()
+endif()
+if(DEFINED GD32H77X_PROJECT_CONFIG AND NOT EXISTS "${GD32H77X_PROJECT_CONFIG}")
+    message(FATAL_ERROR "Missing GD32H77X project config: ${GD32H77X_PROJECT_CONFIG}")
+endif()
+file(GLOB GD32H77X_CONFIG_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/gd32h77x_os/chips/*/*.config")
+set(GD32H77X_PROJECT_CONFIG_ARGS)
+if(DEFINED GD32H77X_PROJECT_CONFIG)
+    list(APPEND GD32H77X_PROJECT_CONFIG_ARGS
+        --project-config "${GD32H77X_PROJECT_CONFIG}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${GD32H77X_PROJECT_CONFIG}")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${GD32H77X_CONFIG_SCRIPT}" "${CMAKE_CURRENT_SOURCE_DIR}/Kconfig"
+    ${GD32H77X_CONFIG_INPUTS})
+execute_process(
+    COMMAND "${GD32H77X_PYTHON}" "${GD32H77X_CONFIG_SCRIPT}"
+            --platform-root "${CMAKE_CURRENT_SOURCE_DIR}"
+            --chip "${PLATFORM_CHIP}" --board "${PLATFORM_BOARD}"
+            ${GD32H77X_PROJECT_CONFIG_ARGS}
+            --out-dir "${GD32H77X_CONFIG_DIR}"
+    RESULT_VARIABLE GD32H77X_CONFIG_RESULT
+    OUTPUT_VARIABLE GD32H77X_CONFIG_OUTPUT
+    ERROR_VARIABLE GD32H77X_CONFIG_ERROR)
+if(NOT GD32H77X_CONFIG_RESULT EQUAL 0)
+    message(FATAL_ERROR "GD32H77X platform configuration failed:
+${GD32H77X_CONFIG_OUTPUT}${GD32H77X_CONFIG_ERROR}")
+endif()
+include("${GD32H77X_CONFIG_CMAKE}")
+
 execute_process(
     COMMAND "${GD32H77X_PYTHON}" "${GD32H77X_LAYOUT_RESOLVER}"
             --build-params "${BUILD_PARAM_PATH}" --out-dir "${GD32H77X_GENERATED_DIR}"
@@ -77,14 +122,25 @@ set(GD32H77X_MEMORY_INCLUDE "${GD32H77X_GENERATED_DIR}/gd32h77x_memory.ldinc")
 set(GD32H77X_LAYOUT_HEADER "${GD32H77X_GENERATED_DIR}/include/gd32h77x_memory_layout.h")
 set(GD32H77X_LAYOUT_SOURCE "${GD32H77X_GENERATED_DIR}/gd32h77x_memory_layout.c")
 set(GD32H77X_RESOLVED_LAYOUT "${GD32H77X_GENERATED_DIR}/resolved_layout.json")
-if(CONFIG_GD32H77X_ECNVM_CODE STREQUAL "y")
-    if(NOT PLATFORM_BOARD STREQUAL "GD32H779V_START")
-        message(FATAL_ERROR "GD32H77X_ECNVM_CODE is supported only on GD32H779V_START")
-    endif()
+# The board partition table is the single source of truth for code placement.
+# A declared ecnvm_code partition makes the resolver emit an executable ECNVM
+# linker region; no separate platform feature switch is needed.
+file(READ "${GD32H77X_RESOLVED_LAYOUT}" GD32H77X_RESOLVED_LAYOUT_JSON)
+string(JSON GD32H77X_ECNVM_LAYOUT_TYPE
+    ERROR_VARIABLE GD32H77X_ECNVM_LAYOUT_ERROR
+    TYPE "${GD32H77X_RESOLVED_LAYOUT_JSON}" layout partitions ecnvm_code)
+if(GD32H77X_ECNVM_LAYOUT_ERROR)
+    set(GD32H77X_ECNVM_LAYOUT_ENABLED FALSE)
+elseif(GD32H77X_ECNVM_LAYOUT_TYPE STREQUAL "OBJECT")
+    set(GD32H77X_ECNVM_LAYOUT_ENABLED TRUE)
+else()
+    message(FATAL_ERROR "resolved layout ecnvm_code entry is not an object")
+endif()
+if(GD32H77X_ECNVM_LAYOUT_ENABLED)
     # Keep the boot table and vector table in CNVM. Move the application
     # instruction stream and read-only data into executable ECNVM.
     set(CNVM_TEXT_INPUTS "")
-    set(ECNVM_OUTPUT_SECTIONS ".ecnvm_text : { *(.text*) *(.rodata*) } > ECNVM\n    ASSERT(SIZEOF(.ecnvm_text) > 0, \"ECNVM_CODE enabled but ECNVM text is empty\")")
+    set(ECNVM_OUTPUT_SECTIONS ".ecnvm_text : { *(.text*) *(.rodata*) } > ECNVM\n    ASSERT(SIZEOF(.ecnvm_text) > 0, \"ECNVM linker region declared but ECNVM text is empty\")")
 else()
     set(CNVM_TEXT_INPUTS "*(.text*) *(.rodata*)")
     set(ECNVM_OUTPUT_SECTIONS "")
@@ -94,7 +150,7 @@ configure_file("${LINKER_TEMPLATE}" "${LINKER}" @ONLY)
 set(GD32H77X_LAYOUT_DEPENDENCIES "${GD32H77X_LAYOUT_RESOLVER}"
     "${GD32H77X_DEFAULT_PARTITIONS}" "${GD32H77X_DEFAULT_DEVICES}"
     "${GD32H77X_GEOMETRIES}" "${GD32H77X_PLATFORM_CHIPS}" "${LINKER_TEMPLATE}"
-    "${BUILD_PARAM_PATH}/build_param.json")
+    "${BUILD_PARAM_PATH}/build_param.json" "${GD32H77X_PROJECT_CONTEXT}")
 if(EXISTS "${GD32H77X_BOARD_PARTITIONS}")
     list(APPEND GD32H77X_LAYOUT_DEPENDENCIES "${GD32H77X_BOARD_PARTITIONS}")
 endif()
@@ -110,76 +166,81 @@ add_custom_command(
     COMMENT "Regenerating resolved GD32H77X memory layout"
     VERBATIM)
 
-add_subdirectory(tuyaos/tuyaos_adapter)
-file(GLOB UTILITY_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/tuyaos/tuyaos_adapter/include/utilities/src/*.c")
-add_executable(firmware
-    gd32h77x_os/main/main.c gd32h77x_os/main/gd32h77x_platform.c
-    gd32h77x_os/main/syscalls.c
-    gd32h77x_os/main/tuyaopen_license.c
-    gd32h77x_os/main/gd32h77x_entropy.c
-    gd32h77x_os/main/gd32h77x_flash_route.c
-    gd32h77x_os/main/startup_gd32h77d.S
-    gd32h77x_os/wireless/vw553/vw553_at_parser.c
-    gd32h77x_os/wireless/vw553/vw553_at_client.c
-    gd32h77x_os/wireless/vw553/vw553_event_queue.c
-    gd32h77x_os/wireless/vw553/vw553_uart_policy.c
-    gd32h77x_os/wireless/vw553/vw553_module_reset.c
-    gd32h77x_os/wireless/vw553/vw553_uart_transport.c
-    gd32h77x_os/wireless/vw553/vw553_probe.c
-    gd32h77x_os/wireless/vw553/vw553_device.c
-    gd32h77x_os/wireless/vw553/vw553_socket_backend.c
-    gd32h77x_os/main/gd32h77x_cnvm.c
-    gd32h77x_os/main/gd32h77x_ecnvm.c
-    gd32h77x_os/main/gd32h77x_nor.c
-    "${GD32H77X_LAYOUT_SOURCE}"
-    ${UTILITY_SOURCES}
-    "${CMSIS}/Source/GCC/startup_gd32h77x_78x.S"
-    "${CMSIS}/Source/system_gd32h77x_78x.c"
-    "${RTOS}/tasks.c" "${RTOS}/queue.c" "${RTOS}/list.c" "${RTOS}/timers.c"
-    "${RTOS}/event_groups.c" "${RTOS}/stream_buffer.c"
-    "${RTOS}/portable/MemMang/heap_4.c" "${PORT}/port.c"
-)
-target_link_libraries(firmware PRIVATE gd32h77x_tuyaos_adapter)
-if(CONFIG_GD32H77X_VW553_AT_BRIDGE STREQUAL "y")
-    target_sources(firmware PRIVATE gd32h77x_os/main/gd32h77x_vw553_bridge.c)
-    target_compile_definitions(firmware PRIVATE GD32H77X_VW553_AT_BRIDGE=1)
-endif()
-if(CONFIG_GD32H77X_DIAG_CLI STREQUAL "y")
-    if(NOT CONFIG_ENABLE_UART STREQUAL "y" OR NOT CONFIG_ENABLE_SERIAL_CLI_CMD STREQUAL "y")
-        message(FATAL_ERROR "GD32H77X_DIAG_CLI requires ENABLE_UART and ENABLE_SERIAL_CLI_CMD")
-    endif()
-    target_sources(firmware PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/gd32h77x_diag_cli.c")
-    target_compile_definitions(firmware PRIVATE GD32H77X_DIAG_CLI=1)
-endif()
-foreach(driver rcu gpio usart misc pmu syscfg trng dma ospi ospim)
-    target_sources(firmware PRIVATE "${PERIPH}/Source/gd32h77x_78x_${driver}.c")
-endforeach()
-target_include_directories(firmware PRIVATE gd32h77x_os/main gd32h77x_os/wireless/vw553
-    "${GD32H77X_BOARD_DIR}"
-    tests/cli "${GD32H77X_GENERATED_DIR}/include" "${GD}/CMSIS" "${CMSIS}/Include"
-    "${PERIPH}/Include" "${RTOS}/include" "${PORT}")
-separate_arguments(OPEN_INCLUDES NATIVE_COMMAND "${OPEN_HEADER_DIR}")
-target_include_directories(firmware PRIVATE ${OPEN_INCLUDES})
-target_compile_definitions(firmware PRIVATE ${GD32H77X_DEVICE_DEFINE} USE_STDPERIPH_DRIVER HXTAL_VALUE=25000000U)
+set(GD32H77X_OS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/gd32h77x_os")
+set(GD32H77X_GD_ROOT "${GD32H77X_OS_ROOT}/gd32")
+set(GD32H77X_COMPONENTS_ROOT "${GD32H77X_OS_ROOT}/components")
+
+# Platform-generated headers are shared by every component. Device selection is
+# a platform build input, not a per-component option.
+include_directories(
+    "${GD32H77X_CONFIG_DIR}/include"
+    "${GD32H77X_GENERATED_DIR}/include")
+add_compile_definitions(
+    ${GD32H77X_DEVICE_DEFINE}
+    USE_STDPERIPH_DRIVER
+    HXTAL_VALUE=25000000U)
 if(GD32H77X_PMU_DEFINE)
-    target_compile_definitions(firmware PRIVATE ${GD32H77X_PMU_DEFINE})
+    add_compile_definitions(${GD32H77X_PMU_DEFINE})
+endif()
+
+# Vendor SDK support is a normal dependency directory. Components are discovered
+# by their own CMakeLists; the components root intentionally has no build file.
+add_subdirectory("${GD32H77X_GD_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/gd32")
+file(GLOB GD32H77X_COMPONENT_CMAKELISTS CONFIGURE_DEPENDS
+    "${GD32H77X_COMPONENTS_ROOT}/*/CMakeLists.txt")
+list(SORT GD32H77X_COMPONENT_CMAKELISTS)
+foreach(component_cmakelists IN LISTS GD32H77X_COMPONENT_CMAKELISTS)
+    get_filename_component(component_dir "${component_cmakelists}" DIRECTORY)
+    get_filename_component(component_name "${component_dir}" NAME)
+    add_subdirectory("${component_dir}" "${CMAKE_CURRENT_BINARY_DIR}/components/${component_name}")
+endforeach()
+
+set(GD32H77X_PROJECT_SOURCES)
+set(GD32H77X_PROJECT_INCLUDE_DIRS)
+set(GD32H77X_PROJECT_LIBRARIES)
+set(GD32H77X_PROJECT_LINK_TARGETS)
+set(GD32H77X_PROJECT_REQUIRED_SYMBOLS)
+set(GD32H77X_PROJECT_COMPILE_DEFINITIONS)
+include("${GD32H77X_PROJECT_DIR}/project.cmake")
+if(NOT GD32H77X_PROJECT_SOURCES)
+    message(FATAL_ERROR "GD32H77X project did not declare GD32H77X_PROJECT_SOURCES: ${GD32H77X_PROJECT_DIR}")
+endif()
+
+add_executable(firmware
+    ${GD32H77X_PROJECT_SOURCES}
+    "${GD32H77X_LAYOUT_SOURCE}")
+target_include_directories(firmware PRIVATE
+    "${GD32H77X_CONFIG_DIR}/include"
+    "${GD32H77X_GENERATED_DIR}/include")
+if(GD32H77X_PROJECT_INCLUDE_DIRS)
+    target_include_directories(firmware PRIVATE ${GD32H77X_PROJECT_INCLUDE_DIRS})
+endif()
+if(GD32H77X_PROJECT_COMPILE_DEFINITIONS)
+    target_compile_definitions(firmware PRIVATE ${GD32H77X_PROJECT_COMPILE_DEFINITIONS})
 endif()
 target_compile_options(firmware PRIVATE -Wall -Wextra -Werror=implicit-function-declaration)
-separate_arguments(OPEN_LIBRARIES NATIVE_COMMAND "${PLATFORM_NEED_LIBS}")
-foreach(library IN LISTS OPEN_LIBRARIES)
-    # Absolute archives are also Ninja dependencies: an application change must relink.
-    list(APPEND OPEN_LIBRARY_FILES "${OPEN_LIBS_DIR}/lib${library}.a")
-endforeach()
-target_link_libraries(firmware PRIVATE -Wl,--start-group ${OPEN_LIBRARY_FILES} m c gcc -Wl,--end-group)
+target_link_libraries(firmware PRIVATE
+    ${GD32H77X_PROJECT_LINK_TARGETS}
+    -Wl,--start-group
+    gd32h77x_startup
+    gd32h77x_runtime
+    gd32h77x_console
+    gd32h77x_drivers
+    gd32h77x_at
+    ${GD32H77X_PROJECT_LIBRARIES}
+    m c gcc
+    -Wl,--end-group)
 target_link_options(firmware PRIVATE "-T${LINKER}" "-L${GD32H77X_GENERATED_DIR}" -Wl,--gc-sections
     "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/firmware.map" --specs=nosys.specs)
+foreach(symbol IN LISTS GD32H77X_PROJECT_REQUIRED_SYMBOLS)
+    target_link_options(firmware PRIVATE "-Wl,--require-defined=${symbol}")
+endforeach()
 set_target_properties(firmware PROPERTIES SUFFIX .elf LINK_DEPENDS
-    "${LINKER};${LINKER_TEMPLATE};${GD32H77X_MEMORY_INCLUDE};${GD32H77X_LAYOUT_HEADER};${GD32H77X_LAYOUT_SOURCE};${GD32H77X_RESOLVED_LAYOUT}")
+    "${LINKER};${LINKER_TEMPLATE};${GD32H77X_MEMORY_INCLUDE};${GD32H77X_LAYOUT_HEADER};${GD32H77X_LAYOUT_SOURCE};${GD32H77X_RESOLVED_LAYOUT};${GD32H77X_CONFIG_HEADER}")
 add_custom_target(gd32h77x_layout DEPENDS
     "${GD32H77X_MEMORY_INCLUDE}" "${GD32H77X_LAYOUT_HEADER}" "${GD32H77X_LAYOUT_SOURCE}" "${GD32H77X_RESOLVED_LAYOUT}")
 add_dependencies(firmware gd32h77x_layout)
-if(CONFIG_GD32H77X_ECNVM_CODE STREQUAL "y")
+if(GD32H77X_ECNVM_LAYOUT_ENABLED)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ecnvm_code.bin"
         COMMAND "${CMAKE_OBJCOPY}" -O binary --gap-fill 0xff
                 --only-section=.ecnvm_text "$<TARGET_FILE:firmware>"

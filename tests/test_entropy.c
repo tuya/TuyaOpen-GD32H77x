@@ -6,7 +6,6 @@
 
 #include "gd32h77x_entropy.h"
 
-#include "tuya_error_code.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -15,7 +14,7 @@
 
 typedef struct {
     uint8_t         samples[4][GD32H77X_ENTROPY_SAMPLE_SIZE];
-    int             results[4];
+    gd32h77x_status_t results[4];
     size_t          count;
     size_t          index;
     pthread_mutex_t mutex;
@@ -25,7 +24,7 @@ typedef struct {
     int             release;
 } mock_trng_t;
 
-static int mock_read_sample(void *context, uint8_t sample[GD32H77X_ENTROPY_SAMPLE_SIZE])
+static gd32h77x_status_t mock_read_sample(void *context, uint8_t sample[GD32H77X_ENTROPY_SAMPLE_SIZE])
 {
     mock_trng_t *mock = context;
     pthread_mutex_lock(&mock->mutex);
@@ -37,8 +36,9 @@ static int mock_read_sample(void *context, uint8_t sample[GD32H77X_ENTROPY_SAMPL
             pthread_cond_wait(&mock->condition, &mock->mutex);
         }
     }
-    int result = index < mock->count ? mock->results[index] : OPRT_COM_ERROR;
-    if (result == OPRT_OK) {
+    gd32h77x_status_t result = index < mock->count
+        ? mock->results[index] : GD32H77X_STATUS_IO_ERROR;
+    if (result == GD32H77X_STATUS_OK) {
         memcpy(sample, mock->samples[index], GD32H77X_ENTROPY_SAMPLE_SIZE);
     }
     pthread_mutex_unlock(&mock->mutex);
@@ -51,7 +51,7 @@ static void mock_init(mock_trng_t *mock)
     assert(pthread_mutex_init(&mock->mutex, NULL) == 0);
     assert(pthread_cond_init(&mock->condition, NULL) == 0);
     for (size_t i = 0U; i < 4U; ++i) {
-        mock->results[i] = OPRT_OK;
+        mock->results[i] = GD32H77X_STATUS_OK;
     }
 }
 
@@ -86,8 +86,8 @@ static void test_first_sample_discard_and_partial_cache(void)
 
     uint8_t first[7];
     uint8_t rest[GD32H77X_ENTROPY_SAMPLE_SIZE - sizeof(first)];
-    assert(gd32h77x_entropy_read(first, sizeof(first)) == OPRT_OK);
-    assert(gd32h77x_entropy_read(rest, sizeof(rest)) == OPRT_OK);
+    assert(gd32h77x_entropy_read(first, sizeof(first)) == GD32H77X_STATUS_OK);
+    assert(gd32h77x_entropy_read(rest, sizeof(rest)) == GD32H77X_STATUS_OK);
     assert(mock.index == 2U);
     assert(memcmp(first, mock.samples[1], sizeof(first)) == 0);
     assert(memcmp(rest, &mock.samples[1][sizeof(first)], sizeof(rest)) == 0);
@@ -99,14 +99,14 @@ static void test_failure_clears_whole_request(void)
     mock_trng_t mock;
     mock_init(&mock);
     mock.count      = 3U;
-    mock.results[2] = OPRT_TIMEOUT;
+    mock.results[2] = GD32H77X_STATUS_TIMEOUT;
     mock_pattern(mock.samples[0], 0x10U);
     mock_pattern(mock.samples[1], 0x40U);
     begin_test(&mock);
 
     uint8_t output[40];
     memset(output, 0xA5, sizeof(output));
-    assert(gd32h77x_entropy_read(output, sizeof(output)) == OPRT_TIMEOUT);
+    assert(gd32h77x_entropy_read(output, sizeof(output)) == GD32H77X_STATUS_TIMEOUT);
     for (size_t i = 0U; i < sizeof(output); ++i) {
         assert(output[i] == 0U);
     }
@@ -118,22 +118,22 @@ static void test_health_error_clears_request(void)
     mock_trng_t mock;
     mock_init(&mock);
     mock.count      = 2U;
-    mock.results[1] = OPRT_COM_ERROR;
+    mock.results[1] = GD32H77X_STATUS_IO_ERROR;
     mock_pattern(mock.samples[0], 0x10U);
     begin_test(&mock);
 
     uint8_t output[16];
     memset(output, 0xA5, sizeof(output));
-    assert(gd32h77x_entropy_read(output, sizeof(output)) == OPRT_COM_ERROR);
+    assert(gd32h77x_entropy_read(output, sizeof(output)) == GD32H77X_STATUS_IO_ERROR);
     for (size_t i = 0U; i < sizeof(output); ++i) {
         assert(output[i] == 0U);
     }
     gd32h77x_entropy_diagnostics_t diagnostics = {0};
     gd32h77x_entropy_get_diagnostics(&diagnostics);
     assert(diagnostics.snapshot_available == 1U);
-    assert(diagnostics.error == OPRT_COM_ERROR);
+    assert(diagnostics.error == GD32H77X_STATUS_IO_ERROR);
     assert(diagnostics.stage == GD32H77X_ENTROPY_STAGE_READ_SAMPLE);
-    assert(gd32h77x_entropy_read(output, sizeof(output)) == OPRT_COM_ERROR);
+    assert(gd32h77x_entropy_read(output, sizeof(output)) == GD32H77X_STATUS_IO_ERROR);
     gd32h77x_entropy_diagnostics_t latched = {0};
     gd32h77x_entropy_get_diagnostics(&latched);
     assert(latched.snapshot_available == 1U);
@@ -146,20 +146,20 @@ static void test_health_error_recovers_once(void)
     mock_trng_t mock;
     mock_init(&mock);
     mock.count      = 4U;
-    mock.results[1] = OPRT_COM_ERROR;
+    mock.results[1] = GD32H77X_STATUS_IO_ERROR;
     mock_pattern(mock.samples[0], 0x10U);
     mock_pattern(mock.samples[2], 0x20U);
     mock_pattern(mock.samples[3], 0x40U);
     begin_test(&mock);
 
     uint8_t output[GD32H77X_ENTROPY_SAMPLE_SIZE];
-    assert(gd32h77x_entropy_read(output, sizeof(output)) == OPRT_OK);
+    assert(gd32h77x_entropy_read(output, sizeof(output)) == GD32H77X_STATUS_OK);
     assert(memcmp(output, mock.samples[3], sizeof(output)) == 0);
 
     gd32h77x_entropy_diagnostics_t diagnostics = {0};
     gd32h77x_entropy_get_diagnostics(&diagnostics);
     assert(diagnostics.snapshot_available == 1U);
-    assert(diagnostics.error == OPRT_COM_ERROR);
+    assert(diagnostics.error == GD32H77X_STATUS_IO_ERROR);
     mock_destroy(&mock);
 }
 
@@ -174,13 +174,13 @@ static void test_repeated_sample_fails_closed(void)
 
     uint8_t output[8];
     memset(output, 0xA5, sizeof(output));
-    assert(gd32h77x_entropy_read(output, sizeof(output)) == OPRT_COM_ERROR);
+    assert(gd32h77x_entropy_read(output, sizeof(output)) == GD32H77X_STATUS_IO_ERROR);
     for (size_t i = 0U; i < sizeof(output); ++i) {
         assert(output[i] == 0U);
     }
     gd32h77x_entropy_diagnostics_t diagnostics = {0};
     gd32h77x_entropy_get_diagnostics(&diagnostics);
-    assert(diagnostics.error == OPRT_COM_ERROR);
+    assert(diagnostics.error == GD32H77X_STATUS_IO_ERROR);
     assert(diagnostics.stage == GD32H77X_ENTROPY_STAGE_CONTINUOUS_TEST);
     mock_destroy(&mock);
 }
@@ -218,7 +218,7 @@ static void test_busy_call_does_not_touch_output_or_shared_state(void)
 
     uint8_t concurrent_output[8];
     memset(concurrent_output, 0xA5, sizeof(concurrent_output));
-    assert(gd32h77x_entropy_read(concurrent_output, sizeof(concurrent_output)) == OPRT_RESOURCE_NOT_READY);
+    assert(gd32h77x_entropy_read(concurrent_output, sizeof(concurrent_output)) == GD32H77X_STATUS_NOT_READY);
     for (size_t i = 0U; i < sizeof(concurrent_output); ++i) {
         assert(concurrent_output[i] == 0xA5U);
     }
@@ -231,7 +231,7 @@ static void test_busy_call_does_not_touch_output_or_shared_state(void)
     pthread_cond_broadcast(&mock.condition);
     pthread_mutex_unlock(&mock.mutex);
     assert(pthread_join(worker, NULL) == 0);
-    assert(thread.result == OPRT_OK);
+    assert(thread.result == GD32H77X_STATUS_OK);
     assert(memcmp(thread.output, mock.samples[1], sizeof(thread.output)) == 0);
     mock_destroy(&mock);
 }

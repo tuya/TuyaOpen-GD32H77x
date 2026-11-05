@@ -4,6 +4,7 @@
  */
 
 #include "tkl_network.h"
+#include "at_socket.h"
 #include <assert.h>
 #include <limits.h>
 #include <stdint.h>
@@ -15,6 +16,50 @@ typedef struct {
     TUYA_FD_SET_T set;
     uint8_t after[8];
 } guarded_fd_set_t;
+
+static int fake_send_result;
+static int fake_recv_result;
+
+int at_socket_send(int fd, const void *buf, uint32_t length)
+{
+    (void)fd;
+    (void)buf;
+    (void)length;
+    return fake_send_result;
+}
+
+int at_socket_sendto(int fd, const void *buf, uint32_t length, uint32_t addr, uint16_t port)
+{
+    (void)fd;
+    (void)buf;
+    (void)length;
+    (void)addr;
+    (void)port;
+    return fake_send_result;
+}
+
+int at_socket_recv(int fd, void *buf, uint32_t length)
+{
+    (void)fd;
+    (void)buf;
+    (void)length;
+    return fake_recv_result;
+}
+
+int at_socket_recvfrom(int fd, void *buf, uint32_t length, uint32_t *addr, uint16_t *port)
+{
+    (void)fd;
+    (void)buf;
+    (void)length;
+    (void)addr;
+    (void)port;
+    return fake_recv_result;
+}
+
+at_socket_errno_t at_socket_get_errno(void)
+{
+    return AT_SOCKET_ERRNO_NONE;
+}
 
 static void fd_set_bounds_and_bitmap(void)
 {
@@ -68,10 +113,40 @@ static void strict_ipv4_host_order(void)
     }
 }
 
+static void send_length_passthrough(void)
+{
+    uint8_t payload[2048] = {0};
+    for (int length = 127; length <= 129; ++length) {
+        fake_send_result = length;
+        assert(tkl_net_send(3, payload, (uint32_t)length) == length);
+        assert(tkl_net_send_to(3, payload, (uint32_t)length, 0, 443) == length);
+    }
+    fake_send_result = 2048;
+    assert(tkl_net_send(3, payload, sizeof(payload)) == (int)sizeof(payload));
+}
+
+static void recv_length_passthrough(void)
+{
+    uint8_t payload[2048] = {0};
+    for (int length = 127; length <= 129; ++length) {
+        fake_recv_result = length;
+        assert(tkl_net_recv(3, payload, (uint32_t)length) == length);
+        assert(tkl_net_recvfrom(3, payload, (uint32_t)length, NULL, NULL) == length);
+    }
+    fake_recv_result = 2048;
+    assert(tkl_net_recv(3, payload, sizeof(payload)) == (int)sizeof(payload));
+
+    fake_recv_result = 0;
+    assert(tkl_net_recv(3, NULL, 0U) == 0);
+    assert(tkl_net_recvfrom(3, NULL, 0U, NULL, NULL) == 0);
+}
+
 int main(void)
 {
     fd_set_bounds_and_bitmap();
     strict_ipv4_host_order();
+    send_length_passthrough();
+    recv_length_passthrough();
     puts("TKL network common semantics checks passed");
     return 0;
 }

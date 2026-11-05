@@ -5,7 +5,6 @@ import argparse
 import ctypes
 import ctypes.util
 import hashlib
-import json
 from pathlib import Path, PurePosixPath
 import stat
 
@@ -61,12 +60,12 @@ def main():
         getattr(lib, function).restype = result
 
     output = Path(__file__).resolve().parents[2]
-    manifest = {"archive": args.archive.name, "sha256": ARCHIVE_SHA256, "files": {}}
     reader = lib.archive_read_new()
     lib.archive_read_support_filter_all(reader)
     lib.archive_read_support_format_all(reader)
     entry = ctypes.c_void_p()
     buffer = ctypes.create_string_buffer(1024 * 1024)
+    imported = 0
     try:
         if lib.archive_read_open_filename(reader, str(args.archive).encode(), 10240) != 0:
             raise RuntimeError(lib.archive_error_string(reader))
@@ -94,12 +93,10 @@ def main():
             dest = output / target
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
-            manifest["files"][target] = {"source": source, "sha256": hashlib.sha256(data).hexdigest()}
+            imported += 1
     finally:
         lib.archive_read_free(reader)
-    manifest["files"] = dict(sorted(manifest["files"].items()))
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"Imported {len(manifest['files'])} vendor files from verified archive")
+    print(f"Imported {imported} vendor files from verified archive")
 
 
 if __name__ == "__main__":

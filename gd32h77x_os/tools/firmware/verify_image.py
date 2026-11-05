@@ -201,7 +201,7 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
     elif ecnvm_binary is not None:
         raise ValueError("ECNVM BIN was supplied but ELF has no ECNVM load sections")
     if bool(ecnvm_enabled) != bool(ecnvm_ranges):
-        raise ValueError("GD32H77X_ECNVM_CODE configuration does not match ELF ECNVM sections")
+        raise ValueError("ECNVM verification mode does not match ELF ECNVM sections")
     if binary[:8] != elf[boot[4]:boot[4] + 8]:
         raise ValueError("BIN boot table differs from ELF")
     vector_data = binary[vector_base - boot_base:vector_base - boot_base + vectors[5]]
@@ -222,7 +222,7 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
             raise ValueError(f"FreeRTOS handler not installed: {name}")
     if not ram_base <= symbols["_sbss"] <= symbols["_ebss"] <= symbols["_heap_end"] <= symbols["_stack_bottom"] < stack:
         raise ValueError("RAM sections overlap")
-    app_entry = symbols["tuya_app_main"] & ~1
+    app_entry = symbols["app_entry"] & ~1
     in_cnvm_app = vector_base <= app_entry < app_limit
     in_ecnvm_app = bool(ecnvm_regions) and ecnvm_base <= app_entry < ecnvm_limit
     if not (in_cnvm_app or in_ecnvm_app):
@@ -248,7 +248,7 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
     build = resolved.get("build", {})
     chip = build.get("platform_chip", resolved.get("platform_chip",
                   resolved.get("chip", resolved.get("layout", {}).get("platform_chip"))))
-    return {"board": build.get("platform_board", resolved.get("board", "GD32H77D_GINO")), "chip": chip,
+    return {"board": build.get("platform_board", resolved.get("board", "GD32H779V_START")), "chip": chip,
             "sourceKind": source_kind, "sourcePath": source_path,
             "sourceDigest": source_digest, "normalizedLayoutDigest": layout_digest,
             "sourceInputs": source_inputs,

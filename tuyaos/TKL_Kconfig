@@ -1,9 +1,0 @@
-config ENABLE_BLUETOOTH
-	default y
-
-config ENABLE_UART
-	default y
-
-config ENABLE_WIFI
-	default y
-

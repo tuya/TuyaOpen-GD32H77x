@@ -69,7 +69,7 @@ int main(void)
     mock_cnvm_reset();
     assert(tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_UF, &info_uf) == OPRT_RESOURCE_NOT_READY);
     assert(tkl_flash_get_one_type_info(TUYA_FLASH_TYPE_KV_DATA, &info_kv) == OPRT_RESOURCE_NOT_READY);
-    assert(gd32h77x_cnvm_init() == OPRT_OK);
+    assert(gd32h77x_cnvm_init() == GD32H77X_STATUS_OK);
     assert(tkl_flash_read(GD32H77X_LAYOUT_KV_LOGICAL_BASE, readback, sizeof(readback)) == OPRT_OK);
     assert(readback[0] == 0xFFU && mock_cnvm_stats()->read_requests == 1U);
     assert(tkl_flash_erase(GD32H77X_LAYOUT_KV_LOGICAL_BASE,

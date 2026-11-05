@@ -3,12 +3,32 @@
 VW553 是独立无线 MCU。其固件构建和烧录与 H779/H77 主控二进制完全独立。
 本文当前描述的 canonical 入口是 `platform/GD32/gd32_os/MSDK/vw553_at_gateway`。
 
+如果 VW553 固件不需要修改，可直接使用 H77 平台仓库预置的稳定 UART 镜像，
+不需要拉取 `platform/GD32` 源码仓库：
+
+```text
+platform/GD32H77X/wireless_fw/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
+```
+
+版本、SHA256、引脚和验收边界见
+[VW553 wireless firmware](../wireless_fw/vw553/README.md)。
+
+不修改 VW553 固件时，推荐使用 GigaDevice 官方独立工具
+**GD32 Mass Production Tool**。已验证版本 `v1.0.5g`，包 SHA256 为
+`33559c67b294e7867867ba1c6063d2a64c8bc0cd0922df9bb0bbd879d0633faa`。
+该路径不需要拉取 `platform/GD32` 源码仓库。
+
+只有需要修改 VW553 源码时才拉取 `platform/GD32`，修改
+`gd32_os/MSDK/vw553_at_gateway` 后重新编译和验收，并直接使用自己构建的
+`image-all.bin`。开发者不需要把修改后的固件放回 H77 仓库；H77 仓库中的稳定
+bin 由平台维护者按发布节奏更新。
+
 > **历史入口说明**
 >
 > 旧的 `/tmp/gd32vw553-diag`、`MSDK/projects/vw553_at_gateway`、CMake 外部
 > `cmake_build` 目录、overlay/staging 和手工 `patch -p*` 顺序仅作为历史验证记录，
 > 不是当前构建步骤。H77 的 `diag_vw553_reset isp` 也只适用于明确提供该诊断命令且
-> PC5 复位接线成立的设备，不能作为唯一或默认 ISP 入口。
+> 复位接线成立的设备，不能作为唯一或默认 ISP 入口。
 
 ## 串口和引脚
 
@@ -18,13 +38,15 @@ VW553 是独立无线 MCU。其固件构建和烧录与 H779/H77 主控二进制
 | SRAM loader 上传后 | 同一 Type-C 口 | 115200 8N1 |
 | 镜像下载 | 同一 Type-C 口 | 默认 2,000,000 8N1 |
 | VW553 正常运行时 LOG UART | UART1，TX PB15 / RX PA8，仍走 Type-C | 115200 8N1 |
-| H779 AT link | VW553 UART2 TX PA6 / RX PA7 | 115200 8N1 |
+| VW553 AT link | UART2 TX PA6 / RX PA7，连接方式见接线文档 | 115200 8N1 |
+
+VW553 镜像只固定表中的 VW553 侧引脚；H77 侧引脚由 H77 平台配置决定，本文不展开。
 
 `ttyUSB` 编号会随插拔、USB Hub 或虚拟机重新枚举变化，不能只凭
 `/dev/ttyUSB0`/`/dev/ttyUSB1` 判断设备身份。烧录前必须结合 by-path、USB
 拓扑和实际板卡连接确认端口，且不得误操作 H779 串口。
 
-## 构建镜像
+## 修改固件时构建镜像
 
 从 `platform/GD32/gd32_os` 执行：
 
@@ -68,19 +90,38 @@ platform/GD32/gd32_os/MSDK/vw553_at_gateway/docs/manifest.json
 ### H77 控制复位的历史/条件入口
 
 早期 GinoPi 可通过 H77 CLI 的 `diag_vw553_reset isp` 控制 VW553 NRST。
-只有在当前 H77 固件确实包含该命令、PC5 到 VW553 NRST 接线成立且 BOOT0 已拉高时
+只有在当前 H77 固件确实包含该命令、复位接线成立且 BOOT0 已拉高时
 才能使用。该方式不是当前 LCKFB 独立烧录的必要条件，也不是唯一入口。
 
-## 烧录
+## 官方工具烧录
 
-确认串口没有被占用后，从 TuyaOpen 根目录执行：
+使用官方 `GD32MassProductionTool.exe`：
+
+1. Chip 选择 `GD32VW553`。
+2. 选择 VW553 板载 Type-C/CH340 对应串口。
+3. Download baudrate 选择 `2000000`。
+4. Erase 选择 `Page Erase`，不要选择 `Chip Erase`。
+5. Firmware 选择 H77 仓库中的稳定镜像。
+6. 按住 BOOT0、短按 RESET，进入 ROM ISP 后开始下载。
+7. 下载完成后释放 BOOT0 并再次复位。
+
+## Linux/自动化备用烧录
+
+如果无法运行官方 Windows GUI/CMD，可使用 GD32 平台仓库中的 Python ISP。
+该方式需要 `platform/GD32` 仓库。确认串口没有被占用后，从 TuyaOpen 根目录执行：
 
 ```bash
 python3 platform/GD32/platform_flash_bridge.py \
   --device GD32VW553H \
   --port /dev/ttyUSB0 \
   --baud 2000000 \
-  --binfile platform/GD32/gd32_os/scripts/images/image-all.bin
+  --binfile platform/GD32H77X/wireless_fw/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
+```
+
+只有修改 VW553 源码并重新构建时，才把 `--binfile` 改为：
+
+```text
+platform/GD32/gd32_os/scripts/images/image-all.bin
 ```
 
 把 `/dev/ttyUSB0` 替换为实际确认的 VW553 Type-C 端口。

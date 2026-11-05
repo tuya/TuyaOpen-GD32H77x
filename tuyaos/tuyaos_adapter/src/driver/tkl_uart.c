@@ -11,9 +11,6 @@
 
 // --- BEGIN: user defines and implements ---
 #include "tkl_uart.h"
-#if defined(GD32H77X_VW553_AT_BRIDGE) && (GD32H77X_VW553_AT_BRIDGE == 1)
-#include "gd32h77x_vw553_bridge.h"
-#endif
 #include "tuya_error_code.h"
 /*
  * @file tkl_uart.c
@@ -26,8 +23,8 @@
 #include "stream_buffer.h"
 #include "task.h"
 
-#include "gd32h77x_uart.h"
-#include "gd32h77x_console_binding.h"
+#include "uart_hooks.h"
+#include "gd32h77x_config.h"
 #include "gd32h77x_78x.h"
 #include "gd32h77x_platform.h"
 #include "gd32h77x_freertos.h"
@@ -102,11 +99,9 @@ static void uart_rx_worker(void *argument)
 
 void GD32H77X_CONSOLE_IRQHandler(void)
 {
-#if defined(GD32H77X_VW553_AT_BRIDGE) && (GD32H77X_VW553_AT_BRIDGE == 1)
-    if (gd32h77x_vw553_bridge_usart1_rx_isr()) {
+    if (gd32h77x_at_bridge_host_rx_isr()) {
         return;
     }
-#endif
     BaseType_t higher_priority_task_woken = pdFALSE;
     BaseType_t received = pdFALSE;
 
@@ -573,7 +568,7 @@ OPERATE_RET tkl_uart_wait_for_data(TUYA_UART_NUM_E port_id, int timeout_ms)
     }
 
     TickType_t start = xTaskGetTickCount();
-    TickType_t limit = timeout_ms < 0 ? portMAX_DELAY : tkl_timeout_ticks((uint32_t)timeout_ms);
+    TickType_t limit = timeout_ms < 0 ? portMAX_DELAY : gd32h77x_timeout_ticks((uint32_t)timeout_ms);
     for (;;) {
         if (xStreamBufferBytesAvailable(s_uart.stream) != 0U) {
             return OPRT_OK;

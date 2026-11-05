@@ -60,7 +60,7 @@ OPERATE_RET tkl_queue_post(const TKL_QUEUE_HANDLE queue, void *data, uint32_t ti
     if (!queue || !data) {
         return OPRT_INVALID_PARM;
     }
-    return xQueueSend(queue, data, tkl_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_QUEUE_SEND_FAIL;
+    return xQueueSend(queue, data, gd32h77x_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_QUEUE_SEND_FAIL;
     // --- END: user implements ---
 }
 
@@ -80,7 +80,7 @@ OPERATE_RET tkl_queue_fetch(const TKL_QUEUE_HANDLE queue, void *msg, uint32_t ti
     if (!queue || !msg) {
         return OPRT_INVALID_PARM;
     }
-    return xQueueReceive(queue, msg, tkl_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK
+    return xQueueReceive(queue, msg, gd32h77x_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK
                                                                                : OPRT_OS_ADAPTER_QUEUE_RECV_FAIL;
     // --- END: user implements ---
 }

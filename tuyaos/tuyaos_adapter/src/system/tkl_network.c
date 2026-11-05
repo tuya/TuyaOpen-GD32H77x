@@ -11,13 +11,51 @@
 
 // --- BEGIN: user defines and implements ---
 #include "tkl_network.h"
-#include "vw553_socket_backend.h"
+#include "at_socket.h"
+#include "at_status_map.h"
+#include "at_log.h"
 #include "tuya_error_code.h"
 #include <string.h>
 
 static bool gd32h77x_fd_valid(int fd, const TUYA_FD_SET_T *fds)
 {
-    return fds != NULL && fd >= 0 && (unsigned)fd < (unsigned)TUYA_FD_MAX_COUNT;
+    return fds != NULL && fd >= 0 && fd < (int)(sizeof(fds->placeholder) * 8U);
+}
+
+static TUYA_ERRNO at_errno_to_tuya(at_socket_errno_t error)
+{
+    switch (error) {
+    case AT_SOCKET_ERRNO_NONE: return UNW_SUCCESS;
+    case AT_SOCKET_ERRNO_INVALID: return UNW_EINVAL;
+    case AT_SOCKET_ERRNO_BUSY: return UNW_EBUSY;
+    case AT_SOCKET_ERRNO_BAD_FD: return UNW_EBADF;
+    case AT_SOCKET_ERRNO_NO_FD: return UNW_ENFILE;
+    case AT_SOCKET_ERRNO_NO_BUFFER: return UNW_ENOBUFS;
+    case AT_SOCKET_ERRNO_TIMEOUT: return UNW_ETIMEDOUT;
+    case AT_SOCKET_ERRNO_AGAIN: return UNW_EAGAIN;
+    case AT_SOCKET_ERRNO_NOT_CONNECTED: return UNW_ENOTCONN;
+    case AT_SOCKET_ERRNO_CONNECTION_RESET: return UNW_ECONNRESET;
+    case AT_SOCKET_ERRNO_CONNECTION_REFUSED: return UNW_ECONNREFUSED;
+    case AT_SOCKET_ERRNO_ADDRESS_IN_USE: return UNW_EADDRINUSE;
+    case AT_SOCKET_ERRNO_MESSAGE_TOO_LARGE: return UNW_EMSGSIZE;
+    case AT_SOCKET_ERRNO_NETWORK_DOWN: return UNW_ENETDOWN;
+    case AT_SOCKET_ERRNO_NETWORK_RESET: return UNW_ENETRESET;
+    case AT_SOCKET_ERRNO_UNSUPPORTED: return TUYA_ERRNO_NOT_SUPPORT;
+    default:
+        AT_SUMMARY("unknown AT socket errno=%d", (int)error);
+        return UNW_EINVAL;
+    }
+}
+
+static at_socket_type_t at_type_from_tuya(TUYA_PROTOCOL_TYPE_E type)
+{
+    return type == PROTOCOL_UDP ? AT_SOCKET_TYPE_DATAGRAM : AT_SOCKET_TYPE_STREAM;
+}
+
+static at_socket_transfer_t at_transfer_from_tuya(TUYA_TRANS_TYPE_E type)
+{
+    return type == TRANS_SEND ? AT_SOCKET_TRANSFER_SEND
+                                   : AT_SOCKET_TRANSFER_RECV;
 }
 
 static bool gd32h77x_ipv4_parse(const char *text, uint32_t *address)
@@ -71,7 +109,7 @@ static bool gd32h77x_ipv4_parse(const char *text, uint32_t *address)
 TUYA_ERRNO tkl_net_get_errno(void)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_backend_errno();
+    return at_errno_to_tuya(at_socket_get_errno());
     // --- END: user implements ---
 }
 
@@ -174,7 +212,19 @@ int tkl_net_select(const int maxfd, TUYA_FD_SET_T *readfds, TUYA_FD_SET_T *write
                    const uint32_t ms_timeout)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_select(maxfd, readfds, writefds, errorfds, ms_timeout);
+    at_socket_fd_set_t at_read = {0};
+    at_socket_fd_set_t at_write = {0};
+    at_socket_fd_set_t at_error = {0};
+    if (readfds) memcpy(at_read.bits, readfds->placeholder, sizeof(at_read.bits));
+    if (writefds) memcpy(at_write.bits, writefds->placeholder, sizeof(at_write.bits));
+    if (errorfds) memcpy(at_error.bits, errorfds->placeholder, sizeof(at_error.bits));
+    int result = at_socket_select(maxfd, readfds ? &at_read : NULL,
+                                  writefds ? &at_write : NULL,
+                                  errorfds ? &at_error : NULL, ms_timeout);
+    if (readfds) memcpy(readfds->placeholder, at_read.bits, sizeof(at_read.bits));
+    if (writefds) memcpy(writefds->placeholder, at_write.bits, sizeof(at_write.bits));
+    if (errorfds) memcpy(errorfds->placeholder, at_error.bits, sizeof(at_error.bits));
+    return result;
     // --- END: user implements ---
 }
 
@@ -190,7 +240,7 @@ int tkl_net_select(const int maxfd, TUYA_FD_SET_T *readfds, TUYA_FD_SET_T *write
 int tkl_net_get_nonblock(const int fd)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_get_nonblock(fd);
+    return at_socket_get_nonblock(fd);
     // --- END: user implements ---
 }
 
@@ -207,7 +257,7 @@ int tkl_net_get_nonblock(const int fd)
 OPERATE_RET tkl_net_set_block(const int fd, const BOOL_T block)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_set_block(fd, block);
+    return tuya_at_status_to_oprt(at_socket_set_block(fd, block));
     // --- END: user implements ---
 }
 
@@ -223,7 +273,7 @@ OPERATE_RET tkl_net_set_block(const int fd, const BOOL_T block)
 TUYA_ERRNO tkl_net_close(const int fd)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_close(fd);
+    return at_errno_to_tuya(at_socket_close(fd));
     // --- END: user implements ---
 }
 
@@ -240,7 +290,7 @@ TUYA_ERRNO tkl_net_close(const int fd)
 TUYA_ERRNO tkl_net_shutdown(const int fd, const int how)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_shutdown(fd, how);
+    return at_errno_to_tuya(at_socket_shutdown(fd, how));
     // --- END: user implements ---
 }
 
@@ -256,7 +306,7 @@ TUYA_ERRNO tkl_net_shutdown(const int fd, const int how)
 int tkl_net_socket_create(const TUYA_PROTOCOL_TYPE_E type)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_create(type);
+    return at_socket_create(at_type_from_tuya(type));
     // --- END: user implements ---
 }
 
@@ -274,7 +324,7 @@ int tkl_net_socket_create(const TUYA_PROTOCOL_TYPE_E type)
 TUYA_ERRNO tkl_net_connect(const int fd, const TUYA_IP_ADDR_T addr, const uint16_t port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_connect(fd, addr, port);
+    return at_errno_to_tuya(at_socket_connect(fd, addr, port));
     // --- END: user implements ---
 }
 
@@ -311,7 +361,7 @@ TUYA_ERRNO tkl_net_connect_raw(const int fd, void *p_socket_addr, const int len)
 TUYA_ERRNO tkl_net_bind(const int fd, const TUYA_IP_ADDR_T addr, const uint16_t port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_bind(fd, addr, port);
+    return at_errno_to_tuya(at_socket_bind(fd, addr, port));
     // --- END: user implements ---
 }
 
@@ -328,7 +378,7 @@ TUYA_ERRNO tkl_net_bind(const int fd, const TUYA_IP_ADDR_T addr, const uint16_t 
 TUYA_ERRNO tkl_net_listen(const int fd, const int backlog)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_listen(fd, backlog);
+    return at_errno_to_tuya(at_socket_listen(fd, backlog));
     // --- END: user implements ---
 }
 
@@ -346,7 +396,8 @@ TUYA_ERRNO tkl_net_listen(const int fd, const int backlog)
 TUYA_ERRNO tkl_net_accept(const int fd, TUYA_IP_ADDR_T *addr, uint16_t *port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_accept(fd, addr, port);
+    int accepted = at_socket_accept(fd, addr, port);
+    return accepted >= 0 ? accepted : at_errno_to_tuya((at_socket_errno_t)accepted);
     // --- END: user implements ---
 }
 
@@ -364,7 +415,13 @@ TUYA_ERRNO tkl_net_accept(const int fd, TUYA_IP_ADDR_T *addr, uint16_t *port)
 TUYA_ERRNO tkl_net_send(const int fd, const void *buf, const uint32_t nbytes)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_send(fd, buf, nbytes);
+    int sent = at_socket_send(fd, buf, nbytes);
+    if (sent < 0) {
+        AT_SUMMARY("tkl send failed fd=%d len=%u sent=%d errno=%d", fd,
+                   (unsigned)nbytes, sent, (int)at_socket_get_errno());
+        return at_errno_to_tuya((at_socket_errno_t)sent);
+    }
+    return sent;
     // --- END: user implements ---
 }
 
@@ -385,14 +442,8 @@ TUYA_ERRNO tkl_net_send_to(const int fd, const void *buf, const uint32_t nbytes,
                            const uint16_t port)
 {
     // --- BEGIN: user implements ---
-    /* The AP netcfg thread can queue one last discovery broadcast after the
-     * VW553 has already switched its vif out of SoftAP. That packet cannot
-     * leave the dead AP interface, so drop it here instead of spending an AT
-     * transaction and turning it into CIPSEND/SEND FAIL noise. */
-    if (addr == (TUYA_IP_ADDR_T)0xFFFFFFFFUL && vw553_socket_ap_teardown_active()) {
-        return (TUYA_ERRNO)nbytes;
-    }
-    return vw553_socket_sendto(fd, buf, nbytes, addr, port);
+    int sent = at_socket_sendto(fd, buf, nbytes, addr, port);
+    return sent >= 0 ? sent : at_errno_to_tuya((at_socket_errno_t)sent);
     // --- END: user implements ---
 }
 
@@ -410,7 +461,8 @@ TUYA_ERRNO tkl_net_send_to(const int fd, const void *buf, const uint32_t nbytes,
 TUYA_ERRNO tkl_net_recv(const int fd, void *buf, const uint32_t nbytes)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_recv(fd, buf, nbytes);
+    int received = at_socket_recv(fd, buf, nbytes);
+    return received >= 0 ? received : at_errno_to_tuya((at_socket_errno_t)received);
     // --- END: user implements ---
 }
 
@@ -429,7 +481,7 @@ TUYA_ERRNO tkl_net_recv(const int fd, void *buf, const uint32_t nbytes)
 int tkl_net_recv_nd_size(const int fd, void *buf, const uint32_t buf_size, const uint32_t nd_size)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_recv_nd_size(fd, buf, buf_size, nd_size);
+    return at_socket_recv_nd_size(fd, buf, buf_size, nd_size);
     // --- END: user implements ---
 }
 
@@ -449,7 +501,8 @@ int tkl_net_recv_nd_size(const int fd, void *buf, const uint32_t buf_size, const
 TUYA_ERRNO tkl_net_recvfrom(const int fd, void *buf, const uint32_t nbytes, TUYA_IP_ADDR_T *addr, uint16_t *port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_recvfrom(fd, buf, nbytes, addr, port);
+    int received = at_socket_recvfrom(fd, buf, nbytes, addr, port);
+    return received >= 0 ? received : at_errno_to_tuya((at_socket_errno_t)received);
     // --- END: user implements ---
 }
 
@@ -466,7 +519,7 @@ TUYA_ERRNO tkl_net_recvfrom(const int fd, void *buf, const uint32_t nbytes, TUYA
 OPERATE_RET tkl_net_gethostbyname(const char *domain, TUYA_IP_ADDR_T *addr)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_gethostbyname(domain, addr);
+    return tuya_at_status_to_oprt(at_socket_gethostbyname(domain, addr));
     // --- END: user implements ---
 }
 
@@ -520,7 +573,7 @@ OPERATE_RET tkl_net_get_socket_ip(const int fd, TUYA_IP_ADDR_T *addr)
 {
     // --- BEGIN: user implements ---
     uint16_t port;
-    return vw553_socket_getsockname(fd, addr, &port);
+    return tuya_at_status_to_oprt(at_socket_getsockname(fd, addr, &port));
     // --- END: user implements ---
 }
 
@@ -623,7 +676,8 @@ OPERATE_RET tkl_net_getsockopt(const int fd, const TUYA_OPT_LEVEL level, const T
 OPERATE_RET tkl_net_set_timeout(const int fd, const int ms_timeout, const TUYA_TRANS_TYPE_E type)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_set_timeout(fd, ms_timeout, type);
+    return tuya_at_status_to_oprt(at_socket_set_timeout(fd, ms_timeout,
+                                                        at_transfer_from_tuya(type)));
     // --- END: user implements ---
 }
 
@@ -641,7 +695,8 @@ OPERATE_RET tkl_net_set_timeout(const int fd, const int ms_timeout, const TUYA_T
 OPERATE_RET tkl_net_set_bufsize(const int fd, const int buf_size, const TUYA_TRANS_TYPE_E type)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_set_bufsize(fd, buf_size, type);
+    return tuya_at_status_to_oprt(at_socket_set_bufsize(fd, buf_size,
+                                                        at_transfer_from_tuya(type)));
     // --- END: user implements ---
 }
 
@@ -660,7 +715,7 @@ OPERATE_RET tkl_net_set_reuse(const int fd)
     if (fd < 0) {
         return OPRT_INVALID_PARM;
     }
-    /* VW553 enables SO_REUSEADDR internally when creating a TCP/UDP server.
+    /* AT enables SO_REUSEADDR internally when creating a TCP/UDP server.
      * Keep this socket option as a successful no-op so generic AP netcfg can
      * create its listeners without a redundant AT command. */
     return OPRT_OK;
@@ -696,7 +751,7 @@ OPERATE_RET tkl_net_disable_nagle(const int fd)
 OPERATE_RET tkl_net_set_broadcast(const int fd)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_set_broadcast(fd);
+    return tuya_at_status_to_oprt(at_socket_set_broadcast(fd));
     // --- END: user implements ---
 }
 
@@ -737,7 +792,7 @@ OPERATE_RET tkl_net_set_keepalive(int fd, const BOOL_T alive, const uint32_t idl
 OPERATE_RET tkl_net_getsockname(int fd, TUYA_IP_ADDR_T *addr, uint16_t *port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_getsockname(fd, addr, port);
+    return tuya_at_status_to_oprt(at_socket_getsockname(fd, addr, port));
     // --- END: user implements ---
 }
 
@@ -755,7 +810,7 @@ OPERATE_RET tkl_net_getsockname(int fd, TUYA_IP_ADDR_T *addr, uint16_t *port)
 OPERATE_RET tkl_net_getpeername(int fd, TUYA_IP_ADDR_T *addr, uint16_t *port)
 {
     // --- BEGIN: user implements ---
-    return vw553_socket_getpeername(fd, addr, port);
+    return tuya_at_status_to_oprt(at_socket_getpeername(fd, addr, port));
     // --- END: user implements ---
 }
 

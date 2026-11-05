@@ -9,36 +9,82 @@ import unittest
 
 PLATFORM = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
+    "gd32h77x_build_firmware_under_test", PLATFORM / "build_firmware.py")
+build_firmware = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(build_firmware)
+SPEC = importlib.util.spec_from_file_location(
     "gd32h77x_build_example_under_test", PLATFORM / "build_example.py")
 build_example = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build_example)
 
 
 class BuildExampleTests(unittest.TestCase):
-    def test_explicit_internal_only_keeps_validated_artifacts_and_omits_csv(self):
+
+    def test_tuyaopen_inputs_become_generic_project_context(self):
+        with tempfile.TemporaryDirectory(prefix="gd32h77x-project-context-test-") as temporary:
+            parameters = Path(temporary)
+            project_config = parameters / "project/tuya/project.config"
+            project_config.parent.mkdir(parents=True)
+            project_config.write_text("CONFIG_GD32H77X_AT_BAUD=460800\n")
+            build_example._write_project_context(parameters, {
+                "OPEN_HEADER_DIR": "/headers/one /headers/two",
+                "OPEN_LIBS_DIR": "/prebuilt",
+                "PLATFORM_NEED_LIBS": "tuyaapp tuyaos",
+            }, project_config)
+            context = (parameters / "gd32h77x_project.cmake").read_text()
+            self.assertIn('GD32H77X_PROJECT_DIR', context)
+            self.assertIn('GD32H77X_PROJECT_CONFIG', context)
+            self.assertIn(str(project_config), context)
+            self.assertIn('/headers/one', context)
+            self.assertIn('/headers/two', context)
+            self.assertIn('/prebuilt/libtuyaapp.a', context)
+            self.assertIn('/prebuilt/libtuyaos.a', context)
+
+    def test_tuya_project_config_staging_is_build_local_and_stale_safe(self):
+        with tempfile.TemporaryDirectory(prefix="gd32h77x-stage-test-") as temporary:
+            root = Path(temporary)
+            board = "TEST_BOARD"
+            source = (root / "boards/GD32H77X" / board / "platform_config"
+                      / "gd32h77x.config")
+            source.parent.mkdir(parents=True)
+            source.write_text("CONFIG_GD32H77X_AT_BAUD=115200\n")
+            output = root / "build/project/tuya/project.config"
+            self.assertEqual(
+                build_example.stage_project_config(root, board, output), output)
+            self.assertEqual(output.read_text(), source.read_text())
+
+            source.write_text("CONFIG_GD32H77X_AT_BAUD=460800\n")
+            build_example.stage_project_config(root, board, output)
+            self.assertEqual(output.read_text(), source.read_text())
+
+            source.unlink()
+            self.assertIsNone(
+                build_example.stage_project_config(root, board, output))
+            self.assertFalse(output.exists())
+
+    def test_ecnvm_payload_mode_comes_from_resolved_layout(self):
+        with tempfile.TemporaryDirectory(prefix="gd32h77x-build-example-test-") as temporary:
+            layout = Path(temporary) / "resolved_layout.json"
+            layout.write_text('{"layout":{"partitions":{}}}')
+            self.assertFalse(build_firmware._layout_has_ecnvm_code(layout))
+            layout.write_text(
+                '{"layout":{"partitions":{"ecnvm_code":{"size_bytes":4096}}}}')
+            self.assertTrue(build_firmware._layout_has_ecnvm_code(layout))
+    def test_csv_presence_controls_external_payload_inclusion(self):
         with tempfile.TemporaryDirectory(prefix="gd32h77x-build-example-test-") as temporary:
             csv_path = Path(temporary) / "flash_payloads.csv"
             csv_path.write_text("partition,file\nstaging,payload.bin\n")
             args = ("python", "flash_package.py", "layout.json", "report.json",
-                    "image.elf", "image.bin", "image.tufw", csv_path)
+                    "image.elf", "image.bin", "image_QIO.bin", csv_path)
 
-            default, enabled = build_example.make_package_command({}, *args)
-            self.assertTrue(enabled)
-            self.assertIn("--external-csv", default)
+            with_external = build_firmware.make_package_command(*args)
+            self.assertIn("--external-csv", with_external)
 
-            internal, enabled = build_example.make_package_command(
-                {"CONFIG_GD32H77X_PACKAGE_INTERNAL_ONLY": True}, *args)
-            self.assertFalse(enabled)
-            self.assertNotIn("--external-csv", internal)
+            csv_path.unlink()
+            internal_only = build_firmware.make_package_command(*args)
+            self.assertNotIn("--external-csv", internal_only)
             for option in ("--layout", "--report", "--elf", "--internal-bin", "--output"):
-                self.assertIn(option, internal)
-
-    def test_invalid_build_parameter_fails_instead_of_silently_ignoring_payloads(self):
-        args = ("python", "flash_package.py", "layout.json", "report.json",
-                "image.elf", "image.bin", "image.tufw", "missing.csv")
-        with self.assertRaisesRegex(ValueError, "must be boolean"):
-            build_example.make_package_command(
-                {"CONFIG_GD32H77X_PACKAGE_INTERNAL_ONLY": "y"}, *args)
+                self.assertIn(option, internal_only)
 
 
 if __name__ == "__main__":

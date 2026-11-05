@@ -65,6 +65,26 @@ _Static_assert(TUYA_FLASH_KV_PROTECT_START + TUYA_FLASH_KV_PROTECT_SIZE <=
                "Tuya subareas exceed the configured kv partition");
 
 
+static OPERATE_RET gd32h77x_native_status_to_oprt(gd32h77x_status_t status)
+{
+    switch (status) {
+    case GD32H77X_STATUS_OK:
+        return OPRT_OK;
+    case GD32H77X_STATUS_INVALID_PARAM:
+        return OPRT_INVALID_PARM;
+    case GD32H77X_STATUS_NOT_READY:
+        return OPRT_RESOURCE_NOT_READY;
+    case GD32H77X_STATUS_UNSUPPORTED:
+        return OPRT_NOT_SUPPORTED;
+    case GD32H77X_STATUS_TIMEOUT:
+        return OPRT_TIMEOUT;
+    case GD32H77X_STATUS_IO_ERROR:
+    default:
+        return OPRT_COM_ERROR;
+    }
+}
+
+
 bool gd32h77x_tuya_range_valid(uint32_t address, uint32_t size)
 {
     return gd32h77x_flash_range_valid(GD32H77X_LAYOUT_PART_TUYA, address, size,
@@ -136,10 +156,10 @@ static bool gd32h77x_flash_read_chunk(const gd32h77x_flash_route_chunk_t *chunk,
                                    chunk->device_offset, *destination, chunk->size);
     } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        result = gd32h77x_ecnvm_read(address, *destination, chunk->size) == OPRT_OK ? 0 : -1;
+        result = gd32h77x_ecnvm_read(address, *destination, chunk->size) == GD32H77X_STATUS_OK ? 0 : -1;
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        result = gd32h77x_cnvm_read(address, *destination, chunk->size) == OPRT_OK ? 0 : -1;
+        result = gd32h77x_cnvm_read(address, *destination, chunk->size) == GD32H77X_STATUS_OK ? 0 : -1;
     }
     if (result != 0) {
         return false;
@@ -164,12 +184,12 @@ static bool gd32h77x_flash_write_chunk(const gd32h77x_flash_route_chunk_t *chunk
                                  chunk->size) == 0 ? OPRT_OK : OPRT_COM_ERROR;
     } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        write_context->result = gd32h77x_ecnvm_program(address, write_context->source,
-                                                        chunk->size);
+        write_context->result = gd32h77x_native_status_to_oprt(
+            gd32h77x_ecnvm_program(address, write_context->source, chunk->size));
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        write_context->result = gd32h77x_cnvm_program(address, write_context->source,
-                                                       chunk->size);
+        write_context->result = gd32h77x_native_status_to_oprt(
+            gd32h77x_cnvm_program(address, write_context->source, chunk->size));
     }
     if (write_context->result != OPRT_OK) {
         return false;
@@ -197,10 +217,12 @@ static bool gd32h77x_flash_erase_chunk(const gd32h77x_flash_route_chunk_t *chunk
         erase_context->result = OPRT_OK;
     } else if (strcmp(chunk->device->region, "ECNVM") == 0) {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        erase_context->result = gd32h77x_ecnvm_erase(address, chunk->size);
+        erase_context->result = gd32h77x_native_status_to_oprt(
+            gd32h77x_ecnvm_erase(address, chunk->size));
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
-        erase_context->result = gd32h77x_cnvm_erase(address, chunk->size);
+        erase_context->result = gd32h77x_native_status_to_oprt(
+            gd32h77x_cnvm_erase(address, chunk->size));
     }
     return erase_context->result == OPRT_OK;
 }

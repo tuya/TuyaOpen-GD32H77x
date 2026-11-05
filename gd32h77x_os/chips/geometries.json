@@ -17,86 +17,9 @@
       "evidence": "GinoPi schematic U13; OSPI indirect read/page-program/4K-erase driver implemented in gd32h77x_nor.c; physical board validation pending",
       "default_backend_status": "implemented"
     },
-    "GD32H77DIW_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77DIW",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "implemented"
-      ],
-      "default_backend_status": "implemented",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; gd32h77x_78x_nvmc.h CNVM geometry; runtime KV implementation uses an AXI SRAM command routine and rejects DIEEN mode"
-    },
-    "GD32H77DIW_AXISRAM": {
+    "GD32H779II_AXISRAM": {
       "kind": "ram",
-      "part_number": "GD32H77DIW",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; AXISRAM geometry"
-    },
-    "GD32H77DIP_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77DIP",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIP; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H77DIP_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H77DIP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIP; AXISRAM geometry"
-    },
-    "GD32H77DII_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77DII",
-      "region": "CNVM",
-      "capacity_bytes": 1703936,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DII; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H77DII_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H77DII",
+      "part_number": "GD32H779II",
       "region": "AXISRAM",
       "capacity_bytes": 524288,
       "erase_bytes": null,
@@ -105,157 +28,7 @@
       "cpu_base": "0x24000000",
       "executable": true,
       "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DII; AXISRAM geometry"
-    },
-    "GD32H77EIW_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77EIW",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H77EIW_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H77EIW",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; AXISRAM geometry"
-    },
-    "GD32H77EIP_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77EIP",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIP; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H77EIP_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H77EIP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIP; AXISRAM geometry"
-    },
-    "GD32H77EII_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H77EII",
-      "region": "CNVM",
-      "capacity_bytes": 1703936,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EII; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H77EII_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H77EII",
-      "region": "AXISRAM",
-      "capacity_bytes": 524288,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EII; AXISRAM geometry"
-    },
-    "GD32H779IW_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779IW",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IW; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779IW_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779IW",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IW; AXISRAM geometry"
-    },
-    "GD32H779IP_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779IP",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IP; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779IP_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779IP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IP; AXISRAM geometry"
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779II; AXISRAM geometry"
     },
     "GD32H779II_CNVM": {
       "kind": "flash",
@@ -274,9 +47,107 @@
       "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
       "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779II; GD32H77x_78x_nvmc.h CNVM geometry"
     },
-    "GD32H779II_AXISRAM": {
+    "GD32H779IP_AXISRAM": {
       "kind": "ram",
-      "part_number": "GD32H779II",
+      "part_number": "GD32H779IP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IP; AXISRAM geometry"
+    },
+    "GD32H779IP_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779IP",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IP; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779IP_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779IP",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IP; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H779IW_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H779IW",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IW; AXISRAM geometry"
+    },
+    "GD32H779IW_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779IW",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IW; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779IW_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779IW",
+      "region": "ECNVM",
+      "capacity_bytes": 7864320,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779IW; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H779VI_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H779VI",
       "region": "AXISRAM",
       "capacity_bytes": 524288,
       "erase_bytes": null,
@@ -285,7 +156,86 @@
       "cpu_base": "0x24000000",
       "executable": true,
       "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779II; AXISRAM geometry"
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VI; AXISRAM geometry"
+    },
+    "GD32H779VI_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779VI",
+      "region": "CNVM",
+      "capacity_bytes": 1703936,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VI; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779VP_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H779VP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VP; AXISRAM geometry"
+    },
+    "GD32H779VP_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779VP",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VP; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779VP_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779VP",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VP; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H779VW_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H779VW",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VW; AXISRAM geometry"
     },
     "GD32H779VW_CNVM": {
       "kind": "flash",
@@ -316,74 +266,16 @@
       "swd_program_bytes": 32,
       "cpu_base": "0x08200000",
       "executable": true,
-      "allowed_backend_status": ["implemented"],
+      "allowed_backend_status": [
+        "implemented"
+      ],
       "default_backend_status": "implemented",
       "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
       "evidence": "GD32H779VW ECNVM mapped base 0x08200000, capacity 7.5 MiB; User Manual page erase is 4 KiB (ECNVM_PAGE_SIZE=0x1000) and program units are 8/32 bytes; runtime uses an AXI SRAM command routine; SWD vendor algorithm keeps its separate 64 KiB FlashDevice erase geometry"
     },
-    "GD32H779VW_AXISRAM": {
+    "GD32H779ZI_AXISRAM": {
       "kind": "ram",
-      "part_number": "GD32H779VW",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VW; AXISRAM geometry"
-    },
-    "GD32H779VP_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779VP",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VP; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779VP_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779VP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VP; AXISRAM geometry"
-    },
-    "GD32H779VI_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779VI",
-      "region": "CNVM",
-      "capacity_bytes": 1703936,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VI; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779VI_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779VI",
+      "part_number": "GD32H779ZI",
       "region": "AXISRAM",
       "capacity_bytes": 524288,
       "erase_bytes": null,
@@ -392,67 +284,7 @@
       "cpu_base": "0x24000000",
       "executable": true,
       "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779VI; AXISRAM geometry"
-    },
-    "GD32H779ZW_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779ZW",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZW; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779ZW_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779ZW",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZW; AXISRAM geometry"
-    },
-    "GD32H779ZP_CNVM": {
-      "kind": "flash",
-      "part_number": "GD32H779ZP",
-      "region": "CNVM",
-      "capacity_bytes": 2097152,
-      "erase_bytes": 65536,
-      "program_bytes": 32,
-      "page_bytes": null,
-      "cpu_base": "0x08000000",
-      "executable": true,
-      "allowed_backend_status": [
-        "partial"
-      ],
-      "default_backend_status": "partial",
-      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZP; GD32H77x_78x_nvmc.h CNVM geometry"
-    },
-    "GD32H779ZP_AXISRAM": {
-      "kind": "ram",
-      "part_number": "GD32H779ZP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
-      "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZP; AXISRAM geometry"
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZI; AXISRAM geometry"
     },
     "GD32H779ZI_CNVM": {
       "kind": "flash",
@@ -471,9 +303,107 @@
       "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
       "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZI; GD32H77x_78x_nvmc.h CNVM geometry"
     },
-    "GD32H779ZI_AXISRAM": {
+    "GD32H779ZP_AXISRAM": {
       "kind": "ram",
-      "part_number": "GD32H779ZI",
+      "part_number": "GD32H779ZP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZP; AXISRAM geometry"
+    },
+    "GD32H779ZP_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779ZP",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZP; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779ZP_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779ZP",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZP; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H779ZW_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H779ZW",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZW; AXISRAM geometry"
+    },
+    "GD32H779ZW_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779ZW",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZW; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H779ZW_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H779ZW",
+      "region": "ECNVM",
+      "capacity_bytes": 7864320,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZW; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H77DII_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77DII",
       "region": "AXISRAM",
       "capacity_bytes": 524288,
       "erase_bytes": null,
@@ -482,7 +412,263 @@
       "cpu_base": "0x24000000",
       "executable": true,
       "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H779ZI; AXISRAM geometry"
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DII; AXISRAM geometry"
+    },
+    "GD32H77DII_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77DII",
+      "region": "CNVM",
+      "capacity_bytes": 1703936,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DII; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H77DIP_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77DIP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIP; AXISRAM geometry"
+    },
+    "GD32H77DIP_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77DIP",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIP; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H77DIP_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77DIP",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIP; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H77DIW_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77DIW",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; AXISRAM geometry"
+    },
+    "GD32H77DIW_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77DIW",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "implemented"
+      ],
+      "default_backend_status": "implemented",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; gd32h77x_78x_nvmc.h CNVM geometry; runtime KV implementation uses an AXI SRAM command routine and rejects DIEEN mode"
+    },
+    "GD32H77DIW_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77DIW",
+      "region": "ECNVM",
+      "capacity_bytes": 7864320,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77DIW; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H77EII_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77EII",
+      "region": "AXISRAM",
+      "capacity_bytes": 524288,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EII; AXISRAM geometry"
+    },
+    "GD32H77EII_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77EII",
+      "region": "CNVM",
+      "capacity_bytes": 1703936,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_1M_640K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EII; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H77EIP_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77EIP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIP; AXISRAM geometry"
+    },
+    "GD32H77EIP_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77EIP",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIP; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H77EIP_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77EIP",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIP; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H77EIW_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77EIW",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; AXISRAM geometry"
+    },
+    "GD32H77EIW_CNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77EIW",
+      "region": "CNVM",
+      "capacity_bytes": 2097152,
+      "erase_bytes": 65536,
+      "program_bytes": 32,
+      "page_bytes": null,
+      "cpu_base": "0x08000000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; GD32H77x_78x_nvmc.h CNVM geometry"
+    },
+    "GD32H77EIW_ECNVM": {
+      "kind": "flash",
+      "part_number": "GD32H77EIW",
+      "region": "ECNVM",
+      "capacity_bytes": 7864320,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
+      "executable": true,
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; mapped ECNVM IROM2; runtime target validation pending"
+    },
+    "GD32H77RAP_AXISRAM": {
+      "kind": "ram",
+      "part_number": "GD32H77RAP",
+      "region": "AXISRAM",
+      "capacity_bytes": 786432,
+      "erase_bytes": null,
+      "program_bytes": null,
+      "page_bytes": null,
+      "cpu_base": "0x24000000",
+      "executable": true,
+      "allowed_backend_status": [],
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77RAP; AXISRAM geometry"
     },
     "GD32H77RAP_CNVM": {
       "kind": "flash",
@@ -501,18 +687,24 @@
       "vendor_algorithm": "GD32H77x_78x_CNVM_2M.FLM",
       "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77RAP; GD32H77x_78x_nvmc.h CNVM geometry"
     },
-    "GD32H77RAP_AXISRAM": {
-      "kind": "ram",
+    "GD32H77RAP_ECNVM": {
+      "kind": "flash",
       "part_number": "GD32H77RAP",
-      "region": "AXISRAM",
-      "capacity_bytes": 786432,
-      "erase_bytes": null,
-      "program_bytes": null,
-      "page_bytes": null,
-      "cpu_base": "0x24000000",
+      "region": "ECNVM",
+      "capacity_bytes": 3670016,
+      "erase_bytes": 4096,
+      "program_bytes": 8,
+      "page_bytes": 4096,
+      "swd_erase_bytes": 65536,
+      "swd_program_bytes": 32,
+      "cpu_base": "0x08200000",
       "executable": true,
-      "allowed_backend_status": [],
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77RAP; AXISRAM geometry"
+      "allowed_backend_status": [
+        "partial"
+      ],
+      "default_backend_status": "partial",
+      "vendor_algorithm": "GD32H77x_78x_ECNVM_3M_512K.FLM",
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77RAP; mapped ECNVM IROM2; runtime target validation pending"
     }
   }
 }

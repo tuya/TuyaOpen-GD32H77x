@@ -19,18 +19,10 @@ int main(void)
 
     for (device_index = 0U; device_index < GD32H77X_LAYOUT_DEVICE_COUNT; ++device_index) {
         if (strcmp(gd32h77x_layout_devices[device_index].geometry_id, "GD25Q64ESIG") == 0) {
-            const gd32h77x_layout_binding_t *binding = &gd32h77x_layout_bindings[device_index];
-            assert(strcmp(binding->controller, "OSPI0") == 0);
-            assert(strcmp(binding->chip_select, "PC11") == 0);
-            assert(strcmp(binding->clock, "PF10") == 0);
-            assert(strcmp(binding->data[0], "PF8") == 0);
-            assert(strcmp(binding->data[1], "PF9") == 0);
-            assert(strcmp(binding->data[2], "PF7") == 0);
-            assert(strcmp(binding->data[3], "PA1") == 0);
             nor_binding_seen = 1;
         }
     }
-    assert(nor_binding_seen);
+    assert(!nor_binding_seen);
     assert(kv->logical_base == GD32H77X_LAYOUT_TUYA_LOGICAL_BASE);
     assert(kv->size_bytes == GD32H77X_LAYOUT_TUYA_SIZE_BYTES);
     assert(kv->logical_base + kv->size_bytes == GD32H77X_LAYOUT_TUYA_END);
@@ -38,7 +30,7 @@ int main(void)
     assert(kv->program_bytes == GD32H77X_LAYOUT_TUYA_PROGRAM_BYTES);
     assert(gd32h77x_flash_preflight(GD32H77X_LAYOUT_TUYA_LOGICAL_BASE, 256U,
                                     GD32H77X_FLASH_OP_WRITE) == GD32H77X_FLASH_ROUTE_OK);
-    assert(gd32h77x_flash_preflight(GD32H77X_LAYOUT_TUYA_LOGICAL_BASE - 32U, 32U,
+    assert(gd32h77x_flash_preflight(GD32H77X_LAYOUT_TUYA_END - 16U, 32U,
                                     GD32H77X_FLASH_OP_WRITE) == GD32H77X_FLASH_ROUTE_INVALID);
     assert(gd32h77x_flash_preflight(GD32H77X_LAYOUT_PRIMARY_END - 32U, 64U,
                                     GD32H77X_FLASH_OP_READ) == GD32H77X_FLASH_ROUTE_INVALID);

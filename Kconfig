@@ -1,9 +1,218 @@
-# GD32H77X application Kconfig is owned by the main repository board tree:
+# GD32H77X platform-owned configuration.
 #
-#   boards/GD32H77X/Kconfig
-#   boards/GD32H77X/TKL_Kconfig
-#   boards/GD32H77X/GD32H77D_GINO/Kconfig
-#
-# Do not duplicate adapter capability symbols here. tos.py sources the board
-# tree through boards/Kconfig; duplicate definitions in this file previously
-# carried unrelated generic-GD32 options and made the active defaults unclear.
+# Parsed by platform_config.py to generate gd32h77x_config.h and
+# gd32h77x_config.cmake.
+menu "configure platform [GD32H77X]"
+
+choice
+    prompt "Default flashing backend"
+    default ENABLE_GD32H77X_FLASH_BACKEND_SWD
+
+    config ENABLE_GD32H77X_FLASH_BACKEND_SWD
+        bool "swd"
+        help
+          CMSIS-DAP with the GigaDevice GD32H77x CMSIS-Pack.
+
+    config ENABLE_GD32H77X_FLASH_BACKEND_DFU
+        bool "dfu"
+        help
+          GD32 ROM USB DFU.
+
+    config ENABLE_GD32H77X_FLASH_BACKEND_UART
+        bool "uart"
+        help
+          GD32 ROM system-memory UART ISP.
+endchoice
+
+menu "Console UART binding"
+
+choice
+    prompt "Console UART peripheral"
+    default ENABLE_GD32H77X_CONSOLE_UART_USART5
+
+    config ENABLE_GD32H77X_CONSOLE_UART_USART0
+        bool "USART0"
+    config ENABLE_GD32H77X_CONSOLE_UART_USART1
+        bool "USART1"
+    config ENABLE_GD32H77X_CONSOLE_UART_USART2
+        bool "USART2"
+    config ENABLE_GD32H77X_CONSOLE_UART_UART3
+        bool "UART3"
+    config ENABLE_GD32H77X_CONSOLE_UART_UART4
+        bool "UART4"
+    config ENABLE_GD32H77X_CONSOLE_UART_USART5
+        bool "USART5"
+    config ENABLE_GD32H77X_CONSOLE_UART_UART6
+        bool "UART6"
+    config ENABLE_GD32H77X_CONSOLE_UART_UART7
+        bool "UART7"
+endchoice
+
+choice
+    prompt "Console GPIO port"
+    default ENABLE_GD32H77X_CONSOLE_GPIO_PORT_C
+
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_A
+        bool "GPIOA"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_B
+        bool "GPIOB"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_C
+        bool "GPIOC"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_D
+        bool "GPIOD"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_E
+        bool "GPIOE"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_F
+        bool "GPIOF"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_G
+        bool "GPIOG"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_H
+        bool "GPIOH"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_J
+        bool "GPIOJ"
+    config ENABLE_GD32H77X_CONSOLE_GPIO_PORT_K
+        bool "GPIOK"
+endchoice
+
+config GD32H77X_CONSOLE_TX_PIN_NUMBER
+    int "Console TX pin"
+    range 0 15
+    default 6
+    help
+      GPIO pin number on the selected console GPIO port.
+
+config GD32H77X_CONSOLE_RX_PIN_NUMBER
+    int "Console RX pin"
+    range 0 15
+    default 7
+    help
+      GPIO pin number on the selected console GPIO port.
+
+config GD32H77X_CONSOLE_AF_NUMBER
+    int "Console alternate function"
+    range 0 31
+    default 7
+    help
+      GD32 alternate-function number used by both console pins.
+
+endmenu
+
+menu "AT UART binding"
+
+choice
+    prompt "AT UART peripheral"
+    default ENABLE_GD32H77X_AT_UART_UART4
+
+    config ENABLE_GD32H77X_AT_UART_USART0
+        bool "USART0"
+    config ENABLE_GD32H77X_AT_UART_USART1
+        bool "USART1"
+    config ENABLE_GD32H77X_AT_UART_USART2
+        bool "USART2"
+    config ENABLE_GD32H77X_AT_UART_UART3
+        bool "UART3"
+    config ENABLE_GD32H77X_AT_UART_UART4
+        bool "UART4"
+    config ENABLE_GD32H77X_AT_UART_USART5
+        bool "USART5"
+    config ENABLE_GD32H77X_AT_UART_UART6
+        bool "UART6"
+    config ENABLE_GD32H77X_AT_UART_UART7
+        bool "UART7"
+endchoice
+
+choice
+    prompt "AT UART GPIO port"
+    default ENABLE_GD32H77X_AT_GPIO_PORT_B
+
+    config ENABLE_GD32H77X_AT_GPIO_PORT_A
+        bool "GPIOA"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_B
+        bool "GPIOB"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_C
+        bool "GPIOC"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_D
+        bool "GPIOD"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_E
+        bool "GPIOE"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_F
+        bool "GPIOF"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_G
+        bool "GPIOG"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_H
+        bool "GPIOH"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_J
+        bool "GPIOJ"
+    config ENABLE_GD32H77X_AT_GPIO_PORT_K
+        bool "GPIOK"
+endchoice
+
+config GD32H77X_AT_TX_PIN_NUMBER
+    int "AT TX pin"
+    range 0 15
+    default 13
+    help
+      GPIO pin number on the selected AT UART GPIO port.
+
+config GD32H77X_AT_RX_PIN_NUMBER
+    int "AT RX pin"
+    range 0 15
+    default 12
+    help
+      GPIO pin number on the selected AT UART GPIO port.
+
+config GD32H77X_AT_AF_NUMBER
+    int "AT UART alternate function"
+    range 0 31
+    default 14
+    help
+      GD32 alternate-function number used by both AT UART pins.
+
+config GD32H77X_AT_BAUD
+    int "AT UART baud rate"
+    range 1200 4000000
+    default 115200
+
+config GD32H77X_AT_IRQ_PRIORITY
+    int "AT UART IRQ priority"
+    range 5 15
+    default 6
+    help
+      Must remain at or below the FreeRTOS maximum syscall priority.
+
+choice
+    prompt "AT reset GPIO port"
+    default ENABLE_GD32H77X_AT_RESET_GPIO_PORT_C
+
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_A
+        bool "GPIOA"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_B
+        bool "GPIOB"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_C
+        bool "GPIOC"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_D
+        bool "GPIOD"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_E
+        bool "GPIOE"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_F
+        bool "GPIOF"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_G
+        bool "GPIOG"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_H
+        bool "GPIOH"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_J
+        bool "GPIOJ"
+    config ENABLE_GD32H77X_AT_RESET_GPIO_PORT_K
+        bool "GPIOK"
+endchoice
+
+config GD32H77X_AT_RESET_PIN_NUMBER
+    int "AT reset pin"
+    range 0 15
+    default 5
+    help
+      GPIO pin number on the selected AT reset GPIO port.
+
+endmenu
+
+endmenu

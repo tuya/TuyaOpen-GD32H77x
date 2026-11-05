@@ -15,6 +15,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 PLATFORM = ROOT / "platform/GD32H77X"
+TEST_BOARD = "GD32H77D_TEST_BOARD"
+FIXTURE_BOARDS = PLATFORM / "tests" / "fixtures" / "boards"
 SCRIPT = PLATFORM / "gd32h77x_os/tools/download/gd32h77x_ospi.py"
 SPEC = importlib.util.spec_from_file_location("gd32h77x_ospi_test_module", SCRIPT)
 ospi = importlib.util.module_from_spec(SPEC)
@@ -142,11 +144,11 @@ class OspiWriterTests(unittest.TestCase):
         return resolver.resolve_build_layout({
             "OPEN_ROOT": str(ROOT),
             "PLATFORM_CHIP": "GD32H77D",
-            "PLATFORM_BOARD": "GD32H77D_GINO",
+            "PLATFORM_BOARD": TEST_BOARD,
             "CONFIG_PLATFORM_CHOICE": "GD32H77X",
-            "CONFIG_BOARD_CHOICE": "GD32H77D_GINO",
+            "CONFIG_BOARD_CHOICE": TEST_BOARD,
             "CONFIG_CHIP_CHOICE": "GD32H77D",
-        }, platform_root=PLATFORM, boards_root=ROOT / "boards")
+        }, platform_root=PLATFORM, boards_root=FIXTURE_BOARDS)
 
     def test_real_resolver_preflight_binds_padded_payload_and_probe(self):
         manifest = self.manifest()
@@ -287,7 +289,7 @@ class OspiWriterTests(unittest.TestCase):
             {"logical_offset_bytes": 4096, "size_bytes": 4096,
              "device": device["id"], "device_offset_bytes": 0x3000},
         ]
-        layout["partitions"]["old_backup"]["segments"] = [
+        layout["partitions"]["metadata"]["segments"] = [
             {"logical_offset_bytes": 0, "size_bytes": 4096,
              "device": device["id"], "device_offset_bytes": 0x5000},
         ]
@@ -296,7 +298,7 @@ class OspiWriterTests(unittest.TestCase):
             payload_entries = []
             expected = {}
             for name, raw in (("staging", bytes(range(256)) * 32),
-                              ("old_backup", bytes(reversed(range(256))) * 16)):
+                              ("metadata", bytes(reversed(range(256))) * 16)):
                 path = temp_path / f"{name}.bin"
                 path.write_bytes(raw)
                 expected[name] = raw
@@ -331,11 +333,11 @@ class OspiWriterTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertTrue(result["verified"])
             self.assertEqual([item["partition"] for item in result["partitions"]],
-                             ["staging", "old_backup"])
+                             ["staging", "metadata"])
             self.assertEqual(len(target.erase_log), 3)
             self.assertEqual(target.flash[0x1000:0x2000], expected["staging"][:4096])
             self.assertEqual(target.flash[0x3000:0x4000], expected["staging"][4096:])
-            self.assertEqual(target.flash[0x5000:0x6000], expected["old_backup"])
+            self.assertEqual(target.flash[0x5000:0x6000], expected["metadata"])
             written = set(range(0x1000, 0x2000)) | set(range(0x3000, 0x4000)) | set(range(0x5000, 0x6000))
             self.assertTrue(all(byte == 0xA5 for index, byte in enumerate(target.flash)
                                 if index not in written))
@@ -396,7 +398,7 @@ class OspiWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)
             entries = []
-            for name in ("staging", "old_backup"):
+            for name in ("staging", "metadata"):
                 path = temp_path / f"{name}.bin"
                 path.write_bytes((name.encode() * 4096)[:4096])
                 entries.append({"partition": name, "path": str(path), "size_bytes": 4096,

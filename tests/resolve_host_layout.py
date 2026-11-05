@@ -10,8 +10,8 @@ def main():
     parser.add_argument("--platform-root", type=Path, required=True)
     parser.add_argument("--boards-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--chip", default="GD32H77D")
-    parser.add_argument("--board", default="GD32H77D_GINO")
+    parser.add_argument("--chip", default="GD32H779VW")
+    parser.add_argument("--board", default="GD32H779V_START")
     args = parser.parse_args()
     resolver_path = args.platform_root / "gd32h77x_os/tools/firmware/resolve_memory_layout.py"
     spec = importlib.util.spec_from_file_location("gd32h77x_layout_resolver", resolver_path)

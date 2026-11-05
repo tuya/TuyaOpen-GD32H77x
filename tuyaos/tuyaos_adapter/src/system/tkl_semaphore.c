@@ -64,7 +64,7 @@ OPERATE_RET tkl_semaphore_wait(const TKL_SEM_HANDLE handle, uint32_t timeout)
     if (!handle) {
         return OPRT_INVALID_PARM;
     }
-    return xSemaphoreTake(handle, tkl_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_SEM_WAIT_TIMEOUT;
+    return xSemaphoreTake(handle, gd32h77x_timeout_ticks(timeout)) == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_SEM_WAIT_TIMEOUT;
     // --- END: user implements ---
 }
 

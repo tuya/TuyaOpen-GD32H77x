@@ -3,7 +3,7 @@
  * @brief Host mock of the GD32H77X mapped CNVM adapter.
  */
 #include "gd32h77x_cnvm.h"
-#include "gd32h77x_storage.h"
+#include "gd32h77x_memory_layout.h"
 #include "mock_cnvm.h"
 
 #include <stddef.h>
@@ -144,13 +144,13 @@ const mock_cnvm_stats_t *mock_cnvm_stats(void)
     return &s_stats;
 }
 
-OPERATE_RET gd32h77x_cnvm_init(void)
+gd32h77x_status_t gd32h77x_cnvm_init(void)
 {
     if (s_busy) {
-        return OPRT_RESOURCE_NOT_READY;
+        return GD32H77X_STATUS_NOT_READY;
     }
     s_initialized = true;
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
 bool gd32h77x_cnvm_is_initialized(void)
@@ -158,78 +158,78 @@ bool gd32h77x_cnvm_is_initialized(void)
     return s_initialized;
 }
 
-OPERATE_RET gd32h77x_cnvm_read(uint32_t address, uint8_t *destination, uint32_t size)
+gd32h77x_status_t gd32h77x_cnvm_read(uint32_t address, uint8_t *destination, uint32_t size)
 {
     ++s_stats.read_requests;
     s_stats.last_address = address;
     s_stats.last_size = size;
     if ((size != 0U && destination == NULL) ||
         mock_cnvm_device_for_physical_range(address, size) == NULL) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (s_fail_read) {
         s_fail_read = false;
-        return OPRT_COM_ERROR;
+        return GD32H77X_STATUS_IO_ERROR;
     }
     memcpy(destination, &s_memory[address - mock_cnvm_memory_base()], size);
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
-OPERATE_RET gd32h77x_cnvm_program(uint32_t address, const uint8_t *source, uint32_t size)
+gd32h77x_status_t gd32h77x_cnvm_program(uint32_t address, const uint8_t *source, uint32_t size)
 {
     ++s_stats.program_requests;
     s_stats.last_address = address;
     s_stats.last_size = size;
     if (size == 0U) {
-        return OPRT_OK;
+        return GD32H77X_STATUS_OK;
     }
     if (source == NULL || !mock_cnvm_program_valid(address, size)) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (!s_initialized || s_busy) {
-        return OPRT_RESOURCE_NOT_READY;
+        return GD32H77X_STATUS_NOT_READY;
     }
     if (s_dieen) {
-        return OPRT_NOT_SUPPORTED;
+        return GD32H77X_STATUS_UNSUPPORTED;
     }
 
     ++s_stats.program_commands;
     if (s_fail_program) {
         s_fail_program = false;
-        return OPRT_COM_ERROR;
+        return GD32H77X_STATUS_IO_ERROR;
     }
     uint8_t *destination = &s_memory[address - mock_cnvm_memory_base()];
     for (uint32_t i = 0U; i < size; ++i) {
         if ((destination[i] & source[i]) != source[i]) {
-            return OPRT_COM_ERROR;
+            return GD32H77X_STATUS_IO_ERROR;
         }
     }
     for (uint32_t i = 0U; i < size; ++i) {
         destination[i] &= source[i];
     }
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
-OPERATE_RET gd32h77x_cnvm_erase(uint32_t address, uint32_t size)
+gd32h77x_status_t gd32h77x_cnvm_erase(uint32_t address, uint32_t size)
 {
     ++s_stats.erase_requests;
     s_stats.last_address = address;
     s_stats.last_size = size;
     if (!mock_cnvm_erase_valid(address, size)) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (!s_initialized || s_busy) {
-        return OPRT_RESOURCE_NOT_READY;
+        return GD32H77X_STATUS_NOT_READY;
     }
     if (s_dieen) {
-        return OPRT_NOT_SUPPORTED;
+        return GD32H77X_STATUS_UNSUPPORTED;
     }
 
     s_stats.erase_commands += size / GD32H77X_CNVM_ERASE_SIZE;
     if (s_fail_erase) {
         s_fail_erase = false;
-        return OPRT_COM_ERROR;
+        return GD32H77X_STATUS_IO_ERROR;
     }
     memset(&s_memory[address - mock_cnvm_memory_base()], 0xFF, size);
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }

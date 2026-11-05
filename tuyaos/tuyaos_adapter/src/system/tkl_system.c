@@ -43,6 +43,25 @@ void vApplicationTickHook(void) { ++elapsed_ticks; }
 
 typedef char gd32h77x_random_requires_32bit_int[(sizeof(int) == sizeof(uint32_t)) ? 1 : -1];
 
+static OPERATE_RET gd32h77x_native_status_to_oprt(gd32h77x_status_t status)
+{
+    switch (status) {
+    case GD32H77X_STATUS_OK:
+        return OPRT_OK;
+    case GD32H77X_STATUS_INVALID_PARAM:
+        return OPRT_INVALID_PARM;
+    case GD32H77X_STATUS_NOT_READY:
+        return OPRT_RESOURCE_NOT_READY;
+    case GD32H77X_STATUS_UNSUPPORTED:
+        return OPRT_NOT_SUPPORTED;
+    case GD32H77X_STATUS_TIMEOUT:
+        return OPRT_TIMEOUT;
+    case GD32H77X_STATUS_IO_ERROR:
+    default:
+        return OPRT_COM_ERROR;
+    }
+}
+
 static int gd32h77x_random_as_int(uint32_t value)
 {
     int result;
@@ -50,17 +69,18 @@ static int gd32h77x_random_as_int(uint32_t value)
     return result;
 }
 
-static int gd32h77x_random_sample(uint32_t *sample)
+static OPERATE_RET gd32h77x_random_sample(uint32_t *sample)
 {
     for (uint32_t attempt = 0U; attempt < GD32H77X_ENTROPY_BUSY_RETRIES; ++attempt) {
         uint32_t value = 0U;
-        int status = gd32h77x_entropy_read((uint8_t *)&value, sizeof(value));
-        if (status == OPRT_OK) {
+        gd32h77x_status_t status =
+            gd32h77x_entropy_read((uint8_t *)&value, sizeof(value));
+        if (status == GD32H77X_STATUS_OK) {
             *sample = value;
             return OPRT_OK;
         }
-        if (status != OPRT_RESOURCE_NOT_READY) {
-            return status;
+        if (status != GD32H77X_STATUS_NOT_READY) {
+            return gd32h77x_native_status_to_oprt(status);
         }
         if (attempt + 1U < GD32H77X_ENTROPY_BUSY_RETRIES && __get_IPSR() == 0U) {
             tkl_system_sleep(1U);
@@ -217,7 +237,7 @@ void tkl_system_sleep(uint32_t num_ms)
     // --- BEGIN: user implements ---
 
     if (num_ms) {
-        vTaskDelay(tkl_timeout_ticks(num_ms));
+        vTaskDelay(gd32h77x_timeout_ticks(num_ms));
     } else {
         taskYIELD();
     }

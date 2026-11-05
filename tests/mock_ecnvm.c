@@ -1,6 +1,6 @@
 /** @file mock_ecnvm.c @brief Host mock for the mapped ECNVM adapter. */
 #include "gd32h77x_ecnvm.h"
-#include "gd32h77x_storage.h"
+#include "gd32h77x_memory_layout.h"
 #include "mock_ecnvm.h"
 
 #include <stdbool.h>
@@ -49,13 +49,13 @@ bool gd32h77x_ecnvm_is_present(void)
     return mock_ecnvm_device() != NULL;
 }
 
-OPERATE_RET gd32h77x_ecnvm_init(void)
+gd32h77x_status_t gd32h77x_ecnvm_init(void)
 {
     if (!gd32h77x_ecnvm_is_present()) {
-        return OPRT_NOT_SUPPORTED;
+        return GD32H77X_STATUS_UNSUPPORTED;
     }
     s_initialized = true;
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
 bool gd32h77x_ecnvm_is_initialized(void)
@@ -63,26 +63,26 @@ bool gd32h77x_ecnvm_is_initialized(void)
     return s_initialized;
 }
 
-OPERATE_RET gd32h77x_ecnvm_read(uint32_t address, uint8_t *destination, uint32_t size)
+gd32h77x_status_t gd32h77x_ecnvm_read(uint32_t address, uint8_t *destination, uint32_t size)
 {
     ++s_stats.read_requests;
     s_stats.last_address = address;
     s_stats.last_size = size;
     if ((size != 0U && destination == NULL) || !mock_ecnvm_range_valid(address, size)) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     const gd32h77x_layout_device_t *device = mock_ecnvm_device();
     memcpy(destination, &s_memory[address - device->cpu_base], size);
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
-OPERATE_RET gd32h77x_ecnvm_program(uint32_t address, const uint8_t *source, uint32_t size)
+gd32h77x_status_t gd32h77x_ecnvm_program(uint32_t address, const uint8_t *source, uint32_t size)
 {
     ++s_stats.program_requests;
     s_stats.last_address = address;
     s_stats.last_size = size;
     if (size == 0U) {
-        return OPRT_OK;
+        return GD32H77X_STATUS_OK;
     }
     const gd32h77x_layout_device_t *device = mock_ecnvm_device();
     const bool source_valid =
@@ -97,26 +97,26 @@ OPERATE_RET gd32h77x_ecnvm_program(uint32_t address, const uint8_t *source, uint
     if (source == NULL || device == NULL || address % device->program_bytes != 0U ||
         size % device->program_bytes != 0U || !mock_ecnvm_range_valid(address, size) ||
         !source_valid) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (!s_initialized) {
-        return OPRT_RESOURCE_NOT_READY;
+        return GD32H77X_STATUS_NOT_READY;
     }
     s_stats.program_commands += (size + GD32H77X_ECNVM_PROGRAM_32_SIZE - 1U) /
                                 GD32H77X_ECNVM_PROGRAM_32_SIZE;
     uint8_t *destination = &s_memory[address - device->cpu_base];
     for (uint32_t i = 0U; i < size; ++i) {
         if ((destination[i] & source[i]) != source[i]) {
-            return OPRT_COM_ERROR;
+            return GD32H77X_STATUS_IO_ERROR;
         }
     }
     for (uint32_t i = 0U; i < size; ++i) {
         destination[i] &= source[i];
     }
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }
 
-OPERATE_RET gd32h77x_ecnvm_erase(uint32_t address, uint32_t size)
+gd32h77x_status_t gd32h77x_ecnvm_erase(uint32_t address, uint32_t size)
 {
     ++s_stats.erase_requests;
     s_stats.last_address = address;
@@ -124,12 +124,12 @@ OPERATE_RET gd32h77x_ecnvm_erase(uint32_t address, uint32_t size)
     const gd32h77x_layout_device_t *device = mock_ecnvm_device();
     if (device == NULL || size == 0U || address % device->erase_bytes != 0U ||
         size % device->erase_bytes != 0U || !mock_ecnvm_range_valid(address, size)) {
-        return OPRT_INVALID_PARM;
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (!s_initialized) {
-        return OPRT_RESOURCE_NOT_READY;
+        return GD32H77X_STATUS_NOT_READY;
     }
     s_stats.erase_commands += size / device->erase_bytes;
     memset(&s_memory[address - device->cpu_base], 0xFF, size);
-    return OPRT_OK;
+    return GD32H77X_STATUS_OK;
 }

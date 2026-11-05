@@ -48,6 +48,9 @@ class ScriptedTransport:
         self.baud = int(baud)
         self.incoming.clear()
 
+    def set_format(self, baud, parity, stopbits):
+        self.baud = int(baud)
+
     def close(self):
         self.closed = True
 
@@ -287,6 +290,121 @@ class RomTransport(ScriptedTransport):
             self.state = None
 
 
+class LoaderRomTransport(RomTransport):
+    """ROM ISP model that can upload and enter the SRAM OSPI loader."""
+
+    def __init__(self, *, fail_loader_erase=False):
+        super().__init__()
+        self.ram = bytearray(0xC0000)
+        self.loader_mode = False
+        self.loader_state = None
+        self.loader_payload = None
+        self.loader_resets = 0
+        self.fail_loader_erase = fail_loader_erase
+
+    def write(self, data):
+        data = bytes(data)
+        if self.loader_mode:
+            self.writes.append(data)
+            self._loader_write(data)
+            return
+        super().write(data)
+
+    def _command(self, data):
+        if data == uart.CMD_GO:
+            self.feed(self._ack())
+            self.state = "go-address"
+            return
+        super()._command(data)
+
+    def _continue(self, data):
+        if self.state == "go-address":
+            frame = self._parse_checked(data)
+            if frame is None:
+                self.feed(self._ack(False))
+                self.state = None
+                return
+            self.address = int.from_bytes(frame, "big")
+            self.feed(self._ack())
+            self.state = "go-confirm"
+            return
+        if self.state == "go-confirm":
+            frame = self._parse_checked(data)
+            if frame is None or int.from_bytes(frame, "big") != self.address:
+                self.feed(self._ack(False))
+                self.state = None
+                return
+            self.feed(self._ack())
+            self.state = None
+            self.loader_mode = True
+            return
+        if self.state == "write-data" and uart.LOADER_BASE <= self.address < uart.LOADER_BASE + len(self.ram):
+            if not data:
+                self.feed(self._ack(False))
+                self.state = None
+                return
+            length = data[0] + 1
+            payload = data[1:1 + length]
+            checksum = data[1 + length] if len(data) > 1 + length else None
+            if len(payload) != length or checksum != (data[0] ^ uart._xor(payload)):
+                self.feed(self._ack(False))
+                self.state = None
+                return
+            offset = self.address - uart.LOADER_BASE
+            self.ram[offset:offset + length] = payload
+            self.feed(self._ack())
+            self.state = None
+            return
+        super()._continue(data)
+
+    def _loader_write(self, data):
+        if self.loader_payload is not None:
+            offset, length = self.loader_payload
+            self.loader_payload = None
+            if len(data) != length:
+                self.feed(bytes([uart.LOADER_STATUS_ERROR]))
+                return
+            self.ospi[offset:offset + length] = data
+            self.ospi_writes.append((offset, data))
+            self.feed(bytes([uart.LOADER_STATUS_OK]))
+            return
+        if len(data) != 9 or data[0] != uart.LOADER_FRAME_SYNC:
+            self.feed(bytes([uart.LOADER_STATUS_ERROR]))
+            return
+        body = data[1:-1]
+        if uart._xor(body) != data[-1]:
+            self.feed(bytes([uart.LOADER_STATUS_ERROR]))
+            return
+        command = data[1]
+        offset = int.from_bytes(data[2:6], "big")
+        length = int.from_bytes(data[6:8], "big")
+        if command == uart.LOADER_CMD_PING:
+            self.feed(bytes([uart.LOADER_STATUS_OK]) +
+                      uart.LOADER_JEDEC.to_bytes(4, "big"))
+        elif command == uart.LOADER_CMD_INFO:
+            self.feed(bytes([uart.LOADER_STATUS_OK]) +
+                      uart.LOADER_JEDEC.to_bytes(4, "big") + b"\x00\x00")
+        elif command == uart.LOADER_CMD_READ:
+            self.feed(bytes([uart.LOADER_STATUS_OK]) +
+                      bytes(self.ospi[offset:offset + length]))
+        elif command == uart.LOADER_CMD_ERASE:
+            if self.fail_loader_erase:
+                self.feed(bytes([uart.LOADER_STATUS_ERROR]))
+                return
+            self.ospi[offset:offset + uart.NOR_SECTOR] = b"\xFF" * uart.NOR_SECTOR
+            self.ospi_erases.append(offset)
+            self.feed(bytes([uart.LOADER_STATUS_OK]))
+        elif command == uart.LOADER_CMD_PROGRAM:
+            self.loader_payload = (offset, length)
+            self.feed(bytes([uart.LOADER_STATUS_OK]))
+        elif command == uart.LOADER_CMD_RESET:
+            self.loader_resets += 1
+            self.loader_mode = False
+            self.feed(bytes([uart.LOADER_STATUS_OK]))
+        else:
+            self.feed(bytes([uart.LOADER_STATUS_ERROR]))
+
+
 def _manifest(segments):
     return {
         "layout": {
@@ -499,7 +617,7 @@ class UartProgrammingTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_flash_programs_ospi_then_cnvm_and_verifies(self):
+    def test_flash_programs_cnvm_then_loader_and_verifies(self):
         payload_data = bytes(range(256)) * 16
         payload = _payload(self.root / "staging.bin", payload_data)
         manifest = _manifest([{
@@ -511,19 +629,19 @@ class UartProgrammingTests(unittest.TestCase):
         image_data = b"CNVM" + b"\x5a" * (0x10000 - 4) + b"TAIL"
         image = self.root / "firmware.bin"
         image.write_bytes(image_data)
-        rom = RomTransport()
+        rom = LoaderRomTransport()
         result = uart.flash(
             manifest, [payload], image, uart.CNVM_BASE, uart.CNVM_BASE + 0x20000,
-            0x20000, {"erase_bytes": uart.CNVM_PAGE}, transport=rom, expected_id=EXPECTED_ID, expected_chip="test-chip",
+            0x20000, {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
+            expected_id=EXPECTED_ID, expected_chip="test-chip",
             ospi_profiles=TEST_OSPI_PROFILES, verify=True)
         self.assertTrue(result["success"])
         self.assertTrue(result["verified"])
-        self.assertEqual(rom.ospi_erases, [0x2000])
         self.assertEqual(rom.cnvm_erases, [0, 1])
+        self.assertEqual(rom.ospi_erases, [0x2000])
         self.assertEqual(bytes(rom.ospi[0x2000:0x2000 + len(payload_data)]), payload_data)
         self.assertEqual(bytes(rom.cnvm[:len(image_data)]), image_data)
-        self.assertEqual(rom.ospi_config, TEST_OSPI_CONFIG)
-        self.assertEqual(rom.ospi_pin_records, list(TEST_OSPI_PINS))
+        self.assertEqual(rom.loader_resets, 1)
         self.assertEqual(result["external"][0]["partition"], "staging")
         self.assertEqual(result["internal"]["size_bytes"], len(image_data))
 
@@ -561,19 +679,24 @@ class UartProgrammingTests(unittest.TestCase):
                                        uart.CMD_BASE_ERASE, uart.CMD_OSPI_CONFIG)
                                  for w in rom.writes))
 
-    def test_ospi_requires_explicit_configuration_before_transport_creation(self):
+    def test_external_flash_is_preflighted_before_transport_creation(self):
         payload = _payload(self.root / "staging.bin", b"X" * 0x1000)
         image = self.root / "firmware.bin"
         image.write_bytes(b"CNVM")
+        manifest = _manifest([{
+            "device": "generic_nor", "device_offset_bytes": 0,
+            "logical_offset_bytes": 0, "size_bytes": 0x1000,
+        }])
+        manifest["layout"]["devices"][0]["id"] = "generic_nor"
+        manifest["layout"]["devices"][0]["part_number"] = "GENERIC_PART"
+        manifest["layout"]["board_binding"]["generic_nor"] = (
+            manifest["layout"]["board_binding"].pop("nor"))
         with patch.object(uart, "SerialTransport", side_effect=AssertionError("opened")):
             with self.assertRaisesRegex(uart.UartIspError, "explicit per-device OSPI profiles"):
-                uart.flash(_manifest([{
-                    "device": "nor", "device_offset_bytes": 0,
-                    "logical_offset_bytes": 0, "size_bytes": 0x1000,
-                }]), [payload], image, uart.CNVM_BASE,
-                    uart.CNVM_BASE + uart.CNVM_PAGE, uart.CNVM_PAGE,
-                    {"erase_bytes": uart.CNVM_PAGE}, port="fake",
-                    expected_id=EXPECTED_ID)
+                uart.flash(manifest, [payload], image, uart.CNVM_BASE,
+                           uart.CNVM_BASE + uart.CNVM_PAGE, uart.CNVM_PAGE,
+                           {"erase_bytes": uart.CNVM_PAGE}, port="fake",
+                           expected_id=EXPECTED_ID)
 
     def test_empty_cnvm_is_rejected_before_ospi_configuration_or_erase(self):
         payload = _payload(self.root / "staging.bin", b"X" * 0x1000)
@@ -625,10 +748,8 @@ class UartProgrammingTests(unittest.TestCase):
             }},
         }}
         rom = RomTransport()
-        uart.flash(manifest, [payload], image, uart.CNVM_BASE,
-                   uart.CNVM_BASE + uart.CNVM_PAGE, uart.CNVM_PAGE,
-                   {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
-                   expected_id=EXPECTED_ID, ospi_profiles=profiles, verify=True)
+        uart.program_ospi(uart.UartIsp(rom), manifest, [payload], profiles,
+                          verify=True)
         self.assertEqual(rom.ospi_erase_profiles, [
             (uart.OSPI0_WINDOW, configs[0]),
             (uart.OSPI1_WINDOW, configs[1]),
@@ -662,13 +783,8 @@ class UartProgrammingTests(unittest.TestCase):
                      b"\x03\x30\x31\x32\x33", b"\x04\x40\x41\x42\x43"),
         }}
         rom = RomTransport()
-        result = uart.flash(
-            manifest, [payload], image, uart.CNVM_BASE,
-            uart.CNVM_BASE + uart.CNVM_PAGE, uart.CNVM_PAGE,
-            {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
-            expected_id=EXPECTED_ID, expected_chip="OTHER_TARGET",
-            ospi_profiles=profile, verify=True)
-        self.assertTrue(result["success"])
+        uart.program_ospi(uart.UartIsp(rom), manifest, [payload], profile,
+                          verify=True)
         self.assertEqual(rom.ospi_config, b"\x09\x08\x07")
         self.assertEqual(len(rom.ospi_pin_records), 4)
 
@@ -683,18 +799,19 @@ class UartProgrammingTests(unittest.TestCase):
         ])
         image = self.root / "firmware.bin"
         image.write_bytes(b"\xa5" * 0x10000)
-        rom = RomTransport()
+        rom = LoaderRomTransport()
         uart.flash(manifest, [payload], image, uart.CNVM_BASE,
                    uart.CNVM_BASE + 0x10000, 0x10000,
-                   {"erase_bytes": uart.CNVM_PAGE}, transport=rom, expected_id=EXPECTED_ID, expected_chip="test-chip",
-            ospi_profiles=TEST_OSPI_PROFILES, verify=True)
+                   {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
+                   expected_id=EXPECTED_ID, expected_chip="test-chip",
+                   ospi_profiles=TEST_OSPI_PROFILES, verify=True)
         self.assertEqual(rom.ospi_erases, [0x2000, 0x5000])
         self.assertEqual(bytes(rom.ospi[0x2000:0x3000]), b"\x11" * 0x1000)
         self.assertEqual(bytes(rom.ospi[0x5000:0x6000]), b"\x22" * 0x1000)
         self.assertEqual(bytes(rom.ospi[0x1000:0x2000]), b"\xFF" * 0x1000)
         self.assertEqual(bytes(rom.ospi[0x4000:0x5000]), b"\xFF" * 0x1000)
 
-    def test_cnvm_readback_mismatch_fails_after_ospi(self):
+    def test_cnvm_readback_mismatch_stops_before_loader(self):
         payload = _payload(self.root / "staging.bin", b"\x33" * 0x1000)
         manifest = _manifest([{
             "device": "nor", "device_offset_bytes": 0,
@@ -702,31 +819,66 @@ class UartProgrammingTests(unittest.TestCase):
         }])
         image = self.root / "firmware.bin"
         image.write_bytes(b"\x44" * 0x1000)
-        rom = RomTransport(corrupt_cnvm_read=True)
+        rom = LoaderRomTransport()
+        rom.corrupt_cnvm_read = True
         with self.assertRaisesRegex(uart.UartIspError, "readback mismatch"):
             uart.flash(manifest, [payload], image, uart.CNVM_BASE,
                        uart.CNVM_BASE + 0x10000, 0x10000,
                        {"erase_bytes": uart.CNVM_PAGE}, transport=rom, expected_id=EXPECTED_ID, expected_chip="test-chip",
             ospi_profiles=TEST_OSPI_PROFILES, verify=True)
-        self.assertEqual(rom.ospi_erases, [0])
+        self.assertEqual(rom.ospi_erases, [])
         self.assertEqual(rom.cnvm_erases, [0])
+        self.assertEqual(rom.loader_resets, 0)
 
-    def test_ospi_failure_stops_before_cnvm(self):
+    def test_rom_ospi_failure_stops_before_cnvm(self):
         payload = _payload(self.root / "staging.bin", b"\x55" * 0x1000)
+        manifest = _manifest([{
+            "device": "generic_nor", "device_offset_bytes": 0,
+            "logical_offset_bytes": 0, "size_bytes": 0x1000,
+        }])
+        manifest["layout"]["devices"][0]["id"] = "generic_nor"
+        manifest["layout"]["devices"][0]["part_number"] = "GENERIC_PART"
+        manifest["layout"]["board_binding"]["generic_nor"] = (
+            manifest["layout"]["board_binding"].pop("nor"))
+        profile = {"generic_nor": {
+            "config": b"\x09\x08\x07",
+            "pins": TEST_OSPI_PINS,
+        }}
+        image = self.root / "firmware.bin"
+        image.write_bytes(b"\x66" * 0x1000)
+        rom = RomTransport(fail_ospi_erase=True)
+        with self.assertRaisesRegex(
+                uart.UartIspError,
+                "OSPI UART stage failed before CNVM was written"):
+            uart.flash(manifest, [payload], image, uart.CNVM_BASE,
+                       uart.CNVM_BASE + 0x10000, 0x10000,
+                       {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
+                       expected_id=EXPECTED_ID, expected_chip="test-chip",
+                       ospi_profiles=profile, verify=True)
+        self.assertEqual(rom.cnvm_erases, [])
+        self.assertEqual(rom.cnvm_writes, [])
+
+    def test_loader_failure_reports_cnvm_already_written(self):
+        payload = _payload(self.root / "staging.bin", b"\x77" * 0x1000)
         manifest = _manifest([{
             "device": "nor", "device_offset_bytes": 0,
             "logical_offset_bytes": 0, "size_bytes": 0x1000,
         }])
         image = self.root / "firmware.bin"
-        image.write_bytes(b"\x66" * 0x1000)
-        rom = RomTransport(fail_ospi_erase=True)
-        with self.assertRaisesRegex(uart.UartIspError, "OSPI UART stage failed"):
+        image.write_bytes(b"\x88" * 0x1000)
+        rom = LoaderRomTransport(fail_loader_erase=True)
+        with self.assertRaisesRegex(
+                uart.UartIspError,
+                "OSPI SRAM-loader stage failed after CNVM was written"):
             uart.flash(manifest, [payload], image, uart.CNVM_BASE,
                        uart.CNVM_BASE + 0x10000, 0x10000,
-                       {"erase_bytes": uart.CNVM_PAGE}, transport=rom, expected_id=EXPECTED_ID, expected_chip="test-chip",
-            ospi_profiles=TEST_OSPI_PROFILES, verify=True)
-        self.assertEqual(rom.cnvm_erases, [])
-        self.assertEqual(rom.cnvm_writes, [])
+                       {"erase_bytes": uart.CNVM_PAGE}, transport=rom,
+                       expected_id=EXPECTED_ID, expected_chip="test-chip",
+                       ospi_profiles=TEST_OSPI_PROFILES, verify=True)
+        self.assertEqual(rom.cnvm_erases, [0])
+        self.assertTrue(rom.cnvm_writes)
+        self.assertEqual(rom.ospi_erases, [])
+        self.assertEqual(rom.loader_resets, 1)
 
     def test_cnvm_requires_rom_sector_geometry(self):
         image = self.root / "firmware.bin"

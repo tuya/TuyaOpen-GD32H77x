@@ -28,7 +28,7 @@ int main(void)
     mock_cnvm_reset();
     mock_ecnvm_reset();
     assert(gd32h77x_ecnvm_is_present());
-    assert(gd32h77x_ecnvm_init() == OPRT_OK);
+    assert(gd32h77x_ecnvm_init() == GD32H77X_STATUS_OK);
     uint32_t test_address = 0U;
     uint32_t test_size = 0U;
     assert(gd32h77x_tuya_reserved_test_page_get(&test_address, &test_size));

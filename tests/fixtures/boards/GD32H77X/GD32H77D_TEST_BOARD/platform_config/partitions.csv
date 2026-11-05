@@ -1,0 +1,7 @@
+name,device,offset,size,logical_addr
+boot,internal_flash,0,64K,0x08000000
+primary,internal_flash,64K,1984K,0x08010000
+staging,ospi0_flash,0,2M,0x70000000
+metadata,ospi0_flash,2M,128K,0x70200000
+tuya,ospi0_flash,2176K,288K,0x70220000
+filesystem,ospi0_flash,2464K,5728K,0x70268000

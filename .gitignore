@@ -1,6 +1,10 @@
 __pycache__/
+*.py[cod]
+.pytest_cache/
 .build/
 build/
+dist/
+*.tufw
 /tests/build*/
 /tests/CMakeCache.txt
 /tests/CMakeFiles/
@@ -10,4 +14,7 @@ build/
 /tests/Testing/
 /tests/cmake_install.cmake
 /tests/tuyaos_adapter/
+.cache/
+*.log
+.DS_Store
 

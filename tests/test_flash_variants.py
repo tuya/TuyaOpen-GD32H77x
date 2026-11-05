@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import linker_template
+
 
 PLATFORM = Path(__file__).resolve().parents[1]
 ROOT = PLATFORM.parents[1]
@@ -107,11 +109,11 @@ PendSV_Handler:
 SysTick_Handler:
     bx lr
 
-.section .text.tuya_app_main,"ax",%progbits
-.global tuya_app_main
-.type tuya_app_main,%function
+.section .text.app_entry,"ax",%progbits
+.global app_entry
+.type app_entry,%function
 .thumb_func
-tuya_app_main:
+app_entry:
     bx lr
 
 .section .ramfunc,"ax",%progbits
@@ -174,13 +176,13 @@ class FlashVariantEndToEndTests(unittest.TestCase):
 
     def _build_artifact(self, chip):
         board = "FLASH_VARIANT_" + chip
-        board_dir = self.boards_root / "GD32H77X" / board
+        board_dir = self.boards_root / "GD32H77X" / board / "platform_config"
         board_dir.mkdir(parents=True, exist_ok=True)
-        (board_dir / "flash.cfg").write_text(
-            "CONFIG_FLASH_BACKEND=dfu\n"
-            "CONFIG_FLASH_TARGET_CHIP={}\n"
-            "CONFIG_FLASH_USB_VID=28e9\n"
-            "CONFIG_FLASH_USB_PID=0189\n".format(chip))
+        (board_dir / "gd32h77x.config").write_text(
+            'CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_DFU=y\n'
+            'CONFIG_GD32H77X_FLASH_USB_VID=0x28e9\n'
+            'CONFIG_GD32H77X_FLASH_USB_PID=0x0189\n',
+            encoding="utf-8")
         build_params = {
             "OPEN_ROOT": str(self.workspace), "PLATFORM_CHIP": chip,
             "PLATFORM_BOARD": board, "CONFIG_PLATFORM_CHOICE": "GD32H77X",
@@ -191,12 +193,16 @@ class FlashVariantEndToEndTests(unittest.TestCase):
         out = self.workspace / (chip + "-generated")
         resolver.write_outputs(layout, out)
 
-        # Use the canonical GD32H77DIW linker template with resolved MEMORY regions.
+        # Use the shared GD32H77X linker template with resolved MEMORY regions.
         # This is a minimal resolver/bridge fixture, not a build-support claim
         # for chip variants rejected by the platform CMake guard.
         elf = self.workspace / (chip + ".elf")
         binary = self.workspace / (chip + ".bin")
-        linker = PLATFORM / "gd32h77x_os" / "chips" / "GD32H77DIW" / "linker.ld"
+        # This test exercises the CNVM-only DFU path. ECNVM-code layouts are
+        # skipped below and covered by the dedicated package tests.
+        linker = linker_template.render(
+            layout, self.workspace / (chip + "-linker.ld"),
+            ecnvm_enabled=False)
         subprocess.run([
             self.gcc, "-mcpu=cortex-m7", "-mthumb", "-nostdlib",
             "-Wl,--build-id=none", "-Wl,--fatal-warnings",
@@ -217,10 +223,16 @@ class FlashVariantEndToEndTests(unittest.TestCase):
         }
         return layout, binary, using_data
 
-    def test_all_registered_variants_resolve_verify_and_flash_via_real_dfuse(self):
+    def test_cnvm_variants_resolve_verify_and_flash_via_real_dfuse(self):
+        tested = 0
         for chip in DEVICES:
             with self.subTest(chip=chip):
                 layout, image, using = self._build_artifact(chip)
+                if "ecnvm_code" in layout["layout"]["partitions"]:
+                    # ECNVM-code layouts require the complete QIO package and are
+                    # covered by the dedicated SWD/package tests.
+                    continue
+                tested += 1
                 report, start, limit, capacity, device = bridge._validate_manifest(
                     image, str(self.boards_root), using)
                 self.assertEqual(report["chip"], chip)
@@ -249,6 +261,7 @@ class FlashVariantEndToEndTests(unittest.TestCase):
                 self.assertEqual(bytes(rom.memory[:padded]), expected)
                 self.assertEqual(bytes(rom.memory[padded:]), b"\xA5" * (cnvm_size - padded))
                 self.assertTrue(usb_device.closed)
+        self.assertGreater(tested, 0)
 
     def test_dii_artifact_cannot_be_reused_after_switching_to_iw_and_never_enumerates(self):
         _layout, image, using = self._build_artifact("GD32H77DII")

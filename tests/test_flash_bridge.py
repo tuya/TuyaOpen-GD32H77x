@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -139,20 +140,21 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.board_dir = self.root / "GD32H77X" / "GD32H77D_GINO"
+        self.board_dir = (self.root / "GD32H77X" / "GD32H77D_TEST_BOARD"
+                          / "platform_config")
         self.board_dir.mkdir(parents=True)
-        self._write_board_config("CONFIG_FLASH_BACKEND=dfu\n")
         self.image = self.root / "firmware.bin"
         self.image.write_bytes(b"firmware")
         self.elf = self.root / "firmware.elf"
         self.elf.write_bytes(b"elf firmware")
         self.using = {
             "CONFIG_PLATFORM_CHOICE": "GD32H77X",
-            "CONFIG_BOARD_CHOICE": "GD32H77D_GINO",
+            "CONFIG_BOARD_CHOICE": "GD32H77D_TEST_BOARD",
             "CONFIG_CHIP_CHOICE": "GD32H77D",
             "CONFIG_PROJECT_NAME": "firmware",
             "CONFIG_PROJECT_VERSION": "1.0.0",
         }
+        self._write_board_config("CONFIG_FLASH_BACKEND=dfu\n")
         self.flash = FakeFlash(0x08000000, 0x10000, 0x200000)
         self.current_layout = {
             "source": {"sourceKind": "platform_default", "sourceDigest": "source-digest"},
@@ -197,17 +199,40 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
 
     # -- helpers ------------------------------------------------------------
     def _write_board_config(self, extra=""):
-        if "CONFIG_FLASH_TARGET_CHIP=" not in extra:
-            extra += "CONFIG_FLASH_TARGET_CHIP=GD32H77DIW\n"
-        if "CONFIG_FLASH_BACKEND=uart" in extra and "CONFIG_FLASH_UART_EXPECTED_ID=" not in extra:
-            extra += "CONFIG_FLASH_UART_EXPECTED_ID=123456\n"
-        (self.board_dir / "flash.cfg").write_text(
-            extra + "CONFIG_FLASH_USB_VID=28e9\nCONFIG_FLASH_USB_PID=0189\n",
-            encoding="utf-8")
+        backend_symbols = {
+            "swd": "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_SWD",
+            "dfu": "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_DFU",
+            "uart": "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_UART",
+        }
+        direct_keys = {
+        }
+        string_keys = {
+        }
+        lines = []
+        for line in extra.splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            value = value.strip()
+            if key == "CONFIG_FLASH_BACKEND":
+                symbol = backend_symbols.get(value.lower())
+                if symbol:
+                    lines.append(f"{symbol}=y")
+                continue
+            mapped = direct_keys.get(key)
+            if not mapped:
+                # UART expected ID now lives in the chip registry; OSPI profile
+                # files are discovered from the board directory.
+                continue
+            if mapped in string_keys:
+                value = f'"{value}"'
+            lines.append(f"{mapped}={value}")
+        with open(self.board_dir / "gd32h77x.config", 'a', encoding='utf-8') as f:
+            f.write("\n".join(lines) + "\n")
 
     def _write_report(self):
         report = {
-            "board": "GD32H77D_GINO",
+            "board": "GD32H77D_TEST_BOARD",
             "chip": "GD32H77D",
             "sourceKind": "platform_default",
             "sourceDigest": "source-digest",
@@ -232,7 +257,8 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         (self.root / "firmware_1.0.0.layout.json").write_text(
             json.dumps(report), encoding="utf-8")
 
-    def _run_flash(self, devices=None, usb_path="", tty=False, inputs=()):
+    def _run_flash(self, devices=None, usb_path="", tty=False, inputs=(),
+                   verify=True):
         devices = list(devices) if devices is not None else [
             FakeUsbDevice(self.flash, "3-3.2", "DIWd")]
         module, lib = _fake_dfuse(devices)
@@ -243,7 +269,8 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
              patch.object(bridge.sys.stdin, "isatty", return_value=tty), \
              patch("builtins.input", side_effect=list(inputs)):
             result = bridge.platform_flash(
-                self.using, str(self.image), usb_path, 0, str(self.root), None)
+                self.using, str(self.image), usb_path, 0, str(self.root), None,
+                verify=verify)
         return result, devices, lib
 
     def _mock_package_module(self, external_payloads=()):
@@ -307,14 +334,59 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                 self.using, str(package), "", 0, str(self.root), None)
         return result, module, lib
 
-    def test_ecnvm_enabled_rejects_legacy_raw_bin_before_validation(self):
-        self.using["CONFIG_GD32H77X_ECNVM_CODE"] = "y"
+    def test_board_flash_backend_and_fixed_runtime_defaults(self):
+        (self.board_dir / "gd32h77x.config").write_text(
+            "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_SWD=y\n",
+            encoding="utf-8")
+        with patch.object(bridge, "_resolve_swd_pack", return_value=""):
+            config = bridge._board_flash_config(self.using, str(self.root))
+        self.assertEqual(config["CONFIG_FLASH_BACKEND"], "swd")
+        self.assertEqual(config["CONFIG_FLASH_SWD_PACK"], "")
+        self.assertEqual(config["CONFIG_FLASH_UART_BAUD"], "auto")
+        self.assertEqual(config["CONFIG_FLASH_VERIFY"], "y")
+        self.assertEqual(config["CONFIG_FLASH_SWD_PROBE"], "")
+
+        with patch.dict(os.environ, {
+                "GD32H77X_DFP_PACK": "/env/override.pack"}, clear=False):
+            config = bridge._board_flash_config(self.using, str(self.root))
+        self.assertEqual(config["CONFIG_FLASH_SWD_PACK"], "/env/override.pack")
+
+    def test_platform_board_config_selects_backend(self):
+        config = bridge._board_flash_config(self.using, str(self.root))
+        self.assertEqual(config["CONFIG_FLASH_BACKEND"], "dfu")
+
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
+        config = bridge._board_flash_config(self.using, str(self.root))
+        self.assertEqual(config["CONFIG_FLASH_BACKEND"], "uart")
+
+    def test_missing_board_config_uses_kconfig_defaults_and_canonical_target(self):
+        shutil.rmtree(self.board_dir)
+        config = bridge._board_flash_config(self.using, str(self.root))
+        self.assertEqual(config["CONFIG_FLASH_BACKEND"], "swd")
+        self.assertEqual(config["CONFIG_FLASH_VERIFY"], "y")
+        self.assertEqual(config["CONFIG_FLASH_TARGET_CHIP"], "GD32H77DIW")
+        self.assertEqual(config["CONFIG_FLASH_SWD_TARGET"], "GD32H77DIW")
+        self.assertEqual(Path(config["_CONFIG_DIR"]), BRIDGE_PATH.parent)
+
+    def test_ecnvm_raw_bin_requires_its_verified_sidecar(self):
+        report = {
+            "layout": {
+                "partitions": {"ecnvm_code": {"logical_base": 0x08200000,
+                                               "size_bytes": 0x10000}},
+                "devices": [],
+            },
+            "mapped_payloads": [{"file": "missing.ecnvm.bin"}],
+        }
         with patch.object(bridge, "_validate_manifest",
-                          side_effect=AssertionError("manifest validation must not run")):
+                          return_value=(report, 0x08000000, 0x08090000,
+                                        0x90000, {})), \
+             patch.object(bridge, "_dfuse_module",
+                          side_effect=AssertionError("no device may be opened")):
             result = bridge.platform_flash(
-                self.using, str(self.image), "", 0, str(self.root), None)
+                self.using, str(self.image), "", 0,
+                str(self.root), None)
         self.assertFalse(result["success"])
-        self.assertIn("complete .tufw package is required", result["message"])
+        self.assertIn("QIO package is missing its ECNVM payload", result["message"])
 
     def test_mixed_external_and_mapped_payloads_fail_before_device_access(self):
         package = self.root / "mixed.tufw"
@@ -579,7 +651,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
             result = bridge.platform_flash(
                 self.using, str(package), "", 0, str(self.root), None)
         self.assertFalse(result["success"])
-        self.assertIn("require CONFIG_FLASH_BACKEND=swd", result["message"])
+        self.assertIn("require the swd or uart backend", result["message"])
         self.assertEqual(self.flash.erases, [])
 
     def test_ospi_failure_does_not_touch_cnvm(self):
@@ -673,7 +745,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
     def test_ospi_success_then_cnvm_reuses_the_exact_probe_and_verify_setting(self):
         self._write_board_config(
             "CONFIG_FLASH_BACKEND=swd\nCONFIG_FLASH_VERIFY=n\n"
-            "CONFIG_FLASH_SWD_PROBE=cmsis-dap:abcd\n")
+            )
         external = [{"partition": "staging", "explicit_payload": True,
                      "segments": [{"device": "renamed_nor", "region": "NOR",
                                    "backend_status": "available"}]}]
@@ -710,14 +782,15 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                           return_value=copy.deepcopy(self.current_layout)), \
              patch.object(bridge, "_verify_build_artifact"):
             result = bridge.platform_flash(
-                self.using, str(package), "", 0, str(self.root), None)
+                self.using, str(package), "", 0, str(self.root), None,
+                verify=False)
         self.assertTrue(result["success"], result)
         self.assertEqual(calls, [
             ("preflight", "cmsis-dap:abcd1234"),
             ("ospi", "cmsis-dap:abcd1234", False),
-            ("cnvm", "cmsis-dap:abcd1234", "cmsis-dap:abcd1234"),
+            ("cnvm", "", "cmsis-dap:abcd1234"),
         ])
-        self.assertIn("verification skipped", result["message"])
+        self.assertIn("verification disabled", result["message"])
 
     def test_native_dfu_erases_every_sector_covered_by_the_padded_image(self):
         self.image.write_bytes(b"A" * (0x10000 + 5))
@@ -751,11 +824,11 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertIn("readback mismatch at 0x08000003", result["message"])
 
     def test_native_dfu_reports_when_verification_is_disabled(self):
-        self._write_board_config("CONFIG_FLASH_BACKEND=dfu\nCONFIG_FLASH_VERIFY=n\n")
-        with patch.object(FakeDfuSeProtocol, "read", side_effect=AssertionError("unexpected read")):
-            result, _devices, _lib = self._run_flash()
+        with patch.object(FakeDfuSeProtocol, "read",
+                          side_effect=AssertionError("unexpected read")):
+            result, _devices, _lib = self._run_flash(verify=False)
         self.assertTrue(result["success"], result)
-        self.assertIn("verification skipped", result["message"])
+        self.assertIn("verification disabled", result["message"])
 
     def test_native_dfu_selects_device_by_usb_path(self):
         devices = [FakeUsbDevice(self.flash, "3-3.2", "DIWd"),
@@ -819,11 +892,10 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not the configured internal CNVM"):
             bridge._select_dfu_interface([entry], 0, "InternalFlash")
 
-    def test_native_dfu_serial_filter_is_configurable(self):
-        self._write_board_config("CONFIG_FLASH_BACKEND=dfu\nCONFIG_FLASH_USB_SERIAL=wrong\n")
-        result, _devices, _lib = self._run_flash()
+    def test_native_dfu_selector_accepts_usb_path_or_serial(self):
+        result, _devices, _lib = self._run_flash(usb_path="wrong")
         self.assertFalse(result["success"])
-        self.assertIn("configured serial", result["message"])
+        self.assertIn("configured USB path or serial", result["message"])
         self.assertEqual(self.flash.erases, [])
 
     def test_native_dfu_prompts_for_multiple_devices(self):
@@ -835,11 +907,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertEqual(second.erases, [0x08000000])
         self.assertEqual(self.flash.erases, [])
 
-    def test_native_dfu_leave_is_opt_in(self):
-        result, _devices, _lib = self._run_flash()
-        self.assertTrue(result["success"])
-        self._write_board_config("CONFIG_FLASH_BACKEND=dfu\nCONFIG_FLASH_DFU_LEAVE=y\n")
-
+    def test_native_dfu_leave_is_fixed_off(self):
         left = {}
 
         class LeaveProtocol(FakeDfuSeProtocol):
@@ -855,7 +923,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
             result = bridge.platform_flash(
                 self.using, str(self.image), "", 0, str(self.root), None)
         self.assertTrue(result["success"], result)
-        self.assertTrue(left.get("called"))
+        self.assertFalse(left.get("called", False))
 
     # -- geometry validation ------------------------------------------------
     def test_manifest_rejects_unaligned_erase_geometry(self):
@@ -912,10 +980,8 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
 
     # -- backend selection --------------------------------------------------
     def test_rejects_unknown_backend(self):
-        self._write_board_config("CONFIG_FLASH_BACKEND=openocd\n")
-        result, _devices, _lib = self._run_flash()
-        self.assertFalse(result["success"])
-        self.assertIn("Unsupported CONFIG_FLASH_BACKEND=openocd", result["message"])
+        with self.assertRaisesRegex(ValueError, "Unsupported flash backend"):
+            bridge._backend({"CONFIG_FLASH_BACKEND": "openocd"})
 
     def test_baud_is_rejected_for_non_uart_backends(self):
         for backend in ("dfu", "swd"):
@@ -923,7 +989,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
             result = bridge.platform_flash(self.using, str(self.image), "", 115200,
                                            str(self.root), None)
             self.assertFalse(result["success"], backend)
-            self.assertIn("only valid with CONFIG_FLASH_BACKEND=uart", result["message"])
+            self.assertIn("only valid with the uart backend", result["message"])
             self.assertIn(backend, result["message"])
 
     def test_uart_backend_accepts_baud_without_swd(self):
@@ -952,13 +1018,7 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertIn("CNVM", result["message"])
 
     def test_uart_backend_reads_port_baud_ospi_and_verify_from_config(self):
-        self._write_board_config(
-            "CONFIG_FLASH_BACKEND=uart\n"
-            "CONFIG_FLASH_UART_PORT=/dev/ttyUSB7\n"
-            "CONFIG_FLASH_UART_BAUD=230400\n"
-            "CONFIG_FLASH_UART_OSPI_CONFIG=112233\n"
-            "CONFIG_FLASH_UART_OSPI_PINS=AABBCCDDEE\n"
-            "CONFIG_FLASH_VERIFY=n\n")
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
         calls = []
         with patch.object(bridge, "_UART_ISP_MODULE",
                           _fake_uart_module(calls, self.image)), \
@@ -968,20 +1028,19 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
              patch("serial.tools.list_ports.comports",
                    side_effect=AssertionError("configured port skips enumeration")):
             result = bridge.platform_flash(
-                self.using, str(self.image), "", 0, str(self.root), None)
+                self.using, str(self.image), "/dev/ttyUSB7", 230400,
+                str(self.root), None, verify=False)
         self.assertTrue(result["success"], result)
         self.assertEqual(calls[0]["port"], "/dev/ttyUSB7")
         self.assertEqual(calls[0]["baud"], 230400)
         self.assertIsNone(calls[0]["ospi_profiles"])
-        self.assertEqual(calls[0]["expected_id"], bytes.fromhex("123456"))
+        self.assertEqual(calls[0]["expected_id"], bytes.fromhex("44495764FFFFFFFF"))
         self.assertEqual(calls[0]["expected_chip"], "GD32H77DIW")
         self.assertFalse(calls[0]["verify"])
-        self.assertIn("verification skipped", result["message"])
+        self.assertIn("verification disabled", result["message"])
 
     def test_uart_backend_defaults_to_auto_baud(self):
-        self._write_board_config(
-            "CONFIG_FLASH_BACKEND=uart\n"
-            "CONFIG_FLASH_UART_PORT=/dev/ttyUSB8\n")
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
         calls = []
         with patch.object(bridge, "_UART_ISP_MODULE",
                           _fake_uart_module(calls, self.image)), \
@@ -989,17 +1048,14 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                           return_value=copy.deepcopy(self.current_layout)), \
              patch.object(bridge, "_verify_build_artifact"):
             result = bridge.platform_flash(
-                self.using, str(self.image), "", 0, str(self.root), None)
+                self.using, str(self.image), "/dev/ttyUSB8", 0,
+                str(self.root), None)
         self.assertTrue(result["success"], result)
         self.assertEqual(calls[0]["baud"], "auto")
         self.assertIn("115200 8E1", result["message"])
 
-    def test_uart_verify_override_is_independent_of_other_backends(self):
-        self._write_board_config(
-            "CONFIG_FLASH_BACKEND=uart\n"
-            "CONFIG_FLASH_UART_PORT=/dev/ttyUSB8\n"
-            "CONFIG_FLASH_VERIFY=y\n"
-            "CONFIG_FLASH_UART_VERIFY=n\n")
+    def test_uart_no_verify_option(self):
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
         calls = []
         with patch.object(bridge, "_UART_ISP_MODULE",
                           _fake_uart_module(calls, self.image)), \
@@ -1007,10 +1063,11 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                           return_value=copy.deepcopy(self.current_layout)), \
              patch.object(bridge, "_verify_build_artifact"):
             result = bridge.platform_flash(
-                self.using, str(self.image), "", 0, str(self.root), None)
+                self.using, str(self.image), "/dev/ttyUSB8", 0,
+                str(self.root), None, verify=False)
         self.assertTrue(result["success"], result)
         self.assertFalse(calls[0]["verify"])
-        self.assertIn("CONFIG_FLASH_UART_VERIFY=n", result["message"])
+        self.assertIn("readback verification disabled", result["message"])
 
     def test_uart_backend_requires_port(self):
         self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
@@ -1024,17 +1081,17 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertIn("No serial ports found", result["message"])
 
     def test_uart_missing_expected_id_fails_before_port_enumeration(self):
-        self._write_board_config(
-            "CONFIG_FLASH_BACKEND=uart\nCONFIG_FLASH_UART_EXPECTED_ID=\n")
-        with patch.object(bridge, "_resolve_current_layout",
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
+        with patch.object(bridge, "_uart_expected_id", return_value=""), \
+             patch.object(bridge, "_resolve_current_layout",
                           return_value=copy.deepcopy(self.current_layout)), \
              patch.object(bridge, "_verify_build_artifact"), \
              patch("serial.tools.list_ports.comports",
                    side_effect=AssertionError("must validate identity first")):
-            result = bridge.platform_flash(self.using, str(self.image), "", 0,
+            result = bridge.platform_flash(self.using, str(self.image), "/dev/ttyUSB8", 0,
                                            str(self.root), None)
         self.assertFalse(result["success"])
-        self.assertIn("CONFIG_FLASH_UART_EXPECTED_ID", result["message"])
+        self.assertIn("uart_isp.json", result["message"])
 
     def test_uart_multiple_ports_requires_explicit_port_without_tty(self):
         self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
@@ -1129,14 +1186,12 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                         self._run_uart_direct(config, external_payloads=[{"partition": "p"}])
 
     def test_uart_external_package_does_not_touch_swd_or_usb(self):
-        profiles = self.board_dir / "profiles.csv"
+        profiles = self.board_dir / "ospi_profiles.csv"
         profiles.write_text(
             "device,config,pins\n"
             "renamed_nor,112233,AABBCCDDEE;BBCCDDEEFF\n",
             encoding="utf-8")
-        self._write_board_config(
-            "CONFIG_FLASH_BACKEND=uart\n"
-            "CONFIG_FLASH_UART_OSPI_PROFILES=profiles.csv\n")
+        self._write_board_config("CONFIG_FLASH_BACKEND=uart\n")
         external = [{"partition": "staging", "explicit_payload": True,
                      "segments": [{"device": "renamed_nor", "region": "NOR",
                                    "backend_status": "available"}]}]
@@ -1171,10 +1226,8 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertIn("OSPI partitions staging and CNVM", result["message"])
 
     def test_stock_dfu_util_backend_is_disabled(self):
-        self._write_board_config("CONFIG_FLASH_BACKEND=dfu-util\n")
-        result, _devices, _lib = self._run_flash()
-        self.assertFalse(result["success"])
-        self.assertIn("erase behavior", result["message"])
+        with self.assertRaisesRegex(ValueError, "erase behavior"):
+            bridge._backend({"CONFIG_FLASH_BACKEND": "dfu-util"})
 
     def test_swd_backend_requires_pyocd(self):
         self._write_board_config("CONFIG_FLASH_BACKEND=swd\n")
@@ -1187,15 +1240,6 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                 self.using, str(self.image), "", 0, str(self.root), None)
         self.assertFalse(result["success"])
         self.assertIn("needs pyocd", result["message"])
-
-    def test_swd_target_override_cannot_change_canonical_geometry(self):
-        self._write_board_config("CONFIG_FLASH_BACKEND=swd\nCONFIG_FLASH_SWD_TARGET=GD32H779IW\n")
-        with patch.object(bridge.importlib.metadata, "version", return_value="0.46.0"):
-            with self.assertRaisesRegex(ValueError, "override cannot change"):
-                bridge._flash_swd({"CONFIG_FLASH_SWD_TARGET": "GD32H779IW"},
-                                  json.loads((self.root / "firmware_1.0.0.layout.json").read_text()),
-                                  self.image, "", 0x08000000,
-                                  0x080E0000, 0xE0000, None)
 
     def test_probe_selection_requires_unique_match_or_explicit_selector(self):
         probes = [{"unique_id": "cmsis-dap:abc", "info": "one"},

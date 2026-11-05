@@ -982,13 +982,14 @@ def resolve_build_layout(build_params: dict, *, platform_root: Path,
         boards_root = build["open_root"] / "boards"
     boards_root = Path(boards_root).resolve()
     board_root = boards_root / _PLATFORM_NAME / build["board"]
-    override_partition_path = board_root / "partitions.csv"
+    board_platform_config_root = board_root / "platform_config"
+    override_partition_path = board_platform_config_root / "partitions.csv"
     override_present = override_partition_path.exists() or override_partition_path.is_symlink()
     if override_present:
         if not override_partition_path.is_file():
             raise LayoutError("board override exists but is not a regular file: {}".format(override_partition_path))
         partition_path = override_partition_path
-        board_devices_path = board_root / "flash_devices.csv"
+        board_devices_path = board_platform_config_root / "flash_devices.csv"
         if board_devices_path.exists() or board_devices_path.is_symlink():
             if not board_devices_path.is_file():
                 raise LayoutError("board device table exists but is not a regular file: {}".format(board_devices_path))

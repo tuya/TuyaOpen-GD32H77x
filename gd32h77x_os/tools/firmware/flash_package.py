@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Create and validate build-bound GD32H77X multi-region flash packages.
+"""Create and validate build-bound GD32H77X QIO delivery packages.
 
-The package is a ZIP container with a ``.tufw`` suffix. Partition addresses are
-never accepted from the package request CSV; they are derived from the resolved
-layout embedded in the build report and checked against the current layout.
-This module validates artifacts and describes explicit payload writes. It does
-not perform flash I/O.
+QIO is a ZIP-based, self-contained multi-region firmware package. Partition
+addresses are never accepted from the package request CSV; they are derived
+from the resolved layout embedded in the build report and checked against the
+current layout. This module validates artifacts and describes explicit payload
+writes. It does not perform flash I/O.
 """
 
 from __future__ import annotations
@@ -303,7 +303,7 @@ def _write_zip(output_path: Path, members: dict) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=".tufw-", suffix=".tmp", dir=output_path.parent,
+        with tempfile.NamedTemporaryFile(prefix=".qio-", suffix=".tmp", dir=output_path.parent,
                                          delete=False) as temp:
             temp_path = Path(temp.name)
         with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -320,7 +320,7 @@ def _write_zip(output_path: Path, members: dict) -> None:
 
 def create_package(output_path, report_path, elf_path, internal_bin_path,
                    resolved_layout, external_csv_path=None, ecnvm_bin_path=None) -> dict:
-    """Create deterministic `.tufw`; explicit external CSV rows add payloads."""
+    """Create a deterministic complete QIO package; explicit CSV rows add payloads."""
     resolved = _layout_value(resolved_layout)
     report, report_raw = _report_value(Path(report_path))
     elf = Path(elf_path).read_bytes()
@@ -627,7 +627,7 @@ def main(argv=None):
     import sys
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    create = sub.add_parser("create", help="create a build-bound .tufw package")
+    create = sub.add_parser("create", help="create a complete build-bound QIO package")
     create.add_argument("--layout", required=True, type=Path)
     create.add_argument("--report", required=True, type=Path)
     create.add_argument("--elf", required=True, type=Path)

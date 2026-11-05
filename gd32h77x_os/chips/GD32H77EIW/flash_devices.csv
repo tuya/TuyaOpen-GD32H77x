@@ -1,2 +1,3 @@
-device,geometry,controller,cs,clk,d0,d1,d2,d3
-internal_flash,GD32H77EIW_CNVM,,,,,,,
+device,         geometry,         controller, cs, clk, d0, d1, d2, d3
+internal_flash, GD32H77EIW_CNVM,  ,           ,   ,    ,   ,   ,
+internal_ecnvm, GD32H77EIW_ECNVM, ,           ,   ,    ,   ,   ,

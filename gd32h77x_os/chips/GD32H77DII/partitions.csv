@@ -1,7 +1,7 @@
-name,device,offset,size,logical_addr
-boot,internal_flash,0K,64K,0x08000000
-primary,internal_flash,64K,640K,0x08010000
-staging,internal_flash,704K,640K,0x080B0000
-scratch,internal_flash,1344K,64K,0x08150000
-metadata,internal_flash,1408K,128K,0x08160000
-kv,internal_flash,1536K,128K,0x08180000
+name,     device,         offset, size, logical_addr
+boot,     internal_flash, 0K,     64K,  0x08000000
+primary,  internal_flash, 64K,    640K, 0x08010000
+staging,  internal_flash, 704K,   640K, 0x080B0000
+scratch,  internal_flash, 1344K,  64K,  0x08150000
+metadata, internal_flash, 1408K,  128K, 0x08160000
+kv,       internal_flash, 1536K,  128K, 0x08180000

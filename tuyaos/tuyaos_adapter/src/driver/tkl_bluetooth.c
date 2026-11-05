@@ -12,8 +12,10 @@
 // --- BEGIN: user defines and implements ---
 #include "tkl_bluetooth.h"
 #include "tuya_error_code.h"
-#include "vw553_device.h"
-#include "vw553_log.h"
+#include "at_device.h"
+#include "at_log.h"
+#include "at_commands.h"
+#include "at_status_map.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
@@ -22,21 +24,21 @@
 /* The module serializes AT traffic with the Wi-Fi join, and CWJAP can hold
  * the AT task for several seconds. A 5 s BLE timeout failed the provisioning
  * response that was queued right behind the join. */
-#define VW553_BLE_TIMEOUT_MS 15000U
-#define VW553_BLE_SERVICE_UUID 0xFD50U
-#define VW553_BLE_SERVICE_HANDLE 1U
-#define VW553_BLE_WRITE_HANDLE 2U
-#define VW553_BLE_NOTIFY_HANDLE 4U
-#define VW553_BLE_READ_HANDLE 7U
-/* VW553 negotiates an ATT MTU of up to 527, so one write can carry 524
+#define AT_BLE_TIMEOUT_MS 15000U
+#define AT_BLE_SERVICE_UUID 0xFD50U
+#define AT_BLE_SERVICE_HANDLE 1U
+#define AT_BLE_WRITE_HANDLE 2U
+#define AT_BLE_NOTIFY_HANDLE 4U
+#define AT_BLE_READ_HANDLE 7U
+/* AT negotiates an ATT MTU of up to 527, so one write can carry 524
  * bytes.  Keep a bounded buffer large enough for that single write. */
-#define VW553_BLE_RX_MAX 1024U
+#define AT_BLE_RX_MAX 1024U
 
 static TKL_BLE_GAP_EVT_FUNC_CB s_gap_callback;
 static TKL_BLE_GATT_EVT_FUNC_CB s_gatt_callback;
 static bool s_ble_subscribed;
 static bool s_ble_initialized;
-static uint8_t s_ble_rx[VW553_BLE_RX_MAX];
+static uint8_t s_ble_rx[AT_BLE_RX_MAX];
 static size_t s_ble_rx_length;
 static uint8_t s_ble_rx_conn;
 static bool s_ble_rx_dropped;
@@ -58,7 +60,7 @@ static void ble_rx_log_hex(void)
             if (written <= 0 || (size_t)written >= sizeof(hex) - used) return;
             used += (size_t)written;
         }
-        VW553_LOG("BLE RX hex off=%u len=%u data=%s", (unsigned)offset, (unsigned)count, hex);
+        AT_LOG("BLE RX hex off=%u len=%u data=%s", (unsigned)offset, (unsigned)count, hex);
     }
 }
 
@@ -70,14 +72,15 @@ static void ble_rx_reset(void)
 
 static OPERATE_RET ble_execute(const char *command, const uint8_t *payload, size_t payload_length)
 {
-    vw553_at_result_t result = VW553_AT_RESULT_NONE;
-    vw553_uart_request_t request = {.command = command,
+    at_result_t result = AT_RESULT_NONE;
+    at_request_t request = {.command = command,
                                     .command_length = strlen(command),
                                     .payload = payload,
                                     .payload_length = payload_length,
                                     .wait_prompt = payload != NULL,
-                                    .timeout_ms = VW553_BLE_TIMEOUT_MS};
-    if (vw553_device_execute(&request, &result) != OPRT_OK || result != VW553_AT_RESULT_OK) {
+                                    .timeout_ms = AT_BLE_TIMEOUT_MS};
+    if (tuya_at_status_to_oprt(at_device_execute(&request, &result)) != OPRT_OK ||
+        result != AT_RESULT_OK) {
         return OPRT_COM_ERROR;
     }
     return OPRT_OK;
@@ -97,16 +100,16 @@ static void ble_gap_event(TKL_BLE_GAP_EVT_TYPE_E type, uint16_t conn_handle, int
     s_gap_callback(&event);
 }
 
-static void ble_device_event(void *context, const vw553_device_event_t *event)
+static void ble_device_event(void *context, const at_device_event_t *event)
 {
     (void)context;
     if (!event) return;
-    if (event->kind == VW553_DEVICE_EVENT_BLE_DATA && s_gatt_callback) {
+    if (event->kind == AT_DEVICE_EVENT_BLE_DATA && s_gatt_callback) {
         if (s_ble_rx_length == 0U) s_ble_rx_conn = event->value.ble_data.conn_id;
         if (s_ble_rx_conn != event->value.ble_data.conn_id ||
             event->value.ble_data.length > sizeof(s_ble_rx) - s_ble_rx_length) {
             if (!s_ble_rx_dropped) {
-                VW553_LOG("BLE RX drop conn=%u len=%u buffered=%u", (unsigned)event->value.ble_data.conn_id,
+                AT_LOG("BLE RX drop conn=%u len=%u buffered=%u", (unsigned)event->value.ble_data.conn_id,
                           (unsigned)event->value.ble_data.length, (unsigned)s_ble_rx_length);
             }
             s_ble_rx_dropped = true;
@@ -117,12 +120,12 @@ static void ble_device_event(void *context, const vw553_device_event_t *event)
         }
         if (!event->value.ble_data.final) return;
         if (s_ble_rx_dropped) {
-            VW553_LOG("BLE RX frame dropped conn=%u buffered=%u", (unsigned)event->value.ble_data.conn_id,
+            AT_LOG("BLE RX frame dropped conn=%u buffered=%u", (unsigned)event->value.ble_data.conn_id,
                       (unsigned)s_ble_rx_length);
             ble_rx_reset();
             return;
         }
-        VW553_LOG("BLE RX write conn=%u len=%u hdr=%02x %02x %02x %02x",
+        AT_LOG("BLE RX write conn=%u len=%u hdr=%02x %02x %02x %02x",
                   (unsigned)event->value.ble_data.conn_id, (unsigned)s_ble_rx_length,
                   (unsigned)(s_ble_rx_length > 0U ? s_ble_rx[0] : 0U),
                   (unsigned)(s_ble_rx_length > 1U ? s_ble_rx[1] : 0U),
@@ -132,29 +135,31 @@ static void ble_device_event(void *context, const vw553_device_event_t *event)
         TKL_BLE_GATT_PARAMS_EVT_T gatt = {.type = TKL_BLE_GATT_EVT_WRITE_REQ,
                                           .conn_handle = event->value.ble_data.conn_id,
                                           .result = 0};
-        gatt.gatt_event.write_report.char_handle = VW553_BLE_WRITE_HANDLE;
+        gatt.gatt_event.write_report.char_handle = AT_BLE_WRITE_HANDLE;
         gatt.gatt_event.write_report.report.length = (uint16_t)s_ble_rx_length;
         gatt.gatt_event.write_report.report.p_data = s_ble_rx;
         s_gatt_callback(&gatt);
         ble_rx_reset();
-    } else if (event->kind == VW553_DEVICE_EVENT_LINE && event->value.line.length > 15U &&
-               event->value.line.length < VW553_AT_LINE_SIZE) {
-        char line[VW553_AT_LINE_SIZE + 1U];
+    } else if (event->kind == AT_DEVICE_EVENT_LINE && event->value.line.length > 15U &&
+               event->value.line.length < AT_LINE_SIZE) {
+        char line[AT_LINE_SIZE + 1U];
         size_t length = event->value.line.length;
         memcpy(line, event->value.line.text, length);
         line[length] = '\0';
         unsigned conn = 0U;
         unsigned reason = 0U;
-        if (sscanf(line, "+TY553XBLE:CONN,%u", &conn) == 1 && conn <= UINT8_MAX) {
+        if (sscanf(line, AT_WIRE_BLE_CONNECT_SCAN_FMT, &conn) == 1 && conn <= UINT8_MAX) {
             ble_gap_event(TKL_BLE_GAP_EVT_CONNECT, (uint16_t)conn, 0);
-        } else if (sscanf(line, "+TY553XBLE:DISC,%u,%u", &conn, &reason) == 2 && conn <= UINT8_MAX) {
+        } else if (sscanf(line, AT_WIRE_BLE_DISCONNECT_SCAN_FMT, &conn, &reason) == 2 &&
+                   conn <= UINT8_MAX) {
             ble_gap_event(TKL_BLE_GAP_EVT_DISCONNECT, (uint16_t)conn, (int)reason);
-        } else if (sscanf(line, "+TY553XBLE:SUB,%u,%u", &conn, &reason) == 2 && conn <= UINT8_MAX &&
+        } else if (sscanf(line, AT_WIRE_BLE_SUBSCRIBE_SCAN_FMT, &conn, &reason) == 2 &&
+                   conn <= UINT8_MAX &&
                    reason <= 1U && s_gatt_callback) {
             TKL_BLE_GATT_PARAMS_EVT_T gatt = {.type = TKL_BLE_GATT_EVT_SUBSCRIBE,
                                               .conn_handle = (uint16_t)conn,
                                               .result = 0};
-            gatt.gatt_event.subscribe.char_handle = VW553_BLE_NOTIFY_HANDLE;
+            gatt.gatt_event.subscribe.char_handle = AT_BLE_NOTIFY_HANDLE;
             gatt.gatt_event.subscribe.prev_notify = 0U;
             gatt.gatt_event.subscribe.cur_notify = (uint8_t)reason;
             gatt.gatt_event.subscribe.prev_indicate = 0U;
@@ -178,17 +183,20 @@ OPERATE_RET tkl_ble_stack_init(uint8_t role)
     // --- BEGIN: user implements ---
     if ((role & TKL_BLE_ROLE_SERVER) == 0U) return OPRT_NOT_SUPPORTED;
     if (s_ble_initialized) return OPRT_OK;
-    if (vw553_device_init() != OPRT_OK || vw553_device_negotiate(VW553_BLE_TIMEOUT_MS) != OPRT_OK) {
+    if (tuya_at_status_to_oprt(at_device_init()) != OPRT_OK ||
+        tuya_at_status_to_oprt(at_device_negotiate(AT_BLE_TIMEOUT_MS)) != OPRT_OK) {
         return OPRT_COM_ERROR;
     }
     if (!s_ble_subscribed) {
-        if (vw553_device_subscribe(ble_device_event, NULL) != OPRT_OK) return OPRT_COM_ERROR;
+        if (tuya_at_status_to_oprt(at_device_subscribe(ble_device_event, NULL)) != OPRT_OK) {
+            return OPRT_COM_ERROR;
+        }
         s_ble_subscribed = true;
     }
     /* H77 can reboot while the independently powered module keeps advertising.
      * Close its old BLE session before creating a fresh local adapter session.
      * Module commands acknowledge only after disable/enable has completed. */
-    /* VW553 defaults to bonded pairing for peripheral links and sends a
+    /* AT defaults to bonded pairing for peripheral links and sends a
      * Security Request on every connection, which makes phones show an OS
      * pairing dialog. Tuya provisioning already uses its own application
      * encryption, so keep the BLE link unpaired. BLEENABLE resets the vendor
@@ -196,10 +204,10 @@ OPERATE_RET tkl_ble_stack_init(uint8_t role)
     if (ble_execute("AT+BLEDISABLE", NULL, 0U) != OPRT_OK ||
         ble_execute("AT+BLEENABLE", NULL, 0U) != OPRT_OK) return OPRT_COM_ERROR;
     if (ble_execute("AT+BLESETAUTH=0,0,0,0,0,16", NULL, 0U) != OPRT_OK) {
-        VW553_SUMMARY("BLE bonding override failed");
+        AT_SUMMARY("BLE bonding override failed");
         return OPRT_COM_ERROR;
     }
-    VW553_SUMMARY("BLE layer bonding disabled");
+    AT_SUMMARY("BLE layer bonding disabled");
     if (ble_execute("AT+BLEDADATRANS=1", NULL, 0U) != OPRT_OK) return OPRT_COM_ERROR;
     s_ble_initialized = true;
     ble_gap_event(TKL_BLE_EVT_STACK_INIT, TKL_BLE_GATT_INVALID_HANDLE, 0);
@@ -319,14 +327,14 @@ OPERATE_RET tkl_ble_gap_adv_start(TKL_BLE_GAP_ADV_PARAMS_T const *p_adv_params)
         return OPRT_NOT_SUPPORTED;
     }
     if (p_adv_params) {
-        /* TAL passes milliseconds while the VW553 AT command takes 0.625 ms
+        /* TAL passes milliseconds while the AT AT command takes 0.625 ms
          * units. 30 ms must become 0x30, not 0x1E which is below the BLE
          * legacy minimum and makes the controller reject advertising. */
         uint32_t interval_ms = p_adv_params->adv_interval_min;
         interval = (interval_ms * 1000U + 312U) / 625U;
         if (interval < 0x20U) interval = 0x20U;
         if (interval > 0x4000U) interval = 0x4000U;
-        VW553_LOG("BLE adv interval %lums units=0x%X", (unsigned long)interval_ms, interval);
+        AT_LOG("BLE adv interval %lums units=0x%X", (unsigned long)interval_ms, interval);
     }
     int written = snprintf(command, sizeof(command), "AT+BLEADVSTART=0,%X,%X", interval, channels);
     if (written < 0 || (size_t)written >= sizeof(command)) return OPRT_INVALID_PARM;
@@ -458,7 +466,7 @@ OPERATE_RET tkl_ble_gap_disconnect(uint16_t conn_handle, uint8_t hci_reason)
     if (!s_ble_initialized || conn_handle > UINT8_MAX) return OPRT_INVALID_PARM;
     written = snprintf(command, sizeof(command), "AT+BLEDISCONN=%u", (unsigned)conn_handle);
     if (written < 0 || (size_t)written >= sizeof(command)) return OPRT_INVALID_PARM;
-    /* VW553 keeps the link (and its radio time slots) until the module itself
+    /* AT keeps the link (and its radio time slots) until the module itself
      * terminates it, so the AT command has to go out for real: a connected
      * BLE peer otherwise blocks the Wi-Fi station join that follows netcfg. */
     return ble_execute(command, NULL, 0U);
@@ -533,7 +541,7 @@ OPERATE_RET tkl_ble_gatts_service_add(TKL_BLE_GATTS_PARAMS_T *p_service)
     if (!p_service || p_service->svc_num != 1U || !p_service->p_service) return OPRT_INVALID_PARM;
     TKL_BLE_SERVICE_PARAMS_T *service = p_service->p_service;
     if (service->type != TKL_BLE_UUID_SERVICE_PRIMARY || service->svc_uuid.uuid_type != TKL_BLE_UUID_TYPE_16 ||
-        service->svc_uuid.uuid.uuid16 != VW553_BLE_SERVICE_UUID || service->char_num != 3U || !service->p_char) {
+        service->svc_uuid.uuid.uuid16 != AT_BLE_SERVICE_UUID || service->char_num != 3U || !service->p_char) {
         return OPRT_NOT_SUPPORTED;
     }
     TKL_BLE_CHAR_PARAMS_T *chars = service->p_char;
@@ -543,10 +551,10 @@ OPERATE_RET tkl_ble_gatts_service_add(TKL_BLE_GATTS_PARAMS_T *p_service)
         if (chars[i].char_uuid.uuid_type != TKL_BLE_UUID_TYPE_128 ||
             memcmp(chars[i].char_uuid.uuid.uuid128, uuid, sizeof(uuid))) return OPRT_NOT_SUPPORTED;
     }
-    service->handle = VW553_BLE_SERVICE_HANDLE;
-    chars[0].handle = VW553_BLE_WRITE_HANDLE;
-    chars[1].handle = VW553_BLE_NOTIFY_HANDLE;
-    chars[2].handle = VW553_BLE_READ_HANDLE;
+    service->handle = AT_BLE_SERVICE_HANDLE;
+    chars[0].handle = AT_BLE_WRITE_HANDLE;
+    chars[1].handle = AT_BLE_NOTIFY_HANDLE;
+    chars[2].handle = AT_BLE_READ_HANDLE;
     return OPRT_OK;
     // --- END: user implements ---
 }
@@ -585,9 +593,9 @@ OPERATE_RET tkl_ble_gatts_value_set(uint16_t conn_handle, uint16_t char_handle, 
 {
     // --- BEGIN: user implements ---
     (void)conn_handle;
-    if (char_handle != VW553_BLE_READ_HANDLE || (!p_data && length) || length > 100U)
+    if (char_handle != AT_BLE_READ_HANDLE || (!p_data && length) || length > 100U)
         return OPRT_NOT_SUPPORTED;
-    char command[240] = "AT+TY553XBLEREAD=\"";
+    char command[240] = AT_WIRE_BLE_READ_PREFIX;
     size_t offset = strlen(command);
     for (size_t i = 0; i < length; ++i) {
         snprintf(command + offset, sizeof(command) - offset, "%02X", p_data[i]);
@@ -629,7 +637,7 @@ OPERATE_RET tkl_ble_gatts_value_get(uint16_t conn_handle, uint16_t char_handle, 
 OPERATE_RET tkl_ble_gatts_value_notify(uint16_t conn_handle, uint16_t char_handle, uint8_t *p_data, uint16_t length)
 {
     // --- BEGIN: user implements ---
-    if (!s_ble_initialized || !p_data || !length || char_handle != VW553_BLE_NOTIFY_HANDLE || conn_handle > UINT8_MAX) {
+    if (!s_ble_initialized || !p_data || !length || char_handle != AT_BLE_NOTIFY_HANDLE || conn_handle > UINT8_MAX) {
         return OPRT_INVALID_PARM;
     }
     char command[48];

@@ -12,39 +12,51 @@ PLATFORM = ROOT / "platform" / "GD32H77X"
 SCRIPT = PLATFORM / "gd32h77x_os/tools/firmware/resolve_memory_layout.py"
 DEFAULT_PARTITIONS = PLATFORM / "gd32h77x_os" / "chips" / "GD32H77DIW" / "partitions.csv"
 DEFAULT_DEVICES = PLATFORM / "gd32h77x_os" / "chips" / "GD32H77DIW" / "flash_devices.csv"
-BOARD_DIR = ROOT / "boards" / "GD32H77X" / "GD32H77D_GINO"
+TEST_BOARD = "GD32H77D_TEST_BOARD"
+FIXTURE_BOARDS = PLATFORM / "tests" / "fixtures" / "boards"
+BOARD_DIR = FIXTURE_BOARDS / "GD32H77X" / TEST_BOARD
+BOARD_GD32H77_CONFIG_DIR = BOARD_DIR / "platform_config"
 
 spec = importlib.util.spec_from_file_location("gd32_layout_resolver", SCRIPT)
 resolver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resolver)
 
 
-def _params(open_root, chip="GD32H77D", board="GD32H77D_GINO"):
+def _params(open_root, chip="GD32H77D", board=TEST_BOARD):
     return {"OPEN_ROOT": str(open_root), "PLATFORM_CHIP": chip,
             "PLATFORM_BOARD": board, "CONFIG_PLATFORM_CHOICE": "GD32H77X",
             "CONFIG_BOARD_CHOICE": board, "CONFIG_CHIP_CHOICE": chip}
 
 
 def _write_board(root, partitions=None, devices=None):
-    board = root / "boards" / "GD32H77X" / "GD32H77D_GINO"
-    board.mkdir(parents=True, exist_ok=True)
+    board = root / "boards" / "GD32H77X" / TEST_BOARD
+    config_dir = board / "platform_config"
+    config_dir.mkdir(parents=True, exist_ok=True)
     if partitions is not None:
-        (board / "partitions.csv").write_bytes(partitions)
+        (config_dir / "partitions.csv").write_bytes(partitions)
     if devices is not None:
-        (board / "flash_devices.csv").write_bytes(devices)
-    return board
+        (config_dir / "flash_devices.csv").write_bytes(devices)
+    return config_dir
 
 
 def _write_h779_board(root, partitions):
     board = root / "boards" / "GD32H77X" / "GD32H779V_START"
-    board.mkdir(parents=True, exist_ok=True)
-    (board / "partitions.csv").write_bytes(partitions)
-    (board / "flash_devices.csv").write_bytes(
-        (ROOT / "boards/GD32H77X/GD32H779V_START/flash_devices.csv").read_bytes())
-    return board
+    config_dir = board / "platform_config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "partitions.csv").write_bytes(partitions)
+    return config_dir
 
 
-def _resolve(root, chip="GD32H77D", board="GD32H77D_GINO"):
+def _replace_partition_row(source, name, replacement):
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if line.split(",", 1)[0].strip() == name:
+            lines[index] = replacement
+            return "\n".join(lines) + "\n"
+    raise ValueError("partition row not found: {}".format(name))
+
+
+def _resolve(root, chip="GD32H77D", board=TEST_BOARD):
     return resolver.resolve_build_layout(_params(root, chip, board), platform_root=PLATFORM)
 
 
@@ -80,6 +92,15 @@ class MemoryLayoutResolverTests(unittest.TestCase):
         self.assertEqual(ecnvm["swd_program_bytes"], 32)
         self.assertEqual(ecnvm["backend_status"], "implemented")
         self.assertEqual(layout["flash_image"]["end_address"], 0x08090000)
+        inputs = {item["kind"]: item for item in manifest["source"]["sourceInputs"]}
+        self.assertEqual(inputs["partitions"]["sourceKind"], "platform_default")
+        self.assertEqual(inputs["flash_devices"]["sourceKind"], "platform_default")
+        self.assertEqual(
+            inputs["partitions"]["sourcePath"],
+            "platform/GD32H77X/gd32h77x_os/chips/GD32H779VW/partitions.csv")
+        self.assertEqual(
+            inputs["flash_devices"]["sourcePath"],
+            "platform/GD32H77X/gd32h77x_os/chips/GD32H779VW/flash_devices.csv")
         subareas = {item["id"]: item for item in layout["tuya_subareas"]}
         self.assertEqual(set(subareas), {
             "tuya_uf", "tuya_kv_data", "tuya_kv_key",
@@ -95,19 +116,23 @@ class MemoryLayoutResolverTests(unittest.TestCase):
         self.assertEqual(subareas["tuya_kv_protect"]["size_bytes"], 0x00002000)
 
     def test_h779_ecnvm_code_and_kv_boundaries_are_fail_closed(self):
-        source = (ROOT / "boards/GD32H77X/GD32H779V_START/partitions.csv").read_text()
+        source = (PLATFORM / "gd32h77x_os/chips/GD32H779VW/partitions.csv").read_text()
         cases = (
-            (source.replace("ecnvm_code,internal_ecnvm,0K,7168K,0x08200000",
-                            "ecnvm_code,internal_ecnvm,0K,7164K,0x08200000"),
+            (_replace_partition_row(
+                source, "ecnvm_code",
+                "ecnvm_code,internal_ecnvm,0K,7164K,0x08200000"),
              "ecnvm_code must end immediately before the kv partition"),
-            (source.replace("ecnvm_code,internal_ecnvm,0K,7168K,0x08200000",
-                            "ecnvm_code,internal_ecnvm,0K,7424K,0x08200000"),
+            (_replace_partition_row(
+                source, "ecnvm_code",
+                "ecnvm_code,internal_ecnvm,0K,7424K,0x08200000"),
              "overlap in logical address space"),
-            (source.replace("kv,internal_ecnvm,7168K,512K,0x08900000",
-                            "kv,internal_ecnvm,7168K,256K,0x08900000"),
+            (_replace_partition_row(
+                source, "kv",
+                "kv,internal_ecnvm,7168K,256K,0x08900000"),
              "outside kv partition"),
-            (source.replace("tuya_uf,internal_ecnvm,7168K,256K,0x08900000",
-                            "tuya_uf,internal_ecnvm,7424K,256K,0x08940000"),
+            (_replace_partition_row(
+                source, "tuya_uf",
+                "tuya_uf,internal_ecnvm,7424K,256K,0x08940000"),
              "overlap"),
         )
         for partitions, error in cases:
@@ -118,23 +143,25 @@ class MemoryLayoutResolverTests(unittest.TestCase):
                     _resolve(root, "GD32H779VW", "GD32H779V_START")
 
     def test_all_pack_h77_devices_resolve_to_distinct_official_geometries(self):
+        ecnvm_7m = (0x780000, "GD32H77x_78x_ECNVM_7M_512K.FLM")
+        ecnvm_3m = (0x380000, "GD32H77x_78x_ECNVM_3M_512K.FLM")
         expected = {
-            "GD32H77DIW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H77DIP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H77DII": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM"),
-            "GD32H77EIW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H77EIP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H77EII": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM"),
-            "GD32H779IW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779IP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779II": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM"),
-            "GD32H779VW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779VP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779VI": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM"),
-            "GD32H779ZW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779ZP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
-            "GD32H779ZI": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM"),
-            "GD32H77RAP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM"),
+            "GD32H77DIW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_7m),
+            "GD32H77DIP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
+            "GD32H77DII": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM", 0, None),
+            "GD32H77EIW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_7m),
+            "GD32H77EIP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
+            "GD32H77EII": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM", 0, None),
+            "GD32H779IW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_7m),
+            "GD32H779IP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
+            "GD32H779II": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM", 0, None),
+            "GD32H779VW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_7m),
+            "GD32H779VP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
+            "GD32H779VI": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM", 0, None),
+            "GD32H779ZW": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_7m),
+            "GD32H779ZP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
+            "GD32H779ZI": (0x1A0000, 512 * 1024, "GD32H77x_78x_CNVM_1M_640K.FLM", 0, None),
+            "GD32H77RAP": (2 * 1024 * 1024, 768 * 1024, "GD32H77x_78x_CNVM_2M.FLM", *ecnvm_3m),
         }
         self.assertEqual(len(expected), 16)
         for chip, facts in expected.items():
@@ -148,6 +175,12 @@ class MemoryLayoutResolverTests(unittest.TestCase):
                 self.assertEqual(manifest["layout"]["target_chip"], chip)
                 devices = {item["id"]: item for item in manifest["layout"]["devices"]}
                 self.assertEqual(devices["internal_flash"]["capacity_bytes"], facts[0])
+                if facts[3]:
+                    self.assertEqual(devices["internal_ecnvm"]["capacity_bytes"], facts[3])
+                    self.assertEqual(
+                        devices["internal_ecnvm"]["vendor_algorithm"], facts[4])
+                else:
+                    self.assertNotIn("internal_ecnvm", devices)
                 self.assertEqual(manifest["layout"]["ota_policy"]["status"], "planned_not_implemented")
                 internal_size = sum(
                     item["size_bytes"] for item in manifest["layout"]["partitions"].values()
@@ -155,13 +188,14 @@ class MemoryLayoutResolverTests(unittest.TestCase):
                                                 for segment in item["segments"]))
                 self.assertEqual(internal_size, facts[0])
 
-    def test_family_alias_is_gino_only_and_exact_variant_works_for_new_board(self):
+    def test_family_alias_and_exact_h77d_variant_resolve(self):
         with tempfile.TemporaryDirectory() as temp:
-            with self.assertRaisesRegex(resolver.LayoutError, "only valid for board.*GD32H77D_GINO"):
-                _resolve(Path(temp), "GD32H77D", "GENERIC_BOARD")
-            manifest = _resolve(Path(temp), "GD32H77DIP", "GENERIC_BOARD")
-        self.assertEqual(manifest["layout"]["target_chip"], "GD32H77DIP")
-        self.assertIsNone(manifest["build"]["alias_of"])
+            alias = _resolve(Path(temp), "GD32H77D", TEST_BOARD)
+            exact = _resolve(Path(temp), "GD32H77DIP", "GENERIC_BOARD")
+        self.assertEqual(alias["layout"]["target_chip"], "GD32H77DIW")
+        self.assertEqual(alias["build"]["alias_of"], "GD32H77DIW")
+        self.assertEqual(exact["layout"]["target_chip"], "GD32H77DIP")
+        self.assertIsNone(exact["build"]["alias_of"])
 
     def test_platform_default_is_full_2m_ota_layout(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -186,7 +220,7 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             index["platform_chips"]["GD32H77DIW"]["approved_geometries"].remove("GD25Q64ESIG")
             index_path.write_text(json.dumps(index))
             with self.assertRaisesRegex(resolver.LayoutError, "not approved"):
-                resolver.resolve_build_layout(_params(ROOT), platform_root=platform)
+                resolver.resolve_build_layout(_params(FIXTURE_BOARDS.parent), platform_root=platform)
 
     def test_approved_geometry_list_must_reference_registered_geometries(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -197,7 +231,7 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             index["platform_chips"]["GD32H77DIW"]["approved_geometries"].append("GD32H77BOGUS_CNVM")
             index_path.write_text(json.dumps(index))
             with self.assertRaisesRegex(resolver.LayoutError, "is not registered"):
-                resolver.resolve_build_layout(_params(ROOT), platform_root=platform)
+                resolver.resolve_build_layout(_params(FIXTURE_BOARDS.parent), platform_root=platform)
 
     def test_chip_flash_geometry_must_name_its_vendor_algorithm(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -207,10 +241,10 @@ class MemoryLayoutResolverTests(unittest.TestCase):
             del data["geometries"]["GD32H77DIW_CNVM"]["vendor_algorithm"]
             geometries_path.write_text(json.dumps(data))
             with self.assertRaisesRegex(resolver.LayoutError, "vendor_algorithm"):
-                resolver.resolve_build_layout(_params(ROOT), platform_root=platform)
+                resolver.resolve_build_layout(_params(FIXTURE_BOARDS.parent), platform_root=platform)
 
     def test_board_override_is_complete_and_reports_current_nor_capability(self):
-        manifest = _resolve(ROOT)
+        manifest = _resolve(FIXTURE_BOARDS.parent)
         layout = manifest["layout"]
         devices = {item["id"]: item for item in layout["devices"]}
         self.assertEqual(manifest["source"]["sourceKind"], "board_override")
@@ -224,7 +258,7 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_generated_kv_macros_follow_nondefault_external_csv_partition(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions = partitions.replace(
                 "tuya,ospi0_flash,2176K,288K,0x70220000",
                 "kv,ospi0_flash,4M,128K,0x70400000")
@@ -232,7 +266,7 @@ class MemoryLayoutResolverTests(unittest.TestCase):
                 "filesystem,ospi0_flash,2464K,5728K,0x70268000",
                 "filesystem,ospi0_flash,4224K,3968K,0x70420000")
             _write_board(root, partitions.encode("utf-8"),
-                         (BOARD_DIR / "flash_devices.csv").read_bytes())
+                         (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
             output = root / "generated"
             resolver.write_outputs(manifest, output)
@@ -254,8 +288,8 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_board_hardware_table_changes_source_and_normalized_digest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_bytes()
-            devices = (BOARD_DIR / "flash_devices.csv").read_bytes()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_bytes()
+            devices = (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes()
             _write_board(root, partitions, devices)
             first = _resolve(root)
             changed = devices.replace(b"PC11", b"PC10")
@@ -266,10 +300,10 @@ class MemoryLayoutResolverTests(unittest.TestCase):
 
     def test_source_digest_excludes_absolute_paths(self):
         with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
-            _write_board(Path(one), (BOARD_DIR / "partitions.csv").read_bytes(),
-                         (BOARD_DIR / "flash_devices.csv").read_bytes())
-            _write_board(Path(two), (BOARD_DIR / "partitions.csv").read_bytes(),
-                         (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(Path(one), (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_bytes(),
+                         (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
+            _write_board(Path(two), (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_bytes(),
+                         (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             a, b = _resolve(Path(one)), _resolve(Path(two))
         self.assertEqual(a["source"]["sourceDigest"], b["source"]["sourceDigest"])
         self.assertNotEqual(a["source"]["sourceInputs"][0]["sourcePath"],
@@ -278,15 +312,17 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_default_fallback_and_board_device_table_without_partitions_is_ignored(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            _write_board(root, None, (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, None, (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
         self.assertEqual(manifest["source"]["sourceKind"], "platform_default")
-        self.assertEqual({dev["id"] for dev in manifest["layout"]["devices"]}, {"internal_flash"})
+        self.assertEqual(
+            {dev["id"] for dev in manifest["layout"]["devices"]},
+            {"internal_flash", "internal_ecnvm"})
 
     def test_board_override_without_board_devices_cannot_reference_external_device(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text().replace("ospi0_flash", "missing_device").encode()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text().replace("ospi0_flash", "missing_device").encode()
             _write_board(root, partitions)
             with self.assertRaisesRegex(resolver.LayoutError, "unknown device"):
                 _resolve(root)
@@ -305,20 +341,20 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_csv_accepts_bom_crlf_comments_and_units(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions = partitions.replace("boot,internal_flash,0,64K,0x08000000",
                                             "boot,internal_flash,0,65536,0x08000000")
             partitions = partitions.replace("primary,internal_flash,64K,1984K,0x08010000",
                                             "primary,internal_flash,65536,1984K,0x08010000")
             partitions = partitions.replace("\n", "\r\n")
             partitions = ("\ufeff# generated file\r\n\r\n" + partitions).encode("utf-8")
-            _write_board(root, partitions, (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, partitions, (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
         self.assertEqual(manifest["layout"]["partitions"]["boot"]["size_bytes"], 65536)
 
     def test_csv_rejects_bad_header_extra_column_and_bad_number(self):
-        good = (BOARD_DIR / "partitions.csv").read_bytes()
-        devices = (BOARD_DIR / "flash_devices.csv").read_bytes()
+        good = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_bytes()
+        devices = (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes()
         for bad, error in ((good.replace(b"logical_addr", b"logical_address"), "header"),
                            (good.replace(b"boot,internal_flash,0,64K,0x08000000", b"boot,internal_flash,0,64K,0x08000000,extra"), "columns"),
                            (good.replace(b"boot,internal_flash,0,64K,0x08000000", b'boot,internal_flash,0,64K,"0x08000000'), "CSV syntax"),
@@ -332,32 +368,32 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_duplicate_partition_rows_must_form_contiguous_logical_range(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions += "filesystem,ospi0_flash,4M,2M,0x70400000\nfilesystem,ospi0_flash,6M,2M,0x70610000\n"
-            _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, partitions.encode(), (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "logical gap or overlap"):
                 _resolve(root)
 
     def test_physical_overlap_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions += "user_data,ospi0_flash,4M,4K,0x71000000\n"
-            _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, partitions.encode(), (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "overlap on device"):
                 _resolve(root)
 
     def test_custom_data_roles_are_allowed_and_can_span_internal_and_nor(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions = partitions.replace(
                 "primary,internal_flash,64K,1984K,0x08010000",
                 "primary,internal_flash,64K,1920K,0x08010000")
             partitions = partitions.replace(
                 "filesystem,ospi0_flash,2464K,5728K,0x70268000\n", "")
             partitions += "user_data,internal_flash,1984K,64K,0x71000000\nuser_data,ospi0_flash,4M,4032K,0x71010000\n"
-            _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, partitions.encode(), (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             manifest = _resolve(root)
             user = manifest["layout"]["partitions"]["user_data"]
         self.assertEqual(user["role"], "data")
@@ -368,33 +404,33 @@ class MemoryLayoutResolverTests(unittest.TestCase):
     def test_linker_rom_abi_and_reserved_macro_guards(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text()
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text()
             partitions = partitions.replace("boot,internal_flash,0,64K,0x08000000",
                                             "boot,internal_flash,64K,64K,0x08010000")
             partitions = partitions.replace("primary,internal_flash,64K,1984K,0x08010000",
                                             "primary,internal_flash,128K,1920K,0x08020000")
-            _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, partitions.encode(), (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "ROM boot ABI"):
                 _resolve(root)
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            partitions = (BOARD_DIR / "partitions.csv").read_text().replace("filesystem,ospi0_flash", "layout_primary,ospi0_flash")
-            _write_board(root, partitions.encode(), (BOARD_DIR / "flash_devices.csv").read_bytes())
+            partitions = (BOARD_GD32H77_CONFIG_DIR / "partitions.csv").read_text().replace("filesystem,ospi0_flash", "layout_primary,ospi0_flash")
+            _write_board(root, partitions.encode(), (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "reserved C macro"):
                 _resolve(root)
 
     def test_invalid_or_dangling_override_fails_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            _write_board(root, b"wrong,header\n", (BOARD_DIR / "flash_devices.csv").read_bytes())
+            _write_board(root, b"wrong,header\n", (BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").read_bytes())
             with self.assertRaisesRegex(resolver.LayoutError, "header"):
                 _resolve(root)
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            board = root / "boards" / "GD32H77X" / "GD32H77D_GINO"
+            board = root / "boards" / "GD32H77X" / TEST_BOARD
             board.mkdir(parents=True)
             try:
-                (board / "partitions.csv").symlink_to(board / "missing.csv")
+                (board / "platform_config" / "partitions.csv").symlink_to(board / "platform_config" / "missing.csv")
             except OSError as exc:
                 self.skipTest("symlink creation unavailable: {}".format(exc))
             with self.assertRaisesRegex(resolver.LayoutError, "not a regular file"):
@@ -414,8 +450,8 @@ class MemoryLayoutResolverTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertFalse(DEFAULT_PARTITIONS.with_suffix(".json").exists())
         self.assertFalse((BOARD_DIR / "flash_layout.json").exists())
-        self.assertTrue((BOARD_DIR / "partitions.csv").is_file())
-        self.assertTrue((BOARD_DIR / "flash_devices.csv").is_file())
+        self.assertTrue((BOARD_GD32H77_CONFIG_DIR / "partitions.csv").is_file())
+        self.assertTrue((BOARD_GD32H77_CONFIG_DIR / "flash_devices.csv").is_file())
 
 
 if __name__ == "__main__":

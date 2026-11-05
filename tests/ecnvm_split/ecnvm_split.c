@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #include "gd32h77x_78x.h"
-#include "gd32h77x_console_binding.h"
+#include "gd32h77x_config.h"
 
 #define EXPECTED_CHECKSUM 0xB1E15B36U
 

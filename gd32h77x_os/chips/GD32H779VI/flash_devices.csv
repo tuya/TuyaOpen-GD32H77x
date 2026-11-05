@@ -1,2 +1,2 @@
-device,geometry,controller,cs,clk,d0,d1,d2,d3
-internal_flash,GD32H779VI_CNVM,,,,,,,
+device,         geometry,        controller, cs, clk, d0, d1, d2, d3
+internal_flash, GD32H779VI_CNVM, ,           ,   ,    ,   ,   ,

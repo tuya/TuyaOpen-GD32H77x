@@ -11,10 +11,14 @@ import tempfile
 import unittest
 import zipfile
 
+import linker_template
+
 
 PLATFORM = Path(__file__).resolve().parents[1]
 ROOT = PLATFORM.parents[1]
 SCRIPT_DIR = PLATFORM / "gd32h77x_os/tools/firmware"
+TEST_BOARD = "GD32H77D_TEST_BOARD"
+FIXTURE_BOARDS = PLATFORM / "tests" / "fixtures" / "boards"
 
 
 def _module(name, path):
@@ -43,19 +47,20 @@ class FlashPackageTests(unittest.TestCase):
         cls.work = Path(cls.temp.name)
         cls.layout = resolver.resolve_build_layout({
             "OPEN_ROOT": str(ROOT), "PLATFORM_CHIP": "GD32H77D",
-            "PLATFORM_BOARD": "GD32H77D_GINO", "CONFIG_PLATFORM_CHOICE": "GD32H77X",
-            "CONFIG_BOARD_CHOICE": "GD32H77D_GINO", "CONFIG_CHIP_CHOICE": "GD32H77D",
-        }, platform_root=PLATFORM, boards_root=ROOT / "boards")
+            "PLATFORM_BOARD": TEST_BOARD, "CONFIG_PLATFORM_CHOICE": "GD32H77X",
+            "CONFIG_BOARD_CHOICE": TEST_BOARD, "CONFIG_CHIP_CHOICE": "GD32H77D",
+        }, platform_root=PLATFORM, boards_root=FIXTURE_BOARDS)
         generated = cls.work / "generated"
         resolver.write_outputs(cls.layout, generated)
         source = cls.work / "fixture.S"
         source.write_text(fixture_module.FIXTURE_ASM)
         cls.elf = cls.work / "firmware.elf"
         cls.bin = cls.work / "firmware.bin"
+        linker = linker_template.render(cls.layout, cls.work / "linker.ld")
         subprocess.run([
             cls.gcc, "-mcpu=cortex-m7", "-mthumb", "-nostdlib",
             "-Wl,--build-id=none", "-Wl,--fatal-warnings",
-            "-Wl,-T," + str(PLATFORM / "gd32h77x_os" / "chips" / "GD32H77DIW" / "linker.ld"),
+            "-Wl,-T," + str(linker),
             "-L", str(generated), "-o", str(cls.elf), str(source),
         ], check=True, capture_output=True, text=True)
         subprocess.run([cls.objcopy, "-O", "binary", "--gap-fill", "0xff",
@@ -74,7 +79,7 @@ class FlashPackageTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="case-", dir=self.work))
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
-        self.output = self.dir / "firmware.tufw"
+        self.output = self.dir / "firmware_QIO.bin"
 
     def _create(self, csv_path=None):
         return package.create_package(
@@ -98,7 +103,7 @@ class FlashPackageTests(unittest.TestCase):
         self.assertEqual(manifest["external_payloads"], [])
         extract = self.dir / "extract"
         result = package.validate_package(self.output, self.layout,
-                                          "GD32H77D_GINO", "GD32H77D", extract)
+                                          TEST_BOARD, "GD32H77D", extract)
         self.assertTrue(result["valid"])
         self.assertEqual(result["internal_bin_sha256"], self.report["binSha256"])
         self.assertEqual(Path(result["artifacts"]["internal_bin"]).read_bytes(), self.bin.read_bytes())
@@ -106,38 +111,6 @@ class FlashPackageTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {
                 "manifest.json", "artifacts/report.json", "artifacts/firmware.elf",
                 "artifacts/internal.bin"})
-
-    def test_actual_gino_cli_elf_and_report_are_packaged_without_fixture_verifier(self):
-        project = ROOT / "examples" / "system" / "gd32h77x_bringup"
-        build_dir = project / ".build" / "build"
-        artifact_dir = project / ".build" / "bin"
-        params_path = build_dir / "build_param.json"
-        report_path = artifact_dir / "gd32h77x_bringup_1.0.0.layout.json"
-        elf_path = artifact_dir / "gd32h77x_bringup_1.0.0.elf"
-        bin_path = artifact_dir / "gd32h77x_bringup_QIO_1.0.0.bin"
-        if not all(path.is_file() for path in (params_path, report_path, elf_path, bin_path)):
-            self.skipTest("saved GinoPi CLI build artifacts are unavailable")
-        params = json.loads(params_path.read_text())
-        current = resolver.resolve_build_layout(
-            params, platform_root=PLATFORM, boards_root=ROOT / "boards")
-        actual_output = self.dir / "actual-cli.tufw"
-        package.create_package(actual_output, report_path, elf_path, bin_path, current)
-        extracted = self.dir / "actual-cli-extracted"
-        validated = package.validate_package(
-            actual_output, current, expected_board="GD32H77D_GINO", expected_chip="GD32H77D",
-            extract_dir=extracted)
-        self.assertTrue(validated["valid"])
-        self.assertEqual(validated["internal_bin_sha256"],
-                         hashlib.sha256(bin_path.read_bytes()).hexdigest())
-        self.assertEqual(validated["report"]["elfSha256"],
-                         hashlib.sha256(elf_path.read_bytes()).hexdigest())
-        independent = verifier.verify(
-            validated["artifacts"]["elf"], validated["artifacts"]["internal_bin"],
-            self.layout_path,
-            bin_name=validated["report"]["binFile"],
-            elf_name=validated["report"]["elfFile"])
-        self.assertEqual(independent["binSha256"], validated["internal_bin_sha256"])
-        self.assertEqual(independent["layout"], current["layout"])
 
     def test_explicit_external_payloads_are_partition_routed_and_erase_padded(self):
         (self.dir / "stage.bin").write_bytes(b"stage-data")
@@ -273,7 +246,7 @@ class FlashPackageTests(unittest.TestCase):
 
         with zipfile.ZipFile(self.output) as source:
             members = {name: source.read(name) for name in source.namelist()}
-        bad_hash = self.dir / "bad-hash.tufw"
+        bad_hash = self.dir / "bad-hash_QIO.bin"
         members["artifacts/internal.bin"] += b"\xFF"
         with zipfile.ZipFile(bad_hash, "w") as archive:
             for name, data in members.items():
@@ -281,7 +254,7 @@ class FlashPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(package.PackageError, "digest/size mismatch"):
             package.validate_package(bad_hash, self.layout)
 
-        duplicate = self.dir / "duplicate.tufw"
+        duplicate = self.dir / "duplicate_QIO.bin"
         with zipfile.ZipFile(duplicate, "w") as archive:
             for name, data in members.items():
                 archive.writestr(name, data)
@@ -289,7 +262,7 @@ class FlashPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(package.PackageError, "duplicate ZIP"):
             package.validate_package(duplicate, self.layout)
 
-        unsafe = self.dir / "unsafe.tufw"
+        unsafe = self.dir / "unsafe_QIO.bin"
         with zipfile.ZipFile(unsafe, "w") as archive:
             for name, data in members.items():
                 archive.writestr(name, data)
@@ -323,14 +296,14 @@ class FlashPackageTests(unittest.TestCase):
             manifest["files"][member]["sha256"] = hashlib.sha256(data).hexdigest()
             manifest["external_payloads"][0]["sha256"] = hashlib.sha256(data).hexdigest()
 
-        bad_pad = rewrite("bad-pad.tufw", corrupt_padding)
+        bad_pad = rewrite("bad-pad_QIO.bin", corrupt_padding)
         with self.assertRaisesRegex(package.PackageError, "padding must be 0xFF"):
             package.validate_package(bad_pad, self.layout)
 
         def retarget_segment(_members, manifest):
             manifest["external_payloads"][0]["segments"][0]["device_offset_bytes"] += 4096
 
-        bad_route = rewrite("bad-route.tufw", retarget_segment)
+        bad_route = rewrite("bad-route_QIO.bin", retarget_segment)
         with self.assertRaisesRegex(package.PackageError, "routing differs"):
             package.validate_package(bad_route, self.layout)
 

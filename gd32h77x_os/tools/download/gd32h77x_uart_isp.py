@@ -576,6 +576,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_external_payload_data(plan: list[dict[str, Any]]) -> list[bytes]:
+    payload_data = []
+    for payload in plan:
+        path = Path(payload["path"])
+        data = path.read_bytes()
+        if len(data) != int(payload["size_bytes"]) or _sha256(path) != payload["sha256"]:
+            raise UartIspError(
+                f"external payload {payload['partition']!r} changed after validation")
+        payload_data.append(data)
+    return payload_data
+
+
 def validate_ospi_payloads(manifest: dict[str, Any],
                            external_payloads: list[dict[str, Any]]):
     """Validate generic resolved NOR payloads without board/model assumptions."""
@@ -901,16 +913,9 @@ def build_uart_loader(layout: dict[str, Any], out_dir: str | Path):
     return out / metadata["binary"], metadata
 
 
-def program_ospi_loader(session, manifest: dict[str, Any],
-                        external_payloads: list[dict[str, Any]],
-                        verify: bool = True, logger=None) -> list[dict[str, Any]]:
-    """Program external NOR through the ROM GO entry and the SRAM UART loader.
-
-    The GD25Q64E JEDEC ID differs from the value hard-coded in the H77x ROM, so
-    the ROM OSPI command cannot initialise this part.  Instead the ROM WRITE
-    command uploads a small AXI SRAM loader and GO jumps to it; the loader
-    re-initialises the console UART and bit-bangs the resolved OSPI pins.
-    """
+def prepare_ospi_loader(manifest: dict[str, Any],
+                        external_payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate and build the one-shot SRAM loader before opening the UART."""
     layout, devices, plan = validate_ospi_payloads(manifest, external_payloads)
     used = {str(span["device"]) for payload in plan for span in payload["spans"]}
     if len(used) != 1:
@@ -924,100 +929,145 @@ def program_ospi_loader(session, manifest: dict[str, Any],
                for device in device_items):
         raise UartIspError(
             f"the SRAM UART loader only supports GD25Q64ESIG, got {device_id!r}")
-    payload_data = []
-    for payload in plan:
-        path = Path(payload["path"])
-        data = path.read_bytes()
-        if len(data) != int(payload["size_bytes"]) or _sha256(path) != payload["sha256"]:
-            raise UartIspError(
-                f"external payload {payload['partition']!r} changed after validation")
-        payload_data.append(data)
-
-    transport = session.transport
+    payload_data = _read_external_payload_data(plan)
     with tempfile.TemporaryDirectory(prefix="h77-uart-loader-") as tmp:
         binary_path, metadata = build_uart_loader(layout, tmp)
         image = binary_path.read_bytes()
-        if logger:
-            logger.info("Built SRAM UART loader {} ({} bytes)".format(
-                metadata.get("binary"), len(image)))
-        session.load_ram_image(LOADER_BASE, image, timeout=5.0)
-        session.go(LOADER_BASE, timeout=5.0)
-        transport.set_format(LOADER_BAUD, "N", 1)
-        loader = UartLoader(transport, logger=logger)
-        results: list[dict[str, Any]] = []
-        try:
-            jedec = loader.handshake()
-            if jedec != LOADER_JEDEC:
-                raise UartIspError(
-                    "SRAM UART loader reports JEDEC 0x{:06X}, expected 0x{:06X}".format(
-                        jedec, LOADER_JEDEC))
-            info = loader.info()
-            if (info["status1"] & 0x7D) != 0 or (info["status2"] & 0x40) != 0:
-                raise UartIspError(
-                    "external NOR reports active block protection: SR1=0x{:02X} "
-                    "SR2=0x{:02X}".format(info["status1"], info["status2"]))
-            for payload, data in zip(plan, payload_data):
-                if logger:
-                    logger.info("Programming OSPI partition {} ({} bytes)".format(
-                        payload["partition"], len(data)))
-                progress = _TransferProgress(
-                    logger, "Writing OSPI partition {}".format(payload["partition"]),
-                    len(data))
-                erase_sectors = sum(
-                    (int(span["erase_end_bytes"]) - int(span["erase_start_bytes"]))
-                    // NOR_SECTOR for span in payload["spans"])
-                erase_progress = _TransferProgress(
-                    logger, "Erasing OSPI partition {}".format(payload["partition"]),
-                    erase_sectors * NOR_SECTOR, interval=1024 * 1024)
-                erased_sectors = 0
-                consumed = 0
-                programmed_total = 0
-                for span in payload["spans"]:
-                    offset = int(span["device_offset_bytes"])
-                    count = int(span["program_size_bytes"])
-                    erase_start = int(span["erase_start_bytes"])
-                    erase_end = int(span["erase_end_bytes"])
-                    if erase_start % NOR_SECTOR or erase_end % NOR_SECTOR:
-                        raise UartIspError(
-                            "OSPI erase span is not 4 KiB aligned")
-                    for sector in range(erase_start, erase_end, NOR_SECTOR):
-                        loader.erase(sector)
-                        erased_sectors += 1
-                        erase_progress.update(erased_sectors * NOR_SECTOR)
-                    chunk = data[consumed:consumed + count]
-                    written = 0
-                    while written < len(chunk):
-                        page_remaining = (int(span["page_bytes"]) -
-                                          ((offset + written) % int(span["page_bytes"])))
-                        piece = chunk[written:written + min(MAX_TRANSFER, page_remaining)]
-                        loader.program(offset + written, piece)
-                        written += len(piece)
-                        programmed_total += len(piece)
-                        progress.update(programmed_total)
-                    if verify:
-                        position = 0
-                        while position < len(chunk):
-                            piece = chunk[position:position + MAX_TRANSFER]
-                            back = loader.read(offset + position, len(piece))
-                            if back != piece:
-                                raise UartIspError(
-                                    "OSPI readback mismatch in partition "
-                                    f"{payload['partition']!r} at 0x{offset + position:06X}")
-                            position += len(piece)
-                    consumed += count
-                erase_progress.finish()
-                progress.finish()
-                if consumed != len(data):
+    return {
+        "layout": layout,
+        "plan": plan,
+        "payload_data": payload_data,
+        "image": image,
+        "metadata": metadata,
+    }
+
+
+def program_ospi_loader(session, manifest: dict[str, Any] | None = None,
+                        external_payloads: list[dict[str, Any]] | None = None,
+                        verify: bool = True, logger=None,
+                        prepared: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Program external NOR through the ROM GO entry and the SRAM UART loader.
+
+    The GD25Q64E JEDEC ID differs from the value hard-coded in the H77x ROM, so
+    the ROM OSPI command cannot initialise this part.  Instead the ROM WRITE
+    command uploads a small AXI SRAM loader and GO jumps to it; the loader
+    re-initialises the console UART and bit-bangs the resolved OSPI pins.
+    """
+    if prepared is None:
+        if manifest is None or external_payloads is None:
+            raise UartIspError(
+                "SRAM UART loader needs a manifest and external payloads")
+        prepared = prepare_ospi_loader(manifest, external_payloads)
+    plan = prepared["plan"]
+    payload_data = prepared["payload_data"]
+    image = prepared["image"]
+    metadata = prepared["metadata"]
+
+    transport = session.transport
+    if logger:
+        logger.info("Built SRAM UART loader {} ({} bytes)".format(
+            metadata.get("binary"), len(image)))
+    session.load_ram_image(LOADER_BASE, image, timeout=5.0)
+    session.go(LOADER_BASE, timeout=5.0)
+    transport.set_format(LOADER_BAUD, "N", 1)
+    loader = UartLoader(transport, logger=logger)
+    results: list[dict[str, Any]] = []
+    try:
+        jedec = loader.handshake()
+        if jedec != LOADER_JEDEC:
+            raise UartIspError(
+                "SRAM UART loader reports JEDEC 0x{:06X}, expected 0x{:06X}".format(
+                    jedec, LOADER_JEDEC))
+        info = loader.info()
+        if (info["status1"] & 0x7D) != 0 or (info["status2"] & 0x40) != 0:
+            raise UartIspError(
+                "external NOR reports active block protection: SR1=0x{:02X} "
+                "SR2=0x{:02X}".format(info["status1"], info["status2"]))
+        for payload, data in zip(plan, payload_data):
+            if logger:
+                logger.info("Programming OSPI partition {} ({} bytes)".format(
+                    payload["partition"], len(data)))
+            progress = _TransferProgress(
+                logger, "Writing OSPI partition {}".format(payload["partition"]),
+                len(data))
+            erase_sectors = sum(
+                (int(span["erase_end_bytes"]) - int(span["erase_start_bytes"]))
+                // NOR_SECTOR for span in payload["spans"])
+            erase_progress = _TransferProgress(
+                logger, "Erasing OSPI partition {}".format(payload["partition"]),
+                erase_sectors * NOR_SECTOR, interval=1024 * 1024)
+            erased_sectors = 0
+            consumed = 0
+            programmed_total = 0
+            for span in payload["spans"]:
+                offset = int(span["device_offset_bytes"])
+                count = int(span["program_size_bytes"])
+                erase_start = int(span["erase_start_bytes"])
+                erase_end = int(span["erase_end_bytes"])
+                if erase_start % NOR_SECTOR or erase_end % NOR_SECTOR:
                     raise UartIspError(
-                        f"external payload {payload['partition']!r} was not fully mapped")
-                results.append({"partition": payload["partition"],
-                                "size_bytes": len(data), "verified": bool(verify)})
-        finally:
-            try:
-                loader.reset()
-            except Exception:
-                pass
-        return results
+                        "OSPI erase span is not 4 KiB aligned")
+                for sector in range(erase_start, erase_end, NOR_SECTOR):
+                    loader.erase(sector)
+                    erased_sectors += 1
+                    erase_progress.update(erased_sectors * NOR_SECTOR)
+                chunk = data[consumed:consumed + count]
+                written = 0
+                while written < len(chunk):
+                    page_remaining = (int(span["page_bytes"]) -
+                                      ((offset + written) % int(span["page_bytes"])))
+                    piece = chunk[written:written + min(MAX_TRANSFER, page_remaining)]
+                    loader.program(offset + written, piece)
+                    written += len(piece)
+                    programmed_total += len(piece)
+                    progress.update(programmed_total)
+                if verify:
+                    position = 0
+                    while position < len(chunk):
+                        piece = chunk[position:position + MAX_TRANSFER]
+                        back = loader.read(offset + position, len(piece))
+                        if back != piece:
+                            raise UartIspError(
+                                "OSPI readback mismatch in partition "
+                                f"{payload['partition']!r} at 0x{offset + position:06X}")
+                        position += len(piece)
+                consumed += count
+            erase_progress.finish()
+            progress.finish()
+            if consumed != len(data):
+                raise UartIspError(
+                    f"external payload {payload['partition']!r} was not fully mapped")
+            results.append({"partition": payload["partition"],
+                            "size_bytes": len(data), "verified": bool(verify)})
+    finally:
+        try:
+            loader.reset()
+        except Exception:
+            pass
+    return results
+
+
+def prepare_external_flash(manifest: dict[str, Any],
+                           external_payloads: list[dict[str, Any]],
+                           ospi_profiles: Mapping[str, Any] | None):
+    """Select and fully preflight the ROM or SRAM-loader OSPI path."""
+    layout, devices, plan = validate_ospi_payloads(manifest, external_payloads)
+    device_items = (list(devices.values()) if isinstance(devices, dict)
+                    else list(devices))
+    part_numbers = {
+        str(device.get("id")): str(device.get("part_number", "")).upper()
+        for device in device_items if isinstance(device, dict)
+    }
+    used = {str(span["device"]) for payload in plan for span in payload["spans"]}
+    if any(part_numbers.get(device_id) == "GD25Q64ESIG" for device_id in used):
+        if len(used) != 1 or part_numbers.get(next(iter(used))) != "GD25Q64ESIG":
+            raise UartIspError(
+                "GD25Q64ESIG requires the one-device SRAM UART loader and cannot "
+                "be mixed with ROM-controlled NOR devices")
+        return "loader", prepare_ospi_loader(manifest, external_payloads)
+    _validate_ospi_profiles(layout, plan, ospi_profiles)
+    _read_external_payload_data(plan)
+    return "rom", None
 
 
 def _validate_ospi_profiles(layout, plan, ospi_profiles):
@@ -1087,9 +1137,11 @@ def flash(manifest: dict[str, Any], external_payloads: list[dict[str, Any]],
         raise UartIspError("internal CNVM image exceeds the selected ROM erase index range")
     if len(image_data) + ((-len(image_data)) % 4) > int(capacity):
         raise UartIspError("CNVM final WRITE alignment padding exceeds application capacity")
+    external_mode = None
+    prepared_loader = None
     if external_payloads:
-        # Complete external and internal static validation before opening a serial port.
-        validate_ospi_payloads(manifest, external_payloads)
+        external_mode, prepared_loader = prepare_external_flash(
+            manifest, external_payloads, ospi_profiles)
     elif ospi_profiles:
         raise UartIspError("OSPI profiles supplied without external payloads")
     auto_baud = baud is None or str(baud).strip().lower() in ("", "0", "auto")
@@ -1110,6 +1162,15 @@ def flash(manifest: dict[str, Any], external_payloads: list[dict[str, Any]],
                 "UART GETID mismatch: actual={} expected={} target={}".format(
                     actual_id.hex().upper() or "(empty)", expected_id.hex().upper(), target))
         external_result = []
+        if external_mode == "rom":
+            try:
+                external_result = program_ospi(
+                    session, manifest, external_payloads,
+                    ospi_profiles=ospi_profiles, verify=verify, logger=logger)
+            except Exception as exc:
+                raise UartIspError(
+                    "OSPI UART stage failed before CNVM was written: "
+                    f"{exc}") from exc
         try:
             internal_result = program_cnvm(
                 session, image_path, start, capacity,
@@ -1120,14 +1181,13 @@ def flash(manifest: dict[str, Any], external_payloads: list[dict[str, Any]],
             raise UartIspError(
                 "CNVM UART stage failed; the internal image "
                 f"may be incomplete: {exc}") from exc
-        if external_payloads:
-            # The SRAM loader is entered last: it leaves the console UART
-            # re-initialised for its own protocol, so the ROM stage must already
-            # be complete before the GO command takes over the CPU.
+        if external_mode == "loader":
+            # The SRAM loader takes over the CPU and UART, so it is entered only
+            # after the ROM-controlled CNVM stage has completed.
             try:
                 external_result = program_ospi_loader(
-                    session, manifest, external_payloads,
-                    verify=verify, logger=logger)
+                    session, verify=verify, logger=logger,
+                    prepared=prepared_loader)
             except Exception as exc:
                 raise UartIspError(
                     "OSPI SRAM-loader stage failed after CNVM was written; partial "

@@ -13,7 +13,7 @@
 #include "tkl_output.h"
 #include "tuya_error_code.h"
 #include "gd32h77x_platform.h"
-#include "gd32h77x_console_binding.h"
+#include "gd32h77x_config.h"
 #include "gd32h77x_78x.h"
 #include <stdarg.h>
 #include <stdio.h>

@@ -1,5 +1,5 @@
 # Public TKL APIs selected from the SDK standard adapter set. Chip-private
-# support sources and headers live under gd32h77x_os/main.
+# support sources and headers live under gd32h77x_os/components/.
 add_library(gd32h77x_tuyaos_adapter_headers INTERFACE)
 target_include_directories(gd32h77x_tuyaos_adapter_headers INTERFACE
     "${CMAKE_CURRENT_LIST_DIR}/include/system"
@@ -18,7 +18,10 @@ if(CONFIG_ENABLE_LIBLWIP STREQUAL "y")
 endif()
 
 add_library(gd32h77x_tuyaos_adapter INTERFACE)
+file(GLOB TUYAOS_UTILITY_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/include/utilities/src/*.c")
 target_sources(gd32h77x_tuyaos_adapter INTERFACE
+    "${CMAKE_CURRENT_LIST_DIR}/src/system/tuyaopen_license.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/system/tkl_memory.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/system/tkl_mutex.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/system/tkl_semaphore.c"
@@ -33,6 +36,7 @@ target_sources(gd32h77x_tuyaos_adapter INTERFACE
     "${CMAKE_CURRENT_LIST_DIR}/src/driver/tkl_uart.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/driver/tkl_wifi.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/driver/tkl_bluetooth.c"
+    ${TUYAOS_UTILITY_SOURCES}
 )
 target_link_libraries(gd32h77x_tuyaos_adapter INTERFACE
     gd32h77x_tuyaos_adapter_headers
