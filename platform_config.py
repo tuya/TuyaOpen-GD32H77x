@@ -122,6 +122,21 @@ def backend_from_config(values: dict[str, str]) -> str:
     return selected[0]
 
 
+def pmu_define_from_config(values: dict[str, str]) -> str:
+    """Map the board VCORE topology to the vendor system-init define."""
+    mode = values.get("CONFIG_GD32H77X_PMU_SMPS_MODE", "").strip().lower()
+    defines = {
+        "": "",
+        "bypass": "SEL_PMU_SMPS_MODE=PMU_BYPASS",
+        "direct": "SEL_PMU_SMPS_MODE=PMU_DIRECT_SMPS_SUPPLY",
+    }
+    if mode not in defines:
+        raise ValueError(
+            "GD32H77X_PMU_SMPS_MODE must be empty, 'bypass', or 'direct', "
+            f"got {mode!r}")
+    return defines[mode]
+
+
 def _selected_option(values: dict[str, str], prefix: str,
                      options: dict[str, tuple[str, ...]],
                      description: str) -> str:
@@ -270,6 +285,9 @@ def write_outputs(platform_root: Path, chip: str, board: str,
         f'set(GD32H77X_CONFIG_CANONICAL_CHIP "{canonical_chip}")',
         f'set(GD32H77X_CONFIG_BOARD "{board}")',
     ]
+    pmu_define = pmu_define_from_config(values)
+    if pmu_define:
+        cmake_lines.append(f'set(GD32H77X_PMU_DEFINE "{pmu_define}")')
     for sym in sorted(kconf.unique_defined_syms, key=lambda item: item.name):
         if not sym.config_string:
             continue

@@ -8,10 +8,15 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 BOARDS = ROOT / "boards" / "GD32H77X"
-BOARD_NAMES = ("GD32H779V_START",)
-BOARD_SELECTION_FILES = {"GD32H779V_START": "GD32H779V.config"}
+BOARD_NAMES = ("GD32H779I_WATCH_EVAL", "GD32H779V_START")
+BOARD_SELECTION_FILES = {
+    "GD32H779I_WATCH_EVAL": "GD32H779I_WATCH_EVAL.config",
+    "GD32H779V_START": "GD32H779V.config",
+}
 MANDATORY = set()
-OPTIONAL = {"flash_devices.csv", "ospi_profiles.csv", "gd32h77x.config"}
+OPTIONAL = {
+    "flash_devices.csv", "ospi_profiles.csv", "gd32h77x.config", "partitions.csv",
+}
 
 
 def main() -> int:
@@ -44,6 +49,21 @@ def main() -> int:
         if board_name == "GD32H779V_START" and config_dir.exists():
             failures.append(
                 f"{board_name}: must use GD32H779VW chip defaults without platform_config/")
+        if board_name == "GD32H779I_WATCH_EVAL" and config_dir.is_dir():
+            for name in ("gd32h77x.config",):
+                if not (config_dir / name).is_file():
+                    failures.append(
+                        f"{board_name}: missing platform_config/{name}")
+            watch_config = (config_dir / "gd32h77x.config").read_text(errors="replace")
+            for expected in (
+                    "CONFIG_ENABLE_GD32H77X_CONSOLE_UART_USART0=y",
+                    "CONFIG_ENABLE_GD32H77X_CONSOLE_GPIO_PORT_F=y",
+                    "CONFIG_GD32H77X_CONSOLE_TX_PIN_NUMBER=4",
+                    "CONFIG_GD32H77X_CONSOLE_RX_PIN_NUMBER=5",
+                    "CONFIG_GD32H77X_CONSOLE_AF_NUMBER=4"):
+                if expected not in watch_config:
+                    failures.append(
+                        f"{board_name}: missing Watch console binding {expected}")
         for name in sorted(MANDATORY | OPTIONAL):
             if (board / name).exists():
                 failures.append(f"{board_name}: {name} must not remain at board root")

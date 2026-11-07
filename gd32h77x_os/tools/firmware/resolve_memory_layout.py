@@ -826,12 +826,15 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
     if "ecnvm_code" in partition_map:
         expected_regions.add("ECNVM")
         part = partition_map["ecnvm_code"]
+        ecnvm_geometry = expected["target_chip"] + "_ECNVM"
         if (part["role"] != "data" or len(part["segments"]) != 1
-                or devices[part["segments"][0]["device_index"]]["geometry_id"] != "GD32H779VW_ECNVM"
+                or devices[part["segments"][0]["device_index"]]["geometry_id"] != ecnvm_geometry
                 or part["logical_base"] != 0x08200000
                 or part["size_bytes"] <= 0
-                or part["size_bytes"] > geometries["GD32H779VW_ECNVM"]["capacity_bytes"]):
-            raise LayoutError("ecnvm_code must start at the beginning of mapped GD32H779VW ECNVM")
+                or part["size_bytes"] > geometries[ecnvm_geometry]["capacity_bytes"]):
+            raise LayoutError(
+                "ecnvm_code must start at the beginning of mapped {} ECNVM".format(
+                    expected["target_chip"]))
     elif "ECNVM" in memory_map:
         raise LayoutError("ECNVM linker region requires the declared ecnvm_code partition")
     if set(memory_map) != expected_regions:

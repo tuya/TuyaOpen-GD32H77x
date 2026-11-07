@@ -56,6 +56,7 @@ def main():
     data = json.loads((parameters / "build_param.json").read_text())
     supported_targets = {
         ("GD32H779V_START", "GD32H779VW"),
+        ("GD32H779I_WATCH_EVAL", "GD32H779IW"),
     }
     if (data["PLATFORM_BOARD"], data["PLATFORM_CHIP"]) not in supported_targets:
         parser.error("Unsupported GD32H77X board/chip combination: {}/{}".format(

@@ -86,7 +86,7 @@ def main():
     version = subprocess.check_output([str(compiler), "-dumpfullversion"], text=True).strip()
     if version != "10.3.1":
         sys.exit(f"GCC {version} is not validated; use GNU Arm Embedded 10.3-2021.10 (10.3.1)")
-    supported_chips = {"GD32H77D", "GD32H779VW"}
+    supported_chips = {"GD32H77D", "GD32H779VW", "GD32H779IW"}
     if len(sys.argv) > 1 and sys.argv[1] not in supported_chips:
         sys.exit(f"Unsupported chip: {sys.argv[1]}")
     for command in ("cmake", "ninja"):

@@ -9,7 +9,7 @@ VW553 时直接使用 [wireless_fw/vw553](wireless_fw/vw553/README.md) 中的稳
 
 ## 当前状态
 
-截至 2026 年 10 月 20 日，当前实现覆盖主仓构建集成、原厂启动与驱动依赖、FreeRTOS、日志、TKL 线程/内存/互斥锁/信号量/队列/时间、生成布局表驱动的 Flash 地址路由、硬件熵采集 helper、UART AT 接收解析器和独立事务状态机。布局 manifest 绑定 board/chip、布局摘要、ELF/BIN 名称和 digest；构建会把 ELF、CNVM 内部镜像、报告、ECNVM 及显式外部 payload 打进自包含 QIO 交付固件，flash bridge 烧录前重新解析当前布局并复核镜像。CNVM 有受限 DFU/SWD/UART ROM ISP 写入路径；GinoPi 外部 NOR 有基于 SRAM loader 的 SWD 写入路径。2026 年 10 月 20 日已在 GinoPi 实板确认 H77x ROM UART ISP：`/dev/ttyUSB1`、115200 8E1、GETID `44495764FFFFFFFF`，并通过 `tos.py flash` 对 CNVM 完成擦除、写入和逐字节回读。外部 OSPI 的配置字节与 pin record 已按厂商 CLI 默认路径准备，但仍待实板写入回读验收；不能据此认为 UART 外片路径已可用。布局绑定驱动的 GD25Q64E OSPI 运行时协议层现含 JEDEC、读取、页编程和 4 KiB 擦除，以及主机模型测试；这些 NOR 写擦 API 尚未接入 TKL Flash/backend，也尚未在目标板验证，调用不得视为硬件验收。CNVM KV 读写擦代码和主机测试已完成，但目标板 KV 写擦及缓存行为尚未验证；OTA 流程仍未实现。`tos.py build` 生成自包含 QIO 打包固件、ELF、MAP 和布局报告，并执行静态布局校验。历史设备运行和 DFU 状态见下方既有记录。
+截至 2026 年 11 月 6 日，当前实现覆盖主仓构建集成、原厂启动与驱动依赖、FreeRTOS、日志、TKL 线程/内存/互斥锁/信号量/队列/时间、生成布局表驱动的 Flash 地址路由、硬件熵采集 helper、UART AT 接收解析器和独立事务状态机。布局 manifest 绑定 board/chip、布局摘要、ELF/BIN 名称和 digest；构建会把 ELF、CNVM 内部镜像、报告、ECNVM 及显式外部 payload 打进自包含 QIO 交付固件，flash bridge 烧录前重新解析当前布局并复核镜像。CNVM 有受限 DFU/SWD/UART ROM ISP 写入路径，DFU 与 SWD 均已支持 CNVM+ECNVM 双区域写入；GinoPi 外部 NOR 有基于 SRAM loader 的 SWD 写入路径。2026 年 10 月 20 日已在 GinoPi 实板确认 H77x ROM UART ISP：`/dev/ttyUSB1`、115200 8E1、GETID `44495764FFFFFFFF`，并通过 `tos.py flash` 对 CNVM 完成擦除、写入和逐字节回读。外部 OSPI 的配置字节与 pin record 已按厂商 CLI 默认路径准备，但仍待实板写入回读验收；不能据此认为 UART 外片路径已可用。布局绑定驱动的 GD25Q64E OSPI 运行时协议层现含 JEDEC、读取、页编程和 4 KiB 擦除，以及主机模型测试；这些 NOR 写擦 API 尚未接入 TKL Flash/backend，也尚未在目标板验证，调用不得视为硬件验收。CNVM KV 读写擦代码和主机测试已完成，但目标板 KV 写擦及缓存行为尚未验证；OTA 流程仍未实现。`tos.py build` 生成自包含 QIO 打包固件、ELF、MAP 和布局报告，并执行静态布局校验。历史设备运行和 DFU 状态见下方既有记录。
 
 此前 H77 曾运行通用 `examples/system/os_thread/`。当时用户复位后，通过 H77 UART1 以 115200 8N1 捕获到 `GD32H77D GinoPi`、FreeRTOS 11.2.0、CPU/CPUID、`Project name: os_thread`、`example_task` 创建、5 次 worker 输出以及 TAL 线程删除路径。相邻 worker 行的 host monotonic 间隔为 2.0031–2.0037 秒；删除日志后继续监听 17.84 秒，没有新字节或 PANIC/HardFault。Raw 日志和逐行时间见[os_thread 历史运行证据](../../.cache/gino-validation/h77-os-thread-20261019T025510Z/runtime-verification.json)，raw 3424 字节 SHA256 为 `4378c49108660a983c6067b3cfd98c67aeb0df323335ce3dd57ec01e680dd36e`。这仅验证当时运行镜像的启动、worker 休眠周期和线程删除路径，不证明 heap 无泄漏、长稳或完整 OS/外设验收。此前 `sample_project` 首次启动记录见[历史运行证据](../../.cache/gino-validation/h77-standard-sample-20261019T023008Z/runtime-observation-20261019T024529Z/observation.json)。
 
@@ -146,17 +146,19 @@ TuyaOpen 默认 backend 可来自芯片配置或可选的板级 `platform_config
 
 | 后端 | 说明 |
 | --- | --- |
-| `dfu` | 原生 DfuSe，经 ctypes 调用 libusb-1.0，不依赖外部 `dfu-util`，也不采用 ROM 报告的 DfuSe 描述符几何 |
+| `dfu` | 原生 DfuSe，经 ctypes 调用 libusb-1.0，不依赖外部 `dfu-util`；支持先写并回读 ECNVM 4 KiB 页，再写 CNVM 64 KiB 扇区 |
 | `swd` | 原厂 CMSIS-Pack Flash 算法，经固定版本 pyOCD 编程；校验官方 pack/target/算法几何，sector erase 后回读含 `0xFF` padding 的完整写入扇区 |
 | `uart`（可选） | H77x ROM system-memory bootloader，经串口捕获 ROM 响应并保持该波特率；先写显式 OSPI payload，再写 CNVM，不依赖 SWD、pyOCD 或 CMSIS-Pack。当前 `GD32H779V_START` 默认使用 `swd` |
 
-原版 `dfu-util` 后端已禁用：ROM descriptor 报告 4 KiB unit，而 H77 CNVM registry 使用 64 KiB sector；原工具在该 ROM 上的擦除行为未作为本平台可信路径。使用原生 `dfu`、`swd` 或 `uart`。原生 DFU 只接受 DFU-mode protocol 2 alternate、DfuSe 1.1a、支持 download 且默认回读时支持 upload 的 alternate，并检查 alt 名称仍标识从 `0x08000000` 开始的 internal flash。此信息能确认内部 flash bank，不能自动探测具体料号或容量；bridge 从 `CHIP_CHOICE` 对应的 canonical chip 与 build manifest 交叉核对目标身份，VID/PID、USB serial、端口路径和 alt 均只是可选筛选条件。
+原版 `dfu-util` 后端已禁用：ROM descriptor 报告 4 KiB unit，而 H77 CNVM registry 使用 64 KiB sector；原工具在该 ROM 上的擦除行为未作为本平台可信路径。使用原生 `dfu`、`swd` 或 `uart`。原生 DFU 只接受 DFU-mode protocol 2 alternate、DfuSe 1.1a、支持 download 且需要回读时支持 upload 的 alternate，并检查 alt 名称仍标识从 `0x08000000` 开始的 internal flash。descriptor 不枚举 ECNVM，但 H779 ROM 的 `SET_ADDRESS`/`ERASE`/`UPLOAD` 已验证可访问 `0x08200000` 且 ECNVM 擦除单位为 4 KiB；capacity、地址和 payload digest 仍由 build manifest 与 canonical geometry 交叉校验。VID/PID、USB serial、端口路径和 alt 均只是可选筛选条件。
 
-### GD32H779V START 的 CNVM + ECNVM 双区执行
+### H779 的 CNVM + ECNVM 双区执行
 
-`GD32H779V_START` 声明 7 MiB `ecnvm_code` 分区和末尾 512 KiB `kv` 分区。只要板级 `partitions.csv` 声明 `ecnvm_code`，平台就自动把应用 `.text/.rodata` 链接到 `0x08200000` 起的 ECNVM；boot table、向量表和 RAM 初始化数据装载段仍保留在 CNVM，KV 位于独立的 Data ECNVM1 `[0x08900000,0x08980000)`。QIO 固件同时携带 CNVM 启动镜像和独立 ECNVM 应用 payload，SWD bridge 只按 ECNVM 代码区扇区擦写并强制回读，再写 CNVM；不会写 KV。该布局必须使用完整 QIO 固件，raw BIN 和非 SWD 后端会被拒绝；`tos.py flash --no-verify` 不会关闭 ECNVM 回读。
+`GD32H779V_START` 和 `GD32H779I_WATCH_EVAL` 使用 7 MiB `ecnvm_code` 分区和末尾 512 KiB `kv` 分区。只要当前布局声明 `ecnvm_code`，平台就自动把应用 `.text/.rodata` 链接到 `0x08200000` 起的 ECNVM；boot table、向量表和 RAM 初始化数据装载段仍保留在 CNVM，KV 位于独立的 Data ECNVM1 `[0x08900000,0x08980000)`。QIO 固件同时携带 CNVM 启动镜像和独立 ECNVM 应用 payload。SWD/DFU bridge 只按 ECNVM 代码区擦写并强制回读，再写 CNVM；不会写 KV。该布局必须使用完整 QIO 固件；`tos.py flash --no-verify` 不会关闭 ECNVM 回读。
 
 2026-10-29 已在 H779VW 实板验证：当前镜像 CNVM 71,276 字节、ECNVM 433,652 字节，reset entry 为 `0x08200b45`，设备从 ECNVM 启动。ECNVM KV runtime 4 KiB page erase、8 B 最小/32 B burst program、AXI SRAM resident 执行和回读路径已实现；`ecnvm_kv_selftest run` 在 `0x08977000` reserved 页完成擦除、32 B 编程、回读比较/CRC 和最终擦除并 PASS。通过 `tal_cli auth` 写入 ECNVM KV 后，复位前后两次 `auth-read` 均读取成功。OTA 下载、安装、回滚仍单独保持未实现，不能据此宣称在线升级或完整网络验收已可用。
+
+2026-11-06 已在 `GD32H779I_WATCH_EVAL` 实板验证 DFU 双区域烧录：ECNVM `0x08200000` 擦写 15 个 4 KiB 页（61,100 字节源、61,440 字节 padded）并回读，随后 CNVM `0x08000000` 擦写 2 个 64 KiB 扇区（69,924 字节源、131,072 字节 padded）并回读。独立 DfuSe upload 与 QIO 包内 `internal.bin`、`ecnvm_code.bin` 完全一致；未写 ECNVM KV 区。
 
 平台的器件身份来自 `gd32h77x_os/chips/platform_chips.json`，共支持 D/E/779/RAP 的 16 个 canonical DFP target。`GD32H77D` 是兼容 alias，映射到 `GD32H77DIW`；当前不再提供 GinoPi board，其他实际板卡应使用具体料号或明确维护自己的板级映射。Flash registry 的容量、64 KiB sector 和算法名必须与本地原厂 pack 一致。2 MiB 使用 `GD32H77x_78x_CNVM_2M.FLM`，1.625 MiB 使用 `GD32H77x_78x_CNVM_1M_640K.FLM`。SWD target 不能覆盖 layout/manifest 的 canonical target。
 
@@ -181,7 +183,7 @@ tos.py flash -p 3-3.2
 tos.py flash -p cmsis-dap:12345678
 ```
 
-bridge 在 USB/SWD 操作前校验 layout report、ELF/BIN digest、当前 CSV 来源及 allowwrite 范围。DFU 按 VID/PID 和可选 serial/path 筛选，再确认 DFU mode、协议版本与内部 flash alternate；多设备时 TTY 可选，非 TTY 必须用 `-p` 指定 USB 路径。SWD 的 `-p` 是 pyOCD probe ID，非 TTY 多 probe 同样拒绝歧义；TTY 才允许明确选择。SWD 使用隔离临时目录、`--no-config` 与空 user script，强制 sector erase、`auto_unlock=false`、`keep_unwritten=false`、`smart_flash=false`、断开不自动运行，且成功写入后保持复位/停止状态。默认 readback 对完整 FF 填充后的扇区做逐字节比较；`tos.py flash --no-verify` 可在主机侧关闭回读。原生 `dfu` 默认同样回读 padded bytes；成功后仍按板级流程手动复位/退出 ROM。
+bridge 在 USB/SWD 操作前校验 layout report、ELF/BIN digest、当前 CSV 来源及 allowwrite 范围。DFU 按 VID/PID 和可选 serial/path 筛选，再确认 DFU mode、协议版本与内部 flash alternate；多设备时 TTY 可选，非 TTY 必须用 `-p` 指定 USB 路径。SWD 的 `-p` 是 pyOCD probe ID，非 TTY 多 probe 同样拒绝歧义；TTY 才允许明确选择。SWD 使用隔离临时目录、`--no-config` 与空 user script，强制 sector erase、`auto_unlock=false`、`keep_unwritten=false`、`smart_flash=false`、断开不自动运行，且成功写入后保持复位/停止状态。默认 readback 对完整 FF 填充后的写入窗口做逐字节比较；ECNVM 回读在 DFU/SWD 两条路径上均不可由 `--no-verify` 关闭。原生 `dfu` 成功后仍按板级流程手动复位/退出 ROM。
 
 #### UART ROM ISP（不依赖 SWD/pyOCD）
 

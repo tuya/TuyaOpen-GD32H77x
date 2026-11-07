@@ -24,6 +24,15 @@ choice
           GD32 ROM system-memory UART ISP.
 endchoice
 
+config GD32H77X_PMU_SMPS_MODE
+    string "VCORE PMU supply mode"
+    default ""
+    help
+      Board power-topology selector. Leave empty to preserve the vendor
+      reset/default PMU configuration. Use "bypass" when VCORE is supplied by
+      an external regulator and the internal SMPS is not used; use "direct"
+      when the internal SMPS supplies VCORE.
+
 menu "Console UART binding"
 
 choice

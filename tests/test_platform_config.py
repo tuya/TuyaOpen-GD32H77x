@@ -83,6 +83,23 @@ class PlatformConfigTests(unittest.TestCase):
         self.assertEqual(
             values["CONFIG_ENABLE_GD32H77X_AT_RESET_GPIO_PORT_C"], "y")
 
+    def test_board_pmu_topology_generates_vendor_define(self):
+        with tempfile.TemporaryDirectory(prefix="gd32h77x-pmu-config-") as tmp:
+            project_config = Path(tmp) / "project.config"
+            project_config.write_text(
+                'CONFIG_GD32H77X_PMU_SMPS_MODE="bypass"\n',
+                encoding="utf-8")
+            out = Path(tmp) / "out"
+            platform_config.write_outputs(
+                PLATFORM, "GD32H779IW", "GD32H779I_WATCH_EVAL", out,
+                project_config)
+            cmake = (out / "gd32h77x_config.cmake").read_text()
+            header = (out / "include/gd32h77x_config.h").read_text()
+        self.assertIn(
+            'set(GD32H77X_PMU_DEFINE "SEL_PMU_SMPS_MODE=PMU_BYPASS")',
+            cmake)
+        self.assertIn('#define GD32H77X_PMU_SMPS_MODE "bypass"', header)
+
     def test_console_and_at_cannot_share_uart(self):
         values = platform_config.resolve_config(PLATFORM, "GD32H779VW")
         values["CONFIG_ENABLE_GD32H77X_AT_UART_UART4"] = "n"

@@ -23,9 +23,10 @@ SPEC.loader.exec_module(bridge)
 # ---------------------------------------------------------------------------
 
 class FakeFlash:
-    def __init__(self, base, erase_bytes, capacity, fill=0xFF):
+    def __init__(self, base, erase_bytes, capacity, fill=0xFF, erase_regions=None):
         self.base = base
         self.erase_bytes = erase_bytes
+        self.erase_regions = list(erase_regions or [])
         self.capacity = capacity
         self.memory = bytearray([fill]) * capacity
         self.erases = []
@@ -35,8 +36,13 @@ class FakeFlash:
 
     def erase(self, address):
         self.erases.append(address)
+        erase_bytes = self.erase_bytes
+        for start, limit, unit in self.erase_regions:
+            if start <= address < limit:
+                erase_bytes = unit
+                break
         offset = address - self.base
-        self.memory[offset:offset + self.erase_bytes] = b"\xFF" * self.erase_bytes
+        self.memory[offset:offset + erase_bytes] = b"\xFF" * erase_bytes
 
     def write(self, address, data):
         self.writes.append((address, bytes(data)))
@@ -478,6 +484,139 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
         self.assertEqual(self.flash.read(0x08000008, 8), b"\xFF" * 8)
         self.assertEqual(sum(len(chunk) for _address, chunk in self.flash.writes), 0x10000)
         self.assertEqual(self.image.read_bytes(), b"firmware")
+
+    def test_native_dfu_programs_ecnvm_before_cnvm_and_verifies_both(self):
+        payload = b"ECNVM" * 0x801  # 0x2004 bytes, padded to three 4 KiB pages.
+        ecnvm = self.root / "ecnvm_code.bin"
+        ecnvm.write_bytes(payload)
+        report = {
+            "chip": "GD32H77DIW",
+            "layout": {
+                "devices": [{
+                    "id": "internal_ecnvm", "region": "ECNVM",
+                    "geometry_id": "GD32H77DIW_ECNVM",
+                    "backend_status": "implemented",
+                    "cpu_base": 0x08200000, "capacity_bytes": 0x780000,
+                    "erase_bytes": 0x1000, "program_bytes": 8, "page_bytes": 0x1000,
+                }],
+                "partitions": {
+                    "ecnvm_code": {"logical_base": 0x08200000,
+                                   "size_bytes": 0x700000},
+                },
+            },
+        }
+        mapped = [{
+            "partition": "ecnvm_code", "region": "ECNVM",
+            "address": 0x08200000, "size_bytes": len(payload), "path": str(ecnvm),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }]
+        flash = FakeFlash(
+            0x08000000, 0x10000, 0x980000,
+            erase_regions=[(0x08200000, 0x08980000, 0x1000)])
+        module, lib = _fake_dfuse([FakeUsbDevice(flash, "3-3.2", "DIWd")])
+        config = {
+            "CONFIG_FLASH_USB_VID": "28e9", "CONFIG_FLASH_USB_PID": "0189",
+            "CONFIG_FLASH_DFU_ALT": "0",
+            "CONFIG_FLASH_DFU_ALT_NAME": "InternalFlash",
+            "CONFIG_FLASH_VERIFY": "y", "CONFIG_FLASH_DFU_LEAVE": "n",
+        }
+        with patch.object(bridge, "_DFUSE_MODULE", module):
+            result = bridge._flash_dfu(
+                config, report, self.image, 0x08000000, 0x08010000, 0x10000,
+                {"erase_bytes": 0x10000, "geometry_id": "GD32H77DIW_CNVM",
+                 "part_number": "GD32H77DIW"}, "", None, mapped)
+        self.assertTrue(result["success"], result)
+        self.assertIn("CNVM+ECNVM", result["message"])
+        self.assertEqual(flash.erases, [
+            0x08200000, 0x08201000, 0x08202000, 0x08000000,
+        ])
+        self.assertEqual(flash.read(0x08200000, 0x3000),
+                         payload + b"\xFF" * (0x3000 - len(payload)))
+        self.assertEqual(flash.read(0x08000000, 8), self.image.read_bytes())
+        self.assertTrue(lib.closed)
+
+    def test_native_dfu_ecnvm_readback_mismatch_does_not_touch_cnvm(self):
+        payload = b"ECNVM" * 4
+        ecnvm = self.root / "ecnvm_code.bin"
+        ecnvm.write_bytes(payload)
+        report = {
+            "chip": "GD32H77DIW",
+            "layout": {
+                "devices": [{
+                    "id": "internal_ecnvm", "region": "ECNVM",
+                    "geometry_id": "GD32H77DIW_ECNVM",
+                    "backend_status": "implemented",
+                    "cpu_base": 0x08200000, "capacity_bytes": 0x780000,
+                    "erase_bytes": 0x1000, "program_bytes": 8, "page_bytes": 0x1000,
+                }],
+                "partitions": {
+                    "ecnvm_code": {"logical_base": 0x08200000,
+                                   "size_bytes": 0x700000},
+                },
+            },
+        }
+        mapped = [{
+            "partition": "ecnvm_code", "region": "ECNVM",
+            "address": 0x08200000, "size": len(payload), "path": str(ecnvm),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }]
+        flash = FakeFlash(
+            0x08000000, 0x10000, 0x980000,
+            erase_regions=[(0x08200000, 0x08980000, 0x1000)])
+        module, _lib = _fake_dfuse([FakeUsbDevice(flash, "3-3.2", "DIWd")])
+        original_read = FakeDfuSeProtocol.read
+
+        def corrupt_ecnvm(protocol, address, size, progress=None):
+            data = bytearray(original_read(protocol, address, size, progress))
+            if address == 0x08200000:
+                data[0] ^= 0xFF
+            return bytes(data)
+
+        config = {
+            "CONFIG_FLASH_USB_VID": "28e9", "CONFIG_FLASH_USB_PID": "0189",
+            "CONFIG_FLASH_DFU_ALT": "0",
+            "CONFIG_FLASH_DFU_ALT_NAME": "InternalFlash",
+            "CONFIG_FLASH_VERIFY": "y", "CONFIG_FLASH_DFU_LEAVE": "n",
+        }
+        with patch.object(bridge, "_DFUSE_MODULE", module), \
+             patch.object(FakeDfuSeProtocol, "read", corrupt_ecnvm):
+            with self.assertRaisesRegex(RuntimeError, "ECNVM readback mismatch"):
+                bridge._flash_dfu(
+                    config, report, self.image, 0x08000000, 0x08010000, 0x10000,
+                    {"erase_bytes": 0x10000, "geometry_id": "GD32H77DIW_CNVM",
+                     "part_number": "GD32H77DIW"}, "", None, mapped)
+        self.assertEqual(flash.erases, [0x08200000])
+
+    def test_platform_flash_routes_mapped_ecnvm_to_dfu(self):
+        package = self.root / "firmware_QIO_1.0.0.tufw"
+        package.write_bytes(b"self contained package")
+        ecnvm = self.root / "ecnvm_code.bin"
+        ecnvm.write_bytes(b"ecnvm")
+        mapped = [{
+            "partition": "ecnvm_code", "region": "ECNVM",
+            "address": 0x08200000, "size": 5, "path": str(ecnvm),
+            "sha256": hashlib.sha256(b"ecnvm").hexdigest(),
+        }]
+        report = {
+            "layout": {
+                "partitions": {"ecnvm_code": {"logical_base": 0x08200000,
+                                               "size_bytes": 0x700000}},
+                "devices": [],
+            },
+        }
+        with patch.object(bridge, "_extract_validated_package",
+                          return_value=(self.image, [], mapped)), \
+             patch.object(bridge, "_validate_manifest",
+                          return_value=(report, 0x08000000, 0x08010000,
+                                        0x10000, {"erase_bytes": 0x10000})), \
+             patch.object(bridge, "_flash_dfu",
+                          return_value={"success": True, "message": "dfu-ok"}) as writer, \
+             patch.object(bridge, "_dfuse_module",
+                          side_effect=AssertionError("the routed writer owns USB access")):
+            result = bridge.platform_flash(
+                self.using, str(package), "", 0, str(self.root), None)
+        self.assertTrue(result["success"], result)
+        self.assertIs(writer.call_args.args[-1], mapped)
 
     def test_self_contained_package_flashes_without_sibling_artifacts(self):
         result, _module, lib = self._run_package_flash()

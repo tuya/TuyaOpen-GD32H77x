@@ -449,10 +449,11 @@ def _validate_manifest(image: Path, boards_root: str, using_data: dict) -> Tuple
         part = current.get("layout", {}).get("partitions", {}).get("ecnvm_code", {})
         device = next((entry for entry in current.get("layout", {}).get("devices", [])
                        if entry.get("id") == "internal_ecnvm"), {})
+        expected_ecnvm_geometry = identity["canonical_chip"] + "_ECNVM"
         if (item.get("partition") != "ecnvm_code" or item.get("region") != "ECNVM"
                 or item.get("address") != part.get("logical_base")
                 or item.get("size", 0) <= 0 or item.get("size", 0) > part.get("size_bytes", 0)
-                or device.get("geometry_id") != "GD32H779VW_ECNVM"
+                or device.get("geometry_id") != expected_ecnvm_geometry
                 or device.get("backend_status") != "implemented"):
             raise ValueError("Reported ECNVM payload does not match current canonical board geometry")
         sidecar = image.parent / filename
@@ -740,8 +741,68 @@ def _choose_dfu_device(candidates, selector: str, expected_serial: str, logger):
     raise RuntimeError("Too many invalid selections; no download was started")
 
 
-def _flash_dfu(config, image, start, limit, capacity, device_geometry,
-               usb_path, logger):
+def _dfu_ecnvm_plan(report, mapped_payloads):
+    """Validate the one executable ECNVM payload before opening DFU."""
+    mapped_payloads = mapped_payloads or []
+    if not mapped_payloads:
+        return None
+    if len(mapped_payloads) != 1:
+        raise ValueError("DFU requires exactly one ECNVM payload")
+
+    layout = report.get("layout", {})
+    devices = layout.get("devices", [])
+    if isinstance(devices, dict):
+        devices = list(devices.values())
+    ecnvm_devices = [item for item in devices
+                     if isinstance(item, dict) and item.get("region") == "ECNVM"]
+    if len(ecnvm_devices) != 1:
+        raise ValueError("Current layout must declare exactly one ECNVM device")
+    device = ecnvm_devices[0]
+    partition = layout.get("partitions", {}).get("ecnvm_code", {})
+    try:
+        start = int(device["cpu_base"])
+        capacity = int(device["capacity_bytes"])
+        erase_bytes = int(device["erase_bytes"])
+        program_bytes = int(device["program_bytes"])
+        page_bytes = int(device["page_bytes"])
+        partition_base = int(partition["logical_base"])
+        partition_size = int(partition["size_bytes"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Resolved layout has no valid ECNVM geometry") from exc
+    expected_geometry = str(report.get("chip", "")) + "_ECNVM"
+    if (device.get("geometry_id") != expected_geometry
+            or device.get("backend_status") != "implemented"
+            or start != 0x08200000
+            or capacity != 0x780000
+            or erase_bytes != 0x1000
+            or program_bytes != 8
+            or page_bytes != 0x1000
+            or partition_base != start
+            or partition_size <= 0
+            or partition_size > capacity
+            or start % erase_bytes):
+        raise ValueError(
+            "ECNVM device differs from the approved {} DFU geometry".format(
+                report.get("chip", "?")))
+
+    mapped = mapped_payloads[0]
+    if (mapped.get("partition") != "ecnvm_code" or mapped.get("region") != "ECNVM"
+            or int(mapped.get("address", -1)) != partition_base):
+        raise ValueError("ECNVM payload does not map to ecnvm_code at 0x08200000")
+    payload_path = Path(mapped.get("path", ""))
+    if not payload_path.is_file():
+        raise ValueError("ECNVM payload file is missing")
+    payload = payload_path.read_bytes()
+    reported_size = mapped.get("size_bytes", mapped.get("size", -1))
+    if (not payload or len(payload) > partition_size
+            or hashlib.sha256(payload).hexdigest() != mapped.get("sha256")
+            or int(reported_size) != len(payload)):
+        raise ValueError("ECNVM payload failed address/range/digest preflight")
+    return payload_path, start, partition_size, erase_bytes
+
+
+def _flash_dfu(config, report, image, start, limit, capacity, device_geometry,
+               usb_path, logger, mapped_payloads=None):
     dfuse = _dfuse_module()
     vendor, product = _dfu_identity(config)
     alt = int(config.get("CONFIG_FLASH_DFU_ALT", "0") or "0", 0)
@@ -752,6 +813,7 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
     erase_bytes = int(device_geometry["erase_bytes"])
     verify = _boolean(config, "CONFIG_FLASH_VERIFY", True)
     leave = _boolean(config, "CONFIG_FLASH_DFU_LEAVE", False)
+    ecnvm_plan = _dfu_ecnvm_plan(report, mapped_payloads)
 
     temp_image, transfer_size = _create_padded_image(image, capacity, erase_bytes)
     lib = None
@@ -771,7 +833,8 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
             if interfaces:
                 try:
                     interface = _select_dfu_interface(
-                        interfaces, alt, name_marker, require_upload=verify)
+                        interfaces, alt, name_marker,
+                        require_upload=verify or ecnvm_plan is not None)
                 except RuntimeError as exc:
                     if logger:
                         logger.debug("Skipping USB path {}: {}".format(opened.path, exc))
@@ -786,6 +849,50 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
                                        interface["transfer_size"],
                                        log=(logger.info if logger else None))
         protocol.settle()
+
+        if ecnvm_plan is not None:
+            ecnvm_path, ecnvm_start, ecnvm_capacity, ecnvm_erase_bytes = ecnvm_plan
+            padded_ecnvm_path, ecnvm_transfer_size = _create_padded_image(
+                ecnvm_path, ecnvm_capacity, ecnvm_erase_bytes)
+            try:
+                ecnvm_payload = Path(padded_ecnvm_path).read_bytes()
+                if len(ecnvm_payload) % interface["transfer_size"]:
+                    raise ValueError("ECNVM padded image is not aligned to the DFU transfer size")
+                ecnvm_sectors = dfuse.erase_plan(
+                    ecnvm_start, ecnvm_start + ecnvm_transfer_size, ecnvm_erase_bytes)
+                if logger:
+                    logger.info(
+                        "Erasing {} ECNVM sectors of {} bytes from 0x{:08X} "
+                        "(backend dfu, geometry {})".format(
+                            len(ecnvm_sectors), ecnvm_erase_bytes, ecnvm_start,
+                            device_geometry.get("geometry_id", "?").replace(
+                                "_CNVM", "_ECNVM")))
+                for address in ecnvm_sectors:
+                    protocol.erase(address)
+
+                def ecnvm_progress(done):
+                    if logger and (done % (64 * 1024) == 0
+                                   or done == len(ecnvm_payload)):
+                        logger.info("Programmed ECNVM 0x{:08X}/0x{:08X}".format(
+                            done, len(ecnvm_payload)))
+
+                protocol.write(ecnvm_start, ecnvm_payload, progress=ecnvm_progress)
+                if logger:
+                    logger.info(
+                        "Verifying {} sector-padded ECNVM bytes at 0x{:08X}".format(
+                            ecnvm_transfer_size, ecnvm_start))
+                ecnvm_readback = protocol.read(ecnvm_start, ecnvm_transfer_size)
+                if ecnvm_readback != ecnvm_payload:
+                    mismatch = next((index for index, (left, right)
+                                     in enumerate(zip(ecnvm_readback, ecnvm_payload))
+                                     if left != right),
+                                    min(len(ecnvm_readback), len(ecnvm_payload)))
+                    raise RuntimeError(
+                        "ECNVM readback mismatch at 0x{:08X}; CNVM was not written".format(
+                            ecnvm_start + mismatch))
+            finally:
+                if os.path.exists(padded_ecnvm_path):
+                    os.unlink(padded_ecnvm_path)
 
         sectors = dfuse.erase_plan(start, start + transfer_size, erase_bytes)
         if logger:
@@ -820,8 +927,14 @@ def _flash_dfu(config, image, start, limit, capacity, device_geometry,
 
         if leave:
             protocol.leave()
-        message = ("DfuSe download and verification complete" if verify else
-                   "DfuSe download complete; readback verification disabled by internal flash policy")
+        if ecnvm_plan is not None:
+            message = ("DfuSe CNVM+ECNVM download and verification complete"
+                       if verify else
+                       "DfuSe CNVM+ECNVM download complete; ECNVM readback verified, "
+                       "CNVM verification disabled by internal flash policy")
+        else:
+            message = ("DfuSe download and verification complete" if verify else
+                       "DfuSe download complete; readback verification disabled by internal flash policy")
         return {"success": True, "message": message}
     finally:
         for opened in opened_devices:
@@ -1059,7 +1172,8 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
         if len(ecnvm_devices) != 1:
             raise ValueError("Current layout must declare exactly one ECNVM device")
         device = ecnvm_devices[0]
-        if (device.get("geometry_id") != "GD32H779VW_ECNVM"
+        expected_ecnvm_geometry = identity["canonical_chip"] + "_ECNVM"
+        if (device.get("geometry_id") != expected_ecnvm_geometry
                 or device.get("backend_status") != "implemented"
                 or device.get("cpu_base") != 0x08200000
                 or device.get("capacity_bytes") != 0x780000
@@ -1069,7 +1183,9 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
                 or device.get("swd_erase_bytes") != 0x10000
                 or device.get("swd_program_bytes") != 32
                 or device.get("vendor_algorithm") != "GD32H77x_78x_ECNVM_7M_512K.FLM"):
-            raise ValueError("ECNVM device differs from the approved GD32H779VW registry geometry")
+            raise ValueError(
+                "ECNVM device differs from the approved {} registry geometry".format(
+                    identity["canonical_chip"]))
         mapped = mapped_payloads[0]
         payload_path = Path(mapped.get("path", ""))
         payload_data = payload_path.read_bytes()
@@ -1496,8 +1612,9 @@ def platform_flash(using_data, binfile, port, baud, boards_root, logger,
             if not sidecar.is_file():
                 raise ValueError("Layout declares ecnvm_code but the QIO package is missing its ECNVM payload")
             mapped_payloads = [dict(report["mapped_payloads"][0], path=str(sidecar))]
-        if mapped_payloads and backend != "swd":
-            raise ValueError("ECNVM executable payloads require the swd backend; no probe opened")
+        if mapped_payloads and backend not in ("swd", "dfu"):
+            raise ValueError(
+                "ECNVM executable payloads require the swd or dfu backend; no probe opened")
         image_size = image.stat().st_size
         if image_size <= 0 or image_size > capacity:
             raise ValueError(
@@ -1566,8 +1683,8 @@ def platform_flash(using_data, binfile, port, baud, boards_root, logger,
                 port, baud, start, limit, capacity, device_geometry, logger)
 
         if backend == "dfu":
-            return _flash_dfu(config, image, start, limit, capacity,
-                              device_geometry, port, logger)
+            return _flash_dfu(config, report, image, start, limit, capacity,
+                              device_geometry, port, logger, mapped_payloads)
         if backend == "uart":
             return _flash_uart(
                 config, report, None, image, [], port, baud,
