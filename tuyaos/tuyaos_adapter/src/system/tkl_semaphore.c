@@ -84,7 +84,16 @@ OPERATE_RET tkl_semaphore_post(const TKL_SEM_HANDLE handle)
     if (!handle) {
         return OPRT_INVALID_PARM;
     }
-    return xSemaphoreGive(handle) == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_SEM_POST_FAILED;
+
+    BaseType_t ret;
+    if (xPortIsInsideInterrupt() == pdTRUE) {
+        BaseType_t higher_priority_task_woken = pdFALSE;
+        ret = xSemaphoreGiveFromISR(handle, &higher_priority_task_woken);
+        portYIELD_FROM_ISR(higher_priority_task_woken);
+    } else {
+        ret = xSemaphoreGive(handle);
+    }
+    return ret == pdTRUE ? OPRT_OK : OPRT_OS_ADAPTER_SEM_POST_FAILED;
     // --- END: user implements ---
 }
 

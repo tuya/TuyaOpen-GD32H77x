@@ -511,6 +511,22 @@ typedef uint16_t TUYA_PIN_FUNC_E;
 #define  TUYA_UART3_RX       0x10D
 #define  TUYA_UART3_RTS      0x10E
 #define  TUYA_UART3_CTS      0x10F
+#define  TUYA_UART4_TX       0x110
+#define  TUYA_UART4_RX       0x111
+#define  TUYA_UART4_RTS      0x112
+#define  TUYA_UART4_CTS      0x113
+#define  TUYA_UART5_TX       0x114
+#define  TUYA_UART5_RX       0x115
+#define  TUYA_UART5_RTS      0x116
+#define  TUYA_UART5_CTS      0x117
+#define  TUYA_UART6_TX       0x118
+#define  TUYA_UART6_RX       0x119
+#define  TUYA_UART6_RTS      0x11A
+#define  TUYA_UART6_CTS      0x11B
+#define  TUYA_UART7_TX       0x11C
+#define  TUYA_UART7_RX       0x11D
+#define  TUYA_UART7_RTS      0x11E
+#define  TUYA_UART7_CTS      0x11F
 
 #define  TUYA_SPI0_MISO      0x200
 #define  TUYA_SPI0_MOSI      0x201
@@ -524,6 +540,37 @@ typedef uint16_t TUYA_PIN_FUNC_E;
 #define  TUYA_SPI2_MOSI      0x209
 #define  TUYA_SPI2_CLK       0x20A
 #define  TUYA_SPI2_CS        0x20B
+#define  TUYA_SPI3_MISO      0x20C
+#define  TUYA_SPI3_MOSI      0x20D
+#define  TUYA_SPI3_CLK       0x20E
+#define  TUYA_SPI3_CS        0x20F
+#define  TUYA_SPI4_MISO      0x210
+#define  TUYA_SPI4_MOSI      0x211
+#define  TUYA_SPI4_CLK       0x212
+#define  TUYA_SPI4_CS        0x213
+#define  TUYA_SPI5_MISO      0x214
+#define  TUYA_SPI5_MOSI      0x215
+#define  TUYA_SPI5_CLK       0x216
+#define  TUYA_SPI5_CS        0x217
+
+#define  TUYA_QSPI0_SCK      0x900
+#define  TUYA_QSPI0_IO0      0x901
+#define  TUYA_QSPI0_IO1      0x902
+#define  TUYA_QSPI0_IO2      0x903
+#define  TUYA_QSPI0_IO3      0x904
+#define  TUYA_QSPI0_CS       0x905
+
+#define  TUYA_DVP0_D0        0xA00
+#define  TUYA_DVP0_D1        0xA01
+#define  TUYA_DVP0_D2        0xA02
+#define  TUYA_DVP0_D3        0xA03
+#define  TUYA_DVP0_D4        0xA04
+#define  TUYA_DVP0_D5        0xA05
+#define  TUYA_DVP0_D6        0xA06
+#define  TUYA_DVP0_D7        0xA07
+#define  TUYA_DVP0_PIXCLK    0xA08
+#define  TUYA_DVP0_HSYNC     0xA09
+#define  TUYA_DVP0_VSYNC     0xA0A
 
 #define  TUYA_PWM0           0x300
 #define  TUYA_PWM1           0x301
@@ -531,6 +578,12 @@ typedef uint16_t TUYA_PIN_FUNC_E;
 #define  TUYA_PWM3           0x303
 #define  TUYA_PWM4           0x304
 #define  TUYA_PWM5           0x305
+#define  TUYA_PWM6           0x306
+#define  TUYA_PWM7           0x307
+#define  TUYA_PWM8           0x308
+#define  TUYA_PWM9           0x309
+#define  TUYA_PWM10          0x30A
+#define  TUYA_PWM11          0x30B
 
 #define  TUYA_ADC0           0x400
 #define  TUYA_ADC1           0x401
@@ -574,41 +627,44 @@ typedef  struct {
  * @brief gpio num
  */
 typedef enum {
-    TUYA_GPIO_NUM_0,  // GPIO 0
-    TUYA_GPIO_NUM_1,  // GPIO 1
-    TUYA_GPIO_NUM_2,  // GPIO 2
-    TUYA_GPIO_NUM_3,  // GPIO 3
-    TUYA_GPIO_NUM_4,  // GPIO 4
-    TUYA_GPIO_NUM_5,  // GPIO 5
-    TUYA_GPIO_NUM_6,  // GPIO 6
-    TUYA_GPIO_NUM_7,  // GPIO 7
-    TUYA_GPIO_NUM_8,  // GPIO 8
-    TUYA_GPIO_NUM_9,  // GPIO 9
-    TUYA_GPIO_NUM_10, // GPIO 10
-    TUYA_GPIO_NUM_11, // GPIO 11
-    TUYA_GPIO_NUM_12, // GPIO 12
-    TUYA_GPIO_NUM_13, // GPIO 13
-    TUYA_GPIO_NUM_14, // GPIO 14
-    TUYA_GPIO_NUM_15, // GPIO 15
-    TUYA_GPIO_NUM_16, // GPIO 16
-    TUYA_GPIO_NUM_17, // GPIO 17
-    TUYA_GPIO_NUM_18, // GPIO 18
-    TUYA_GPIO_NUM_19, // GPIO 19
-    TUYA_GPIO_NUM_20, // GPIO 20
-    TUYA_GPIO_NUM_21, // GPIO 21
-    TUYA_GPIO_NUM_22, // GPIO 22
-    TUYA_GPIO_NUM_23, // GPIO 23
-    TUYA_GPIO_NUM_24, // GPIO 24
-    TUYA_GPIO_NUM_25, // GPIO 25
-    TUYA_GPIO_NUM_26, // GPIO 26
-    TUYA_GPIO_NUM_27, // GPIO 27
-    TUYA_GPIO_NUM_28, // GPIO 28
-    TUYA_GPIO_NUM_29, // GPIO 29
-    TUYA_GPIO_NUM_30, // GPIO 30
-    TUYA_GPIO_NUM_31, // GPIO 31
-    TUYA_GPIO_NUM_32, // GPIO 32
-    TUYA_GPIO_NUM_33, // GPIO 33
-    TUYA_GPIO_NUM_34, // GPIO 34
+    /* Port A */
+    TUYA_GPIO_NUM_0,
+    TUYA_GPIO_NUM_1,
+    TUYA_GPIO_NUM_2,
+    TUYA_GPIO_NUM_3,
+    TUYA_GPIO_NUM_4,
+    TUYA_GPIO_NUM_5,
+    TUYA_GPIO_NUM_6,
+    TUYA_GPIO_NUM_7,
+    TUYA_GPIO_NUM_8,
+    TUYA_GPIO_NUM_9,
+    TUYA_GPIO_NUM_10,
+    TUYA_GPIO_NUM_11,
+    TUYA_GPIO_NUM_12,
+    TUYA_GPIO_NUM_13,
+    TUYA_GPIO_NUM_14,
+    TUYA_GPIO_NUM_15,
+    /* Port B */
+    TUYA_GPIO_NUM_16,
+    TUYA_GPIO_NUM_17,
+    TUYA_GPIO_NUM_18,
+    TUYA_GPIO_NUM_19,
+    TUYA_GPIO_NUM_20,
+    TUYA_GPIO_NUM_21,
+    TUYA_GPIO_NUM_22,
+    TUYA_GPIO_NUM_23,
+    TUYA_GPIO_NUM_24,
+    TUYA_GPIO_NUM_25,
+    TUYA_GPIO_NUM_26,
+    TUYA_GPIO_NUM_27,
+    TUYA_GPIO_NUM_28,
+    TUYA_GPIO_NUM_29,
+    TUYA_GPIO_NUM_30,
+    TUYA_GPIO_NUM_31,
+    /* Port C */
+    TUYA_GPIO_NUM_32,
+    TUYA_GPIO_NUM_33,
+    TUYA_GPIO_NUM_34,
     TUYA_GPIO_NUM_35,
     TUYA_GPIO_NUM_36,
     TUYA_GPIO_NUM_37,
@@ -622,6 +678,7 @@ typedef enum {
     TUYA_GPIO_NUM_45,
     TUYA_GPIO_NUM_46,
     TUYA_GPIO_NUM_47,
+    /* Port D */
     TUYA_GPIO_NUM_48,
     TUYA_GPIO_NUM_49,
     TUYA_GPIO_NUM_50,
@@ -638,6 +695,108 @@ typedef enum {
     TUYA_GPIO_NUM_61,
     TUYA_GPIO_NUM_62,
     TUYA_GPIO_NUM_63,
+    /* Port E */
+    TUYA_GPIO_NUM_64,
+    TUYA_GPIO_NUM_65,
+    TUYA_GPIO_NUM_66,
+    TUYA_GPIO_NUM_67,
+    TUYA_GPIO_NUM_68,
+    TUYA_GPIO_NUM_69,
+    TUYA_GPIO_NUM_70,
+    TUYA_GPIO_NUM_71,
+    TUYA_GPIO_NUM_72,
+    TUYA_GPIO_NUM_73,
+    TUYA_GPIO_NUM_74,
+    TUYA_GPIO_NUM_75,
+    TUYA_GPIO_NUM_76,
+    TUYA_GPIO_NUM_77,
+    TUYA_GPIO_NUM_78,
+    TUYA_GPIO_NUM_79,
+    /* Port F */
+    TUYA_GPIO_NUM_80,
+    TUYA_GPIO_NUM_81,
+    TUYA_GPIO_NUM_82,
+    TUYA_GPIO_NUM_83,
+    TUYA_GPIO_NUM_84,
+    TUYA_GPIO_NUM_85,
+    TUYA_GPIO_NUM_86,
+    TUYA_GPIO_NUM_87,
+    TUYA_GPIO_NUM_88,
+    TUYA_GPIO_NUM_89,
+    TUYA_GPIO_NUM_90,
+    TUYA_GPIO_NUM_91,
+    TUYA_GPIO_NUM_92,
+    TUYA_GPIO_NUM_93,
+    TUYA_GPIO_NUM_94,
+    TUYA_GPIO_NUM_95,
+    /* Port G */
+    TUYA_GPIO_NUM_96,
+    TUYA_GPIO_NUM_97,
+    TUYA_GPIO_NUM_98,
+    TUYA_GPIO_NUM_99,
+    TUYA_GPIO_NUM_100,
+    TUYA_GPIO_NUM_101,
+    TUYA_GPIO_NUM_102,
+    TUYA_GPIO_NUM_103,
+    TUYA_GPIO_NUM_104,
+    TUYA_GPIO_NUM_105,
+    TUYA_GPIO_NUM_106,
+    TUYA_GPIO_NUM_107,
+    TUYA_GPIO_NUM_108,
+    TUYA_GPIO_NUM_109,
+    TUYA_GPIO_NUM_110,
+    TUYA_GPIO_NUM_111,
+    /* Port H */
+    TUYA_GPIO_NUM_112,
+    TUYA_GPIO_NUM_113,
+    TUYA_GPIO_NUM_114,
+    TUYA_GPIO_NUM_115,
+    TUYA_GPIO_NUM_116,
+    TUYA_GPIO_NUM_117,
+    TUYA_GPIO_NUM_118,
+    TUYA_GPIO_NUM_119,
+    TUYA_GPIO_NUM_120,
+    TUYA_GPIO_NUM_121,
+    TUYA_GPIO_NUM_122,
+    TUYA_GPIO_NUM_123,
+    TUYA_GPIO_NUM_124,
+    TUYA_GPIO_NUM_125,
+    TUYA_GPIO_NUM_126,
+    TUYA_GPIO_NUM_127,
+    /* Port J */
+    TUYA_GPIO_NUM_128,
+    TUYA_GPIO_NUM_129,
+    TUYA_GPIO_NUM_130,
+    TUYA_GPIO_NUM_131,
+    TUYA_GPIO_NUM_132,
+    TUYA_GPIO_NUM_133,
+    TUYA_GPIO_NUM_134,
+    TUYA_GPIO_NUM_135,
+    TUYA_GPIO_NUM_136,
+    TUYA_GPIO_NUM_137,
+    TUYA_GPIO_NUM_138,
+    TUYA_GPIO_NUM_139,
+    TUYA_GPIO_NUM_140,
+    TUYA_GPIO_NUM_141,
+    TUYA_GPIO_NUM_142,
+    TUYA_GPIO_NUM_143,
+    /* Port K */
+    TUYA_GPIO_NUM_144,
+    TUYA_GPIO_NUM_145,
+    TUYA_GPIO_NUM_146,
+    TUYA_GPIO_NUM_147,
+    TUYA_GPIO_NUM_148,
+    TUYA_GPIO_NUM_149,
+    TUYA_GPIO_NUM_150,
+    TUYA_GPIO_NUM_151,
+    TUYA_GPIO_NUM_152,
+    TUYA_GPIO_NUM_153,
+    TUYA_GPIO_NUM_154,
+    TUYA_GPIO_NUM_155,
+    TUYA_GPIO_NUM_156,
+    TUYA_GPIO_NUM_157,
+    TUYA_GPIO_NUM_158,
+    TUYA_GPIO_NUM_159,
     TUYA_GPIO_NUM_MAX,
 } TUYA_GPIO_NUM_E;
 
@@ -1278,6 +1437,8 @@ typedef enum {
     TUYA_UART_NUM_3,	        // UART 3
     TUYA_UART_NUM_4,	        // UART 4
     TUYA_UART_NUM_5,	        // UART 5
+    TUYA_UART_NUM_6,	        // UART 6
+    TUYA_UART_NUM_7,	        // UART 7
     TUYA_UART_NUM_MAX,
 } TUYA_UART_NUM_E;
 
@@ -1512,6 +1673,19 @@ typedef struct
     H264_CFG h264_cfg;
 } TUYA_DVP_ENCODED_QUALITY;
 
+typedef OPERATE_RET (*DVP_SET_UP_CB)(void *args);
+typedef TUYA_DVP_FRAME_MANAGE_T *(*DVP_FRAME_ASSIGN_CB)(TUYA_FRAME_FMT_E fmt, void *args);
+typedef OPERATE_RET (*DVP_FRAME_POST_CB)(TUYA_DVP_FRAME_MANAGE_T *dvp_frame, void *args);
+
+typedef struct
+{
+    DVP_SET_UP_CB setup_cb;
+    DVP_FRAME_ASSIGN_CB assign_cb;
+    DVP_FRAME_POST_CB post_cb;
+    void *cb_param;
+    uint32_t sensor_clk;
+} TUYA_DVP_TKL_CFG_T;
+
 typedef struct {
     uint16_t fps;
     uint16_t width;
@@ -1519,6 +1693,7 @@ typedef struct {
     TUYA_DVP_SYNC_MODE sync_polarity;
     TUYA_CAMERA_OUTPUT_MODE output_mode;
     TUYA_DVP_ENCODED_QUALITY encoded_quality;
+    TUYA_DVP_TKL_CFG_T inter_cfg;
 } TUYA_DVP_CFG_T;
 
 /**

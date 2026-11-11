@@ -378,6 +378,9 @@ python platform/GD32H77X/tests/test_image.py \
 
 配网所需的 553 能力与缺口见 [无线适配清单](docs/vw553-capabilities.md)。
 
+GD32H77X 的 TKL pinmux 支持范围、映射编号和主机 fixture 见
+[pinmux 说明](docs/pinmux.md)。
+
 ## VW553 无线协处理器
 
 当前 VW553 AT gateway 的唯一 canonical 构建入口位于：

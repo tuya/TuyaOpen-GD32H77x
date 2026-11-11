@@ -309,6 +309,8 @@ add_test(NAME gd32h77x_platform_config
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_platform_config.py")
 add_test(NAME gd32h77x_wireless_fw
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_wireless_fw.py")
+add_test(NAME gd32h77x_spi_irq_host
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/spi_irq_host/run.sh")
 
 # Optional real-source regression against an external AT SDK candidate.
 # The default host suite must remain independent of SDK staging paths.
