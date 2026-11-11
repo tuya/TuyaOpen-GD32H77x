@@ -158,6 +158,8 @@ static void test_af_routes_and_rejections(void)
     assert(tkl_io_pinmux_config(126, TUYA_DVP0_D4) == OPRT_OK); /* PH14 AF13 */
     assert(last_port == GPIOH && last_pin == GPIO_PIN_14 && last_af == GPIO_AF_13);
     assert(tkl_io_pin_to_func(126, TUYA_IO_TYPE_DVP) == 0x0004U);
+    /* H77 MCLK is a fixed CKOUT0 output and is not a pinmux route. */
+    expect_single_no_change(8, TUYA_DVP0_MCLK);
 }
 
 static void test_gpio_query_and_batch_preflight(void)

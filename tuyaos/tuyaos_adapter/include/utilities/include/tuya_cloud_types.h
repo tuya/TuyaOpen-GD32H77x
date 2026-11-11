@@ -571,6 +571,7 @@ typedef uint16_t TUYA_PIN_FUNC_E;
 #define  TUYA_DVP0_PIXCLK    0xA08
 #define  TUYA_DVP0_HSYNC     0xA09
 #define  TUYA_DVP0_VSYNC     0xA0A
+#define  TUYA_DVP0_MCLK      0xA0B
 
 #define  TUYA_PWM0           0x300
 #define  TUYA_PWM1           0x301

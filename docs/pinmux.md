@@ -20,6 +20,10 @@
 引脚默认值属于 TKL 驱动。`tkl_pinmux` 只负责在外设初始化前修改驱动里的默认表；
 `tkl_i2c_init()`、`tkl_uart_init()`、`tkl_dvp_init()`、`tkl_adc_init()` 不再调用公共
 `tkl_io_pinmux_config()` 或 `tkl_multi_io_pinmux_config()`，而是直接应用最终表。
+公共枚举保留 `TUYA_DVP0_MCLK`，用于后续 MCLK 可路由的平台。GD32H77X 的 DVP MCLK
+是 CKOUT0 固定输出，不提供 pinmux 路由。`tkl_dvp_init()` 根据
+`TUYA_DVP_CFG_T.inter_cfg.sensor_clk` 在 TKL 内部配置时钟和固定引脚，板级不再注入
+MCLK 回调。
 
 ## I2C 默认引脚
 
@@ -90,6 +94,7 @@ TKL PWM0..11 映射到 TIMER0/1/2 的各 4 个通道。同一定时器上的通�
 | PIXCLK | PA6 | 6 | 13 |
 | HSYNC | PH15 | 127 | 1 |
 | VSYNC | PB7 | 23 | 13 |
+| MCLK | PA8 | 8 | 0 (CKOUT0，固定由 TKL 管理) |
 
 ## ADC 默认通道
 
