@@ -2,9 +2,11 @@ add_library(gd32h77x_gd32_sdk STATIC
     CMSIS/GD/GD32H77x_78x/Source/system_gd32h77x_78x.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_rcu.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_gpio.c
+    GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_exti.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_adc.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_usart.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_i2c.c
+    GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_sdio.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_dci.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_ipa.c
     GD32H77x_78x_standard_peripheral/Source/gd32h77x_78x_spi.c

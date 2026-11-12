@@ -5,11 +5,27 @@
 #include "tkl_gpio.h"
 #include "tkl_pinmux.h"
 #include "gd32h77x_78x.h"
+#include "gd32h77x_78x_exti.h"
 
 uint32_t fake_bop[10];
 uint32_t fake_bc[10];
 static unsigned int call_count;
 static uint32_t last_port, last_pin, last_af, last_mode, last_pupd, last_type;
+
+void tkl_log_output(const char *format, ...) { (void)format; }
+void NVIC_EnableIRQ(IRQn_Type irq) { (void)irq; }
+void NVIC_DisableIRQ(IRQn_Type irq) { (void)irq; }
+void NVIC_ClearPendingIRQ(IRQn_Type irq) { (void)irq; }
+void NVIC_SetPriority(IRQn_Type irq, uint32_t priority) { (void)irq; (void)priority; }
+void syscfg_exti_line_config(uint8_t port, uint8_t pin) { (void)port; (void)pin; }
+void exti_init(exti_line_enum line, exti_mode_enum mode, exti_trig_type_enum trigger)
+{
+    (void)line; (void)mode; (void)trigger;
+}
+void exti_interrupt_enable(exti_line_enum line) { (void)line; }
+void exti_interrupt_disable(exti_line_enum line) { (void)line; }
+void exti_interrupt_flag_clear(exti_line_enum line) { (void)line; }
+FlagStatus exti_interrupt_flag_get(exti_line_enum line) { (void)line; return RESET; }
 
 void __tkl_spi_set_pin(TUYA_SPI_NUM_E port, TUYA_PIN_FUNC_E func,
                        uint32_t gpio_port, uint32_t gpio_pin, uint32_t af)
@@ -45,6 +61,11 @@ void __tkl_pwm_set_pin(TUYA_PWM_NUM_E port, TUYA_PIN_FUNC_E func,
                        uint32_t gpio_port, uint32_t gpio_pin, uint32_t af)
 {
     (void)port; (void)func; (void)gpio_port; (void)gpio_pin; (void)af;
+}
+void __tkl_sdio_set_pin(TUYA_PIN_FUNC_E func, uint32_t gpio_port,
+                        uint32_t gpio_pin, uint32_t af)
+{
+    (void)func; (void)gpio_port; (void)gpio_pin; (void)af;
 }
 
 void rcu_periph_clock_enable(uint32_t rcu) { (void)rcu; ++call_count; }
@@ -158,6 +179,23 @@ static void test_af_routes_and_rejections(void)
     assert(tkl_io_pinmux_config(126, TUYA_DVP0_D4) == OPRT_OK); /* PH14 AF13 */
     assert(last_port == GPIOH && last_pin == GPIO_PIN_14 && last_af == GPIO_AF_13);
     assert(tkl_io_pin_to_func(126, TUYA_IO_TYPE_DVP) == 0x0004U);
+    assert(tkl_io_pinmux_config(44, TUYA_SDIO_CLK) == OPRT_OK); /* PC12 AF12 */
+    assert(last_port == GPIOC && last_pin == GPIO_PIN_12 && last_af == GPIO_AF_12);
+    assert(tkl_io_pinmux_config(40, TUYA_SDIO_DATA0) == OPRT_OK); /* PC8 AF12 */
+    assert(tkl_io_pinmux_config(29, TUYA_SDIO_DATA0) == OPRT_OK); /* PB13 AF12 */
+    assert(last_port == GPIOB && last_pin == GPIO_PIN_13 && last_af == GPIO_AF_12);
+    assert(tkl_io_pinmux_config(56, TUYA_SDIO_DATA2) == OPRT_OK); /* PD8 AF6 */
+    assert(last_port == GPIOD && last_pin == GPIO_PIN_8 && last_af == GPIO_AF_6);
+    assert(tkl_io_pinmux_config(57, TUYA_SDIO_DATA3) == OPRT_OK); /* PD9 AF6 */
+    assert(last_port == GPIOD && last_pin == GPIO_PIN_9 && last_af == GPIO_AF_6);
+    assert(tkl_io_pinmux_config(33, TUYA_SDIO_CLK) == OPRT_OK); /* PC1 AF9 */
+    assert(last_port == GPIOC && last_pin == GPIO_PIN_1 && last_af == GPIO_AF_9);
+    assert(tkl_io_pinmux_config(0, TUYA_SDIO_CMD) == OPRT_OK); /* PA0 AF9 */
+    assert(last_port == GPIOA && last_pin == GPIO_PIN_0 && last_af == GPIO_AF_9);
+    assert(tkl_io_pinmux_config(30, TUYA_SDIO_DATA0) == OPRT_OK); /* PB14 AF9 */
+    assert(last_port == GPIOB && last_pin == GPIO_PIN_14 && last_af == GPIO_AF_9);
+    assert(tkl_io_pinmux_config(29, TUYA_SDIO_DATA2) == OPRT_OK); /* PB13 AF16 */
+    assert(last_port == GPIOB && last_pin == GPIO_PIN_13 && last_af == GPIO_AF_16);
     /* H77 MCLK is a fixed CKOUT0 output and is not a pinmux route. */
     expect_single_no_change(8, TUYA_DVP0_MCLK);
 }

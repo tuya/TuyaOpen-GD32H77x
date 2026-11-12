@@ -12,6 +12,7 @@
 
 typedef struct at_transport at_transport_t;
 typedef void (*at_transport_rx_cb_t)(void *context, const uint8_t *data, size_t length);
+typedef bool (*at_transport_rx_ready_cb_t)(void *context, size_t length);
 typedef enum {
     AT_TRANSPORT_FAULT_RX_OVERFLOW = 1U << 0,
     AT_TRANSPORT_FAULT_OVERRUN = 1U << 1,
@@ -44,6 +45,8 @@ struct at_transport {
     void *context;
     at_transport_rx_cb_t rx_callback;
     void *rx_context;
+    at_transport_rx_ready_cb_t rx_ready_callback;
+    void *rx_ready_context;
     at_transport_fault_cb_t fault_callback;
     void *fault_context;
 };

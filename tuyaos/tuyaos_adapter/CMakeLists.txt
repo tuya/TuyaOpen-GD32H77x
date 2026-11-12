@@ -16,6 +16,7 @@ target_include_directories(gd32h77x_tuyaos_adapter_headers INTERFACE
     "${CMAKE_CURRENT_LIST_DIR}/include/spi"
     "${CMAKE_CURRENT_LIST_DIR}/include/dvp"
     "${CMAKE_CURRENT_LIST_DIR}/include/dma2d"
+    "${CMAKE_CURRENT_LIST_DIR}/../../../gd32h77x_os/components/fatfs"
     "${CMAKE_CURRENT_LIST_DIR}/include/wifi"
     "${CMAKE_CURRENT_LIST_DIR}/include/bluetooth"
     "${CMAKE_CURRENT_LIST_DIR}/include/init/include"
@@ -55,6 +56,10 @@ target_sources(gd32h77x_tuyaos_adapter INTERFACE
     "${CMAKE_CURRENT_LIST_DIR}/src/driver/tkl_wifi.c"
     "${CMAKE_CURRENT_LIST_DIR}/src/driver/tkl_bluetooth.c"
     ${TUYAOS_UTILITY_SOURCES}
+)
+
+target_sources(gd32h77x_tuyaos_adapter INTERFACE
+    "${CMAKE_CURRENT_LIST_DIR}/src/system/tkl_fs.c"
 )
 
 target_link_libraries(gd32h77x_tuyaos_adapter INTERFACE

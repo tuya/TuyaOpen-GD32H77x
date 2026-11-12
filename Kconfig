@@ -106,6 +106,31 @@ config GD32H77X_CONSOLE_AF_NUMBER
 
 endmenu
 
+menu "AT transport binding"
+
+choice
+    prompt "AT transport"
+    default ENABLE_GD32H77X_AT_TRANSPORT_UART
+
+    config ENABLE_GD32H77X_AT_TRANSPORT_UART
+        bool "UART AT transport"
+
+    config ENABLE_GD32H77X_AT_TRANSPORT_SPI
+        bool "SPI AT transport (GD32H779V_START <-> GD32VW553)"
+endchoice
+
+choice
+    prompt "AT SPI clock prescaler"
+    default ENABLE_GD32H77X_AT_SPI_PSC_256
+
+    config ENABLE_GD32H77X_AT_SPI_PSC_64
+        bool "/64"
+    config ENABLE_GD32H77X_AT_SPI_PSC_128
+        bool "/128"
+    config ENABLE_GD32H77X_AT_SPI_PSC_256
+        bool "/256 (slow and conservative)"
+endchoice
+
 menu "AT UART binding"
 
 choice
@@ -221,6 +246,18 @@ config GD32H77X_AT_RESET_PIN_NUMBER
     default 5
     help
       GPIO pin number on the selected AT reset GPIO port.
+
+choice
+    prompt "SD card SDIO host"
+    default ENABLE_GD32H77X_SDIO_HOST_0
+
+    config ENABLE_GD32H77X_SDIO_HOST_0
+        bool "SDIO0"
+    config ENABLE_GD32H77X_SDIO_HOST_1
+        bool "SDIO1"
+endchoice
+
+endmenu
 
 endmenu
 

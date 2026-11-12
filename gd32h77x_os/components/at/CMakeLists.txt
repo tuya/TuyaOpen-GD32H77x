@@ -11,18 +11,34 @@ add_library(gd32h77x_at_core STATIC
 target_include_directories(gd32h77x_at_core PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(gd32h77x_at_core PUBLIC gd32h77x_freertos gd32h77x_gd32_sdk)
 
-add_library(gd32h77x_at_uart_transport INTERFACE)
-target_sources(gd32h77x_at_uart_transport INTERFACE
-    at_transport.c
-    at_uart_transport.c
-)
-target_include_directories(gd32h77x_at_uart_transport INTERFACE ${CMAKE_CURRENT_LIST_DIR})
-target_compile_definitions(gd32h77x_at_uart_transport INTERFACE AT_TRANSPORT_UART=1)
-target_link_libraries(gd32h77x_at_uart_transport INTERFACE
-    gd32h77x_at_core
-    gd32h77x_drivers)
+if(CONFIG_ENABLE_GD32H77X_AT_TRANSPORT_SPI)
+    add_library(gd32h77x_at_spi_transport INTERFACE)
+    target_sources(gd32h77x_at_spi_transport INTERFACE
+        at_transport.c
+        at_spi_transport.c
+        at_spi_protocol.c
+    )
+    target_include_directories(gd32h77x_at_spi_transport INTERFACE ${CMAKE_CURRENT_LIST_DIR})
+    target_compile_definitions(gd32h77x_at_spi_transport INTERFACE AT_TRANSPORT_SPI=1)
+    target_link_libraries(gd32h77x_at_spi_transport INTERFACE
+        gd32h77x_at_core
+        gd32h77x_drivers)
+    set(GD32H77X_AT_TRANSPORT_TARGET gd32h77x_at_spi_transport)
+else()
+    add_library(gd32h77x_at_uart_transport INTERFACE)
+    target_sources(gd32h77x_at_uart_transport INTERFACE
+        at_transport.c
+        at_uart_transport.c
+    )
+    target_include_directories(gd32h77x_at_uart_transport INTERFACE ${CMAKE_CURRENT_LIST_DIR})
+    target_compile_definitions(gd32h77x_at_uart_transport INTERFACE AT_TRANSPORT_UART=1)
+    target_link_libraries(gd32h77x_at_uart_transport INTERFACE
+        gd32h77x_at_core
+        gd32h77x_drivers)
+    set(GD32H77X_AT_TRANSPORT_TARGET gd32h77x_at_uart_transport)
+endif()
 
 add_library(gd32h77x_at INTERFACE)
 target_link_libraries(gd32h77x_at INTERFACE
     gd32h77x_at_core
-    gd32h77x_at_uart_transport)
+    ${GD32H77X_AT_TRANSPORT_TARGET})

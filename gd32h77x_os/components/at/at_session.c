@@ -169,6 +169,13 @@ static void transport_rx(void *context, const uint8_t *data, size_t length)
     if (xPortIsInsideInterrupt()) portYIELD_FROM_ISR(wake);
 }
 
+static bool transport_rx_ready(void *context, size_t length)
+{
+    (void)context;
+    return s_transport.rx_stream &&
+           xStreamBufferSpacesAvailable(s_transport.rx_stream) >= length;
+}
+
 static void set_poison(uint32_t fault)
 {
     taskENTER_CRITICAL();
@@ -863,6 +870,10 @@ at_status_t at_session_init(const at_session_events_t *events, void *context)
     }
     s_transport.transport->rx_callback = transport_rx;
     s_transport.transport->rx_context = NULL;
+    s_transport.transport->rx_ready_callback = transport_rx_ready;
+    s_transport.transport->rx_ready_context = NULL;
+    s_transport.transport->rx_ready_callback = transport_rx_ready;
+    s_transport.transport->rx_ready_context = NULL;
     s_transport.transport->fault_callback = transport_fault;
     s_transport.transport->fault_context = NULL;
     if (events) {

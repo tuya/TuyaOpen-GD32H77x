@@ -22,6 +22,7 @@
 #define RCU_GPIOH 17U
 #define RCU_GPIOJ 18U
 #define RCU_GPIOK 19U
+#define RCU_SYSCFG 20U
 #define GPIO_MODE_INPUT 1U
 #define GPIO_MODE_OUTPUT 2U
 #define GPIO_MODE_AF 3U
@@ -33,8 +34,20 @@
 #define GPIO_OTYPE_OD 1U
 #define GPIO_OSPEED_60MHZ 1U
 #define GPIO_OSPEED_85MHZ 2U
-#define SET 1U
-#define RESET 0U
+typedef enum {
+    RESET = 0,
+    SET = 1,
+} FlagStatus;
+
+typedef enum {
+    EXTI0_IRQn = 0,
+    EXTI1_IRQn,
+    EXTI2_IRQn,
+    EXTI3_IRQn,
+    EXTI4_IRQn,
+    EXTI5_9_IRQn,
+    EXTI10_15_IRQn,
+} IRQn_Type;
 #define GPIO_AF_0 0U
 #define GPIO_AF_1 1U
 #define GPIO_AF_2 2U
@@ -51,6 +64,9 @@
 #define GPIO_AF_13 13U
 #define GPIO_AF_14 14U
 #define GPIO_AF_15 15U
+#define GPIO_AF_16 16U
+#define GPIO_AF_17 17U
+#define GPIO_AF_18 18U
 #define GPIO_PIN_0 (1U << 0)
 #define GPIO_PIN_1 (1U << 1)
 #define GPIO_PIN_2 (1U << 2)
@@ -78,5 +94,9 @@ void gpio_af_set(uint32_t port, uint32_t af, uint32_t pin);
 void gpio_mode_set(uint32_t port, uint32_t mode, uint32_t pupd, uint32_t pin);
 void gpio_output_options_set(uint32_t port, uint32_t type, uint32_t speed, uint32_t pin);
 uint32_t gpio_input_bit_get(uint32_t port, uint32_t pin);
+void NVIC_EnableIRQ(IRQn_Type irq);
+void NVIC_DisableIRQ(IRQn_Type irq);
+void NVIC_ClearPendingIRQ(IRQn_Type irq);
+void NVIC_SetPriority(IRQn_Type irq, uint32_t priority);
 
 #endif

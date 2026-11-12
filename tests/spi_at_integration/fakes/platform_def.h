@@ -1,0 +1,6 @@
+#ifndef SPI_AT_FAKE_PLATFORM_DEF_H
+#define SPI_AT_FAKE_PLATFORM_DEF_H
+#define UART1 1U
+#define UART2 2U
+#define BAUDRATE_115200 115200U
+#endif

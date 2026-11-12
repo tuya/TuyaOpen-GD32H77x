@@ -96,6 +96,32 @@ TKL PWM0..11 映射到 TIMER0/1/2 的各 4 个通道。同一定时器上的通�
 | VSYNC | PB7 | 23 | 13 |
 | MCLK | PA8 | 8 | 0 (CKOUT0，固定由 TKL 管理) |
 
+## SDIO0/SDIO1 路由
+
+平台 Kconfig 的 `SDIO card SDIO host` 选择 FatFS 后端使用的控制器：
+`ENABLE_GD32H77X_SDIO_HOST_0` 或 `ENABLE_GD32H77X_SDIO_HOST_1`。
+
+### SDIO0
+
+| 信号 | 可选引脚 | AF |
+|---|---|---|
+| CLK | PC12 / TUYA_GPIO_NUM_44 | 12 |
+| CMD | PD2 / TUYA_GPIO_NUM_50 | 12 |
+| D0 | PB13 / TUYA_GPIO_NUM_29 | 12 |
+| D0 | PC8 / TUYA_GPIO_NUM_40 | 12 |
+| D1 | PC9 / TUYA_GPIO_NUM_41 | 12 |
+| D2 | PD8 / TUYA_GPIO_NUM_56 | 6 |
+| D2 | PC10 / TUYA_GPIO_NUM_42 | 12 |
+| D3 | PD9 / TUYA_GPIO_NUM_57 | 6 |
+| D3 | PC11 / TUYA_GPIO_NUM_43 | 12 |
+
+Watch EVAL 默认使用 PC12/PD2/PC8/PC9/PC10/PC11。
+
+### SDIO1
+
+默认 TKL 引脚组为 PC1/PA0/PB14/PB15/PB13/PB4；pinmux 同时支持
+PF4/PF5/PG9/PG10/PG11/PG12 备选路由。
+
 ## ADC 默认通道
 
 ADC 初始化和读数使用同一张 `控制器 + 通道 + GPIO` 表。模拟模式不需要 AF。

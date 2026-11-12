@@ -43,6 +43,8 @@ extern void __tkl_adc_set_pin(TUYA_ADC_NUM_E port, uint8_t channel,
 extern void __tkl_pwm_set_pin(TUYA_PWM_NUM_E port, TUYA_PIN_FUNC_E func,
                               uint32_t gpio_port, uint32_t gpio_pin,
                               uint32_t af);
+extern void __tkl_sdio_set_pin(TUYA_PIN_FUNC_E func, uint32_t gpio_port,
+                              uint32_t gpio_pin, uint32_t af);
 
 #define MODE_AF 0U
 #define MODE_OD 1U
@@ -52,6 +54,7 @@ static const uint32_t s_afs[] = {
     GPIO_AF_4, GPIO_AF_5, GPIO_AF_6, GPIO_AF_7,
     GPIO_AF_8, GPIO_AF_9, GPIO_AF_10, GPIO_AF_11,
     GPIO_AF_12, GPIO_AF_13, GPIO_AF_14, GPIO_AF_15,
+    GPIO_AF_16, GPIO_AF_17, GPIO_AF_18,
 };
 #define R(pin_, func_, af_) {(pin_), (func_), (af_), MODE_AF, 0xFFU}
 #define OD(pin_, func_, af_) {(pin_), (func_), (af_), MODE_OD, 0xFFU}
@@ -149,6 +152,31 @@ static const PIN_ROUTE_T s_routes[] = {
     R(24, TUYA_DVP0_D6, 13), R(25, TUYA_DVP0_D7, 13),
     R(6, TUYA_DVP0_PIXCLK, 13), R(127, TUYA_DVP0_HSYNC, 1),
     R(23, TUYA_DVP0_VSYNC, 13),
+
+    /* SDIO0 routes. */
+    R(44, TUYA_SDIO_CLK, 12),   /* PC12 */
+    R(50, TUYA_SDIO_CMD, 12),   /* PD2 */
+    R(29, TUYA_SDIO_DATA0, 12), /* PB13, official EVAL group */
+    R(40, TUYA_SDIO_DATA0, 12), /* PC8, Watch EVAL group */
+    R(41, TUYA_SDIO_DATA1, 12), /* PC9 */
+    R(56, TUYA_SDIO_DATA2, 6),  /* PD8 */
+    R(42, TUYA_SDIO_DATA2, 12), /* PC10 */
+    R(57, TUYA_SDIO_DATA3, 6),  /* PD9 */
+    R(43, TUYA_SDIO_DATA3, 12), /* PC11 */
+
+    /* SDIO1 routes. */
+    R(33, TUYA_SDIO_CLK, 9),    /* PC1 */
+    R(0,  TUYA_SDIO_CMD, 9),    /* PA0 */
+    R(30, TUYA_SDIO_DATA0, 9),  /* PB14 */
+    R(31, TUYA_SDIO_DATA1, 9),  /* PB15 */
+    R(29, TUYA_SDIO_DATA2, 16), /* PB13 */
+    R(20, TUYA_SDIO_DATA3, 9),  /* PB4 */
+    R(84, TUYA_SDIO_DATA0, 10), /* PF4 */
+    R(85, TUYA_SDIO_DATA1, 10), /* PF5 */
+    R(107, TUYA_SDIO_DATA2, 10),/* PG11 */
+    R(108, TUYA_SDIO_DATA3, 10),/* PG12 */
+    R(105, TUYA_SDIO_DATA0, 11),/* PG9 */
+    R(106, TUYA_SDIO_DATA1, 11),/* PG10 */
 
     /* ADC external channel routes.  Analog mode has no AF value; the last
      * field records the controller channel used by the ADC driver table. */
@@ -258,6 +286,10 @@ static void __update_driver_pin(TUYA_PIN_FUNC_E func, uint32_t gpio_port,
     }
     if (func >= TUYA_DVP0_D0 && func <= TUYA_DVP0_VSYNC) {
         __tkl_dvp_set_pin(func, gpio_port, gpio_pin, af);
+        return;
+    }
+    if (func >= TUYA_SDIO_CLK && func <= TUYA_SDIO_DATA3) {
+        __tkl_sdio_set_pin(func, gpio_port, gpio_pin, af);
         return;
     }
     if (func >= TUYA_ADC0 && func <= TUYA_ADC5) {

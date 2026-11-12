@@ -21,6 +21,7 @@ list(APPEND PLATFORM_PUBINC
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/spi"
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/dvp"
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/dma2d"
+    "${PLATFORM_PATH}/gd32h77x_os/components/fatfs"
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/wifi"
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/bluetooth"
     "${PLATFORM_PATH}/tuyaos/tuyaos_adapter/include/utilities/include")

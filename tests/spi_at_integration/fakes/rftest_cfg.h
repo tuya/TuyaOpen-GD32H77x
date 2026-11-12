@@ -1,0 +1,3 @@
+#ifndef SPI_AT_FAKE_RFTEST_CFG_H
+#define SPI_AT_FAKE_RFTEST_CFG_H
+#endif

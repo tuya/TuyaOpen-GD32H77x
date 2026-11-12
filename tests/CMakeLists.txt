@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
 project(gd32h77x_host_tests C)
 enable_testing()
+
+# The VW553 platform repository is an optional sibling checkout. Register the
+# cross-end protocol test only when its portable protocol helper is available.
+set(GD32H77X_VW553_SPI_PROTOCOL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../GD32/gd32_os/MSDK/vw553_at_gateway/gateway_spi_protocol.c")
+if(EXISTS "${GD32H77X_VW553_SPI_PROTOCOL}")
+    add_test(NAME gd32h77x_spi_at_integration
+        COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/spi_at_integration/run.sh")
+endif()
+
 option(ENABLE_SANITIZERS "Enable address and undefined-behavior sanitizers" ON)
 if(TOS_PYTHON)
     set(GD32H77X_TEST_PYTHON "${TOS_PYTHON}")
