@@ -91,7 +91,7 @@ class PlatformConfigTests(unittest.TestCase):
                 encoding="utf-8")
             out = Path(tmp) / "out"
             platform_config.write_outputs(
-                PLATFORM, "GD32H779IW", "GD32H779I_WATCH_EVAL", out,
+                PLATFORM, "GD32H779IW", "GD32H779I_DESK_BUDDY", out,
                 project_config)
             cmake = (out / "gd32h77x_config.cmake").read_text()
             header = (out / "include/gd32h77x_config.h").read_text()

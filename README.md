@@ -154,11 +154,11 @@ TuyaOpen 默认 backend 可来自芯片配置或可选的板级 `platform_config
 
 ### H779 的 CNVM + ECNVM 双区执行
 
-`GD32H779V_START` 和 `GD32H779I_WATCH_EVAL` 使用 7 MiB `ecnvm_code` 分区和末尾 512 KiB `kv` 分区。只要当前布局声明 `ecnvm_code`，平台就自动把应用 `.text/.rodata` 链接到 `0x08200000` 起的 ECNVM；boot table、向量表和 RAM 初始化数据装载段仍保留在 CNVM，KV 位于独立的 Data ECNVM1 `[0x08900000,0x08980000)`。QIO 固件同时携带 CNVM 启动镜像和独立 ECNVM 应用 payload。SWD/DFU bridge 只按 ECNVM 代码区擦写并强制回读，再写 CNVM；不会写 KV。该布局必须使用完整 QIO 固件；`tos.py flash --no-verify` 不会关闭 ECNVM 回读。
+`GD32H779V_START` 和 `GD32H779I_DESK_BUDDY` 使用 7 MiB `ecnvm_code` 分区和末尾 512 KiB `kv` 分区。只要当前布局声明 `ecnvm_code`，平台就自动把应用 `.text/.rodata` 链接到 `0x08200000` 起的 ECNVM；boot table、向量表和 RAM 初始化数据装载段仍保留在 CNVM，KV 位于独立的 Data ECNVM1 `[0x08900000,0x08980000)`。QIO 固件同时携带 CNVM 启动镜像和独立 ECNVM 应用 payload。SWD/DFU bridge 只按 ECNVM 代码区擦写并强制回读，再写 CNVM；不会写 KV。该布局必须使用完整 QIO 固件；`tos.py flash --no-verify` 不会关闭 ECNVM 回读。
 
 2026-10-29 已在 H779VW 实板验证：当前镜像 CNVM 71,276 字节、ECNVM 433,652 字节，reset entry 为 `0x08200b45`，设备从 ECNVM 启动。ECNVM KV runtime 4 KiB page erase、8 B 最小/32 B burst program、AXI SRAM resident 执行和回读路径已实现；`ecnvm_kv_selftest run` 在 `0x08977000` reserved 页完成擦除、32 B 编程、回读比较/CRC 和最终擦除并 PASS。通过 `tal_cli auth` 写入 ECNVM KV 后，复位前后两次 `auth-read` 均读取成功。OTA 下载、安装、回滚仍单独保持未实现，不能据此宣称在线升级或完整网络验收已可用。
 
-2026-11-06 已在 `GD32H779I_WATCH_EVAL` 实板验证 DFU 双区域烧录：ECNVM `0x08200000` 擦写 15 个 4 KiB 页（61,100 字节源、61,440 字节 padded）并回读，随后 CNVM `0x08000000` 擦写 2 个 64 KiB 扇区（69,924 字节源、131,072 字节 padded）并回读。独立 DfuSe upload 与 QIO 包内 `internal.bin`、`ecnvm_code.bin` 完全一致；未写 ECNVM KV 区。
+2026-11-06 已在 `GD32H779I_DESK_BUDDY` 实板验证 DFU 双区域烧录：ECNVM `0x08200000` 擦写 15 个 4 KiB 页（61,100 字节源、61,440 字节 padded）并回读，随后 CNVM `0x08000000` 擦写 2 个 64 KiB 扇区（69,924 字节源、131,072 字节 padded）并回读。独立 DfuSe upload 与 QIO 包内 `internal.bin`、`ecnvm_code.bin` 完全一致；未写 ECNVM KV 区。
 
 平台的器件身份来自 `gd32h77x_os/chips/platform_chips.json`，共支持 D/E/779/RAP 的 16 个 canonical DFP target。`GD32H77D` 是兼容 alias，映射到 `GD32H77DIW`；当前不再提供 GinoPi board，其他实际板卡应使用具体料号或明确维护自己的板级映射。Flash registry 的容量、64 KiB sector 和算法名必须与本地原厂 pack 一致。2 MiB 使用 `GD32H77x_78x_CNVM_2M.FLM`，1.625 MiB 使用 `GD32H77x_78x_CNVM_1M_640K.FLM`。SWD target 不能覆盖 layout/manifest 的 canonical target。
 

@@ -1,6 +1,6 @@
 /**
  * @file soft_uart.c
- * @brief GPIO bit-banged UART on GD32H779I Watch EVAL.
+ * @brief GPIO bit-banged UART on GD32H779I DESK BUDDY.
  *
  * PF4 is TX, PF5 is RX, 9600 8N1. The TX path is continuous; RX bytes are
  * echoed while the main loop is idle.

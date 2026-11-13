@@ -62,6 +62,28 @@ class BuildExampleTests(unittest.TestCase):
                 build_example.stage_project_config(root, board, output))
             self.assertFalse(output.exists())
 
+    def test_application_overlay_is_board_specific_and_stale_safe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "app"
+            override = app / "platform_config/BOARD.config"
+            override.parent.mkdir(parents=True)
+            override.write_text("CONFIG_ENABLE_GD32H77X_AT_TRANSPORT_SPI=y\n")
+            output = root / "build/project.config"
+            build_example.stage_project_config(root, "BOARD", output, app)
+            self.assertEqual(output.read_text(), override.read_text())
+            board = root / "boards/GD32H77X/BOARD/platform_config/gd32h77x.config"
+            board.parent.mkdir(parents=True)
+            board.write_text("CONFIG_GD32H77X_AT_BAUD=115200\n")
+            build_example.stage_project_config(root, "BOARD", output, app)
+            self.assertTrue(output.read_text().startswith(board.read_text()))
+            self.assertTrue(output.read_text().endswith(override.read_text()))
+            self.assertIsNone(build_example.stage_project_config(root, "OTHER", output, app))
+            self.assertFalse(output.exists())
+            override.unlink()
+            build_example.stage_project_config(root, "BOARD", output, app)
+            self.assertEqual(output.read_text(), board.read_text())
+
     def test_ecnvm_payload_mode_comes_from_resolved_layout(self):
         with tempfile.TemporaryDirectory(prefix="gd32h77x-build-example-test-") as temporary:
             layout = Path(temporary) / "resolved_layout.json"

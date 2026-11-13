@@ -16,7 +16,8 @@ def board_config_path(source_root: Path, board: str) -> Path:
             / "gd32h77x.config")
 
 
-def stage_project_config(source_root: Path, board: str, output: Path) -> Path | None:
+def stage_project_config(source_root: Path, board: str, output: Path,
+                         app_root: Path | None = None) -> Path | None:
     """Copy the selected board config into a build-local project config path.
 
     A missing board config removes any stale staged file from a previous build so
@@ -24,11 +25,16 @@ def stage_project_config(source_root: Path, board: str, output: Path) -> Path | 
     """
     source = board_config_path(source_root.resolve(), board)
     output = output.resolve()
-    if not source.is_file():
+    fragments = [source] if source.is_file() else []
+    if app_root is not None:
+        override = app_root.resolve() / "platform_config" / f"{board}.config"
+        if override.is_file():
+            fragments.append(override)
+    if not fragments:
         output.unlink(missing_ok=True)
         return None
 
-    data = source.read_bytes()
+    data = b"\n".join(path.read_bytes() for path in fragments)
     if output.is_file() and output.read_bytes() == data:
         return output
 
@@ -44,8 +50,9 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--board", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--app-root", type=Path)
     args = parser.parse_args()
-    result = stage_project_config(args.source_root, args.board, args.output)
+    result = stage_project_config(args.source_root, args.board, args.output, args.app_root)
     print(result if result is not None else "")
     return 0
 

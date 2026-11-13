@@ -54,7 +54,8 @@ def main():
         data = json.loads((parameters / "build_param.json").read_text())
         project_config = stage_project_config(
             OPEN_ROOT, data["PLATFORM_BOARD"],
-            parameters.parent / "gd32h77x" / "project" / "tuya" / "project.config")
+            parameters.parent / "gd32h77x" / "project" / "tuya" / "project.config",
+            app_root=parameters.parent.parent)
         _write_project_context(parameters, data, project_config)
     subprocess.run([sys.executable, str(BUILD_FIRMWARE), str(parameters), args.command],
                    check=True)

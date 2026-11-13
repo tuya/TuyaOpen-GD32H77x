@@ -14,6 +14,6 @@ Build with the standalone project builder:
 PATH=/opt/gcc-arm-none-eabi-10.3-2021.10/bin:$PATH \
 ./.venv/bin/python platform/GD32H77X/gd32h77x_os/tools/build_project.py \
   platform/GD32H77X/gd32h77x_os/project/soft_uart build \
-  --chip GD32H779IW --board GD32H779I_WATCH_EVAL \
+  --chip GD32H779IW --board GD32H779I_DESK_BUDDY \
   --name soft_uart_demo --version 0.1.0
 ```

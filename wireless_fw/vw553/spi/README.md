@@ -48,7 +48,7 @@ TCP/IP、BLE、`+IPD` 和二进制数据语义。它没有启用原厂 `CONFIG_A
 | READY | PE3 GPIO/EXTI | PA4 output |
 | Ground | GND | GND |
 
-VW553 板上 PA0 同时接按键、PA1 接 LED；连接 SPI 前需先隔离或处理这些板载负载。
+仓库中的 LCKFB_GD32VW553 引脚图标注：PA0 同时接用户 KEY，板载 LED 位于 PC13；PA1 为 SPI MISO。SPI 使用期间不要按 KEY。
 
 ### 已完成的硬件 smoke
 

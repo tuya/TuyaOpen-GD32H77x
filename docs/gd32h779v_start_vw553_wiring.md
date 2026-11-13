@@ -39,7 +39,7 @@ H779 SPI transport 和 VW553 SPI gateway 已加入源码，均为显式 opt-in�
 | READY | PE3 GPIO、EXTI3；JP4-19 | PA4 输出 | VW553 收到 REQUEST 后先准备 TX/RX，再拉高 READY；DMA 收发完成且 REQUEST 撤销后拉低。CRC/ACK 状态在下一帧体现；空 poll 也必须响应。 |
 | 共地 | GND；JP4-5 | GND | SPI 必须共地；IO 为 3.3 V。 |
 
-嘉立创板资料标注 PA0 连接按键、PA1 连接 LED。焊接前应确认板载负载不会影响 SPI 波形；必要时断开相关负载。553 侧按本协议将 PA3 用作 REQUEST 输入、PA4 用作 READY 输出，不能把旧 master/slave 示例的 GPIO 方向直接照搬。
+仓库 LCKFB_GD32VW553.pdf 的引脚图标注 PA0 为用户按键、板载 LED 为 PC13；PA1 用于 SPI MISO。使用 SPI 时不要按 PA0 的 KEY。553 侧按本协议将 PA3 用作 REQUEST 输入、PA4 用作 READY 输出，不能把旧 master/slave 示例的 GPIO 方向直接照搬。
 
 ### SPI 帧与握手
 
@@ -92,4 +92,4 @@ H779 transport 在启动握手阶段会继续发送 HELLO，READY 超时不会�
 - H779：GigaDevice `GD32H779V-START V1.0` 原理图，第 7 页 Extension；板载 USB-UART 见 CN4。
 - 553：仓库中的 [嘉立创 GD32VW553 资料](../../../boards/GD32/LCKFB_GD32VW553/LCKFB_GD32VW553.pdf)。这是彩色引脚与资源介绍资料，不是电路原理图，不能据此编造排针编号。
 - 553 串口说明：[立创 GD32VW553 UART 通信](https://wiki.lckfb.com/zh-hans/gd32vw553/beginner/uart-communication.html)。
-- 553 PA0/PA1 板载功能：[立创 GD32VW553 按键与 LED](https://wiki.lckfb.com/zh-hans/gd32vw553/beginner/key-led.html)。
+- 553 按键与 LED 板载功能：[立创 GD32VW553 按键与 LED](https://wiki.lckfb.com/zh-hans/gd32vw553/beginner/key-led.html)。

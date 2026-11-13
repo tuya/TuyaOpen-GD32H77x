@@ -157,7 +157,7 @@ static const PIN_ROUTE_T s_routes[] = {
     R(44, TUYA_SDIO_CLK, 12),   /* PC12 */
     R(50, TUYA_SDIO_CMD, 12),   /* PD2 */
     R(29, TUYA_SDIO_DATA0, 12), /* PB13, official EVAL group */
-    R(40, TUYA_SDIO_DATA0, 12), /* PC8, Watch EVAL group */
+    R(40, TUYA_SDIO_DATA0, 12), /* PC8, DESK BUDDY group */
     R(41, TUYA_SDIO_DATA1, 12), /* PC9 */
     R(56, TUYA_SDIO_DATA2, 6),  /* PD8 */
     R(42, TUYA_SDIO_DATA2, 12), /* PC10 */
