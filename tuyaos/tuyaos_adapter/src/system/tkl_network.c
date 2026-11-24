@@ -734,8 +734,7 @@ OPERATE_RET tkl_net_set_reuse(const int fd)
 OPERATE_RET tkl_net_disable_nagle(const int fd)
 {
     // --- BEGIN: user implements ---
-    (void)fd;
-    return OPRT_NOT_SUPPORTED;
+    return tuya_at_status_to_oprt(at_socket_disable_nagle(fd));
     // --- END: user implements ---
 }
 
@@ -773,8 +772,7 @@ OPERATE_RET tkl_net_set_keepalive(int fd, const BOOL_T alive, const uint32_t idl
                                   const uint32_t cnt)
 {
     // --- BEGIN: user implements ---
-    (void)fd; (void)alive; (void)idle; (void)intr; (void)cnt;
-    return OPRT_NOT_SUPPORTED;
+    return tuya_at_status_to_oprt(at_socket_set_keepalive(fd, alive != FALSE, idle, intr, cnt));
     // --- END: user implements ---
 }
 

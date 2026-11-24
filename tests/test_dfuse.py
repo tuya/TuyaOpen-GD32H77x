@@ -332,6 +332,34 @@ class TestProtocol(unittest.TestCase):
         self.assertTrue(self.model.leave_requested)
         self.assertEqual(self.model.state, dfuse.STATE_DFU_MANIFEST_WAIT_RESET)
 
+    def test_leave_accepts_transient_stall_followed_by_disconnect(self):
+        with mock.patch.object(self.protocol, "set_address"), \
+             mock.patch.object(self.protocol, "get_status", side_effect=[
+                 dfuse.DfuStalled("stall"), dfuse.DfuDisconnected("gone")]), \
+             mock.patch.object(dfuse.time, "sleep"):
+            self.protocol.leave()
+
+    def test_leave_does_not_hide_persistent_stall(self):
+        with mock.patch.object(self.protocol, "set_address"), \
+             mock.patch.object(self.protocol, "get_status", side_effect=dfuse.DfuStalled("stall")), \
+             mock.patch.object(dfuse.time, "monotonic", side_effect=[0.0, 3.0]):
+            with self.assertRaises(dfuse.DfuStalled):
+                self.protocol.leave()
+
+    def test_leave_accepts_transient_io_error_followed_by_disconnect(self):
+        with mock.patch.object(self.protocol, "set_address"), \
+             mock.patch.object(self.protocol, "get_status", side_effect=[
+                 dfuse.DfuTransferError("I/O error"), dfuse.DfuDisconnected("gone")]), \
+             mock.patch.object(dfuse.time, "sleep"):
+            self.protocol.leave()
+
+    def test_leave_does_not_hide_persistent_io_error(self):
+        with mock.patch.object(self.protocol, "set_address"), \
+             mock.patch.object(self.protocol, "get_status", side_effect=dfuse.DfuTransferError("I/O error")), \
+             mock.patch.object(dfuse.time, "monotonic", side_effect=[0.0, 3.0]):
+            with self.assertRaises(dfuse.DfuTransferError):
+                self.protocol.leave()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,21 @@ enum {
 
 static volatile uint32_t s_initialized;
 
+static inline __attribute__((always_inline)) bool gd32h77x_ecnvm_independent_data_range(
+    uint32_t address, uint32_t size)
+{
+#if defined(MAIN_ECNVM_DECNVM0_BASE_ADDRESS) && defined(MAIN_ECNVM_DECNVM1_BASE_ADDRESS)
+    /* User Manual Rev1.0 Tables 7-1/7-2; chip-specific vendor constants. */
+    return gd32h77x_ecnvm_data_range_valid(
+        address, size, MAIN_ECNVM_DECNVM0_BASE_ADDRESS, MAIN_ECNVM_DECNVM0_SIZE,
+        MAIN_ECNVM_DECNVM1_BASE_ADDRESS, MAIN_ECNVM_DECNVM1_SIZE);
+#else
+    (void)address;
+    (void)size;
+    return false;
+#endif
+}
+
 static bool gd32h77x_ecnvm_is_mapped_device(const gd32h77x_layout_device_t *device)
 {
     return device != NULL && device->region != NULL &&
@@ -91,8 +106,9 @@ static int gd32h77x_ecnvm_execute_ram(uint32_t address, const uint8_t *source,
     __DSB();
     __ISB();
 
-    /* Data-integrity-enhancement mode reserves ECNVM banks for CNVM repair. */
-    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U) {
+    /* DIEEN protects repair banks, not the independent Data ECNVM0/1 areas. */
+    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U &&
+        !gd32h77x_ecnvm_independent_data_range(address, size)) {
         result = GD32H77X_ECNVM_RAM_UNSUPPORTED;
         goto restore_interrupts;
     }
@@ -258,7 +274,8 @@ gd32h77x_status_t gd32h77x_ecnvm_program(uint32_t address, const uint8_t *source
     if ((NVMC_ECNVM_STAT & NVMC_ECNVM_STAT_BUSY) != 0U) {
         return GD32H77X_STATUS_NOT_READY;
     }
-    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U) {
+    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U &&
+        !gd32h77x_ecnvm_independent_data_range(address, size)) {
         return GD32H77X_STATUS_UNSUPPORTED;
     }
 
@@ -286,7 +303,8 @@ gd32h77x_status_t gd32h77x_ecnvm_erase(uint32_t address, uint32_t size)
     if ((NVMC_ECNVM_STAT & NVMC_ECNVM_STAT_BUSY) != 0U) {
         return GD32H77X_STATUS_NOT_READY;
     }
-    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U) {
+    if ((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U &&
+        !gd32h77x_ecnvm_independent_data_range(address, size)) {
         return GD32H77X_STATUS_UNSUPPORTED;
     }
 

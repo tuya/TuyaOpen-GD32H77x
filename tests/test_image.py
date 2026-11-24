@@ -2,6 +2,7 @@
 """Check real firmware artifacts and reject corrupted flashable images."""
 import argparse
 import json
+import struct
 from pathlib import Path
 import sys
 import tempfile
@@ -42,6 +43,36 @@ class ImageTests(unittest.TestCase):
         self.assertTrue(result["sourceInputs"])
         self.assertTrue(all({"sourceKind", "sourcePath", "digest"} <= item.keys()
                             for item in result["sourceInputs"]))
+
+    def test_reject_corrupt_linker_heap_bounds(self):
+        original = self.elf.read_bytes()
+        section_offset = struct.unpack_from("<I", original, 32)[0]
+        section_size, section_count = struct.unpack_from("<HH", original, 46)
+        sections = [struct.unpack_from("<10I", original, section_offset + i * section_size)
+                    for i in range(section_count)]
+        offsets = {}
+        for section in sections:
+            if section[1] != 2:
+                continue
+            strings = sections[section[6]]
+            table = original[strings[4]:strings[4] + strings[5]]
+            for offset in range(section[4], section[4] + section[5], 16):
+                name, value = struct.unpack_from("<II", original, offset)
+                end = table.find(b"\0", name)
+                symbol = table[name:end].decode()
+                if symbol in ("__rtos_heap_start", "__rtos_heap_end", "ucHeap"):
+                    offsets[symbol] = (offset + 4, value)
+        if "__rtos_heap_start" not in offsets and "__rtos_heap_end" not in offsets:
+            self.skipTest("Legacy image predates linker-managed heap")
+        self.assertEqual(len(offsets), 3)
+        for symbol, (offset, value) in offsets.items():
+            with self.subTest(symbol=symbol):
+                corrupt = bytearray(original)
+                struct.pack_into("<I", corrupt, offset, value + 8)
+                bad_elf = Path(self.temporary.name) / "bad-heap.elf"
+                bad_elf.write_bytes(corrupt)
+                with self.assertRaisesRegex(ValueError, "FreeRTOS heap bounds"):
+                    verify(bad_elf, self.binary, self.resolved_layout, **self.verify_args())
 
     def test_corrupt_bytes(self):
         for offset in (0, 4, 100, 0x10000, 0x10000 + 15 * 4, 0x103CC, 0x11000, len(self.raw) - 1):

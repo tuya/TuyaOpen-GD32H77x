@@ -7,11 +7,11 @@ VW553 是独立无线 MCU。其固件构建和烧录与 H779/H77 主控二进制
 不需要拉取 `platform/GD32` 源码仓库：
 
 ```text
-platform/GD32H77X/wireless_fw/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
+boards/GD32H77X/GD32H779V_START/firmware/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
 ```
 
 版本、SHA256、引脚和验收边界见
-[VW553 wireless firmware](../wireless_fw/vw553/README.md)。
+[VW553 wireless firmware](../../../boards/GD32H77X/GD32H779V_START/firmware/vw553/README.md)。
 
 不修改 VW553 固件时，推荐使用 GigaDevice 官方独立工具
 **GD32 Mass Production Tool**。已验证版本 `v1.0.5g`，包 SHA256 为
@@ -115,7 +115,7 @@ python3 platform/GD32/platform_flash_bridge.py \
   --device GD32VW553H \
   --port /dev/ttyUSB0 \
   --baud 2000000 \
-  --binfile platform/GD32H77X/wireless_fw/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
+  --binfile boards/GD32H77X/GD32H779V_START/firmware/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
 ```
 
 只有修改 VW553 源码并重新构建时，才把 `--binfile` 改为：

@@ -36,6 +36,18 @@ typedef void (*THREAD_FUNC_T)(void *);
 OPERATE_RET tkl_thread_create(TKL_THREAD_HANDLE *thread, const char *name, uint32_t stack_size, uint32_t priority,
                               const THREAD_FUNC_T func, void *const arg);
 
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+/**
+ * @brief Create a thread requested to use PSRAM memory.
+ *
+ * GD32H77X currently keeps task stacks in internal SRAM and maps this request to
+ * the regular thread allocator. The symbol is required by tal_thread.c when
+ * ENABLE_EXT_RAM is selected.
+ */
+OPERATE_RET tkl_thread_create_in_psram(TKL_THREAD_HANDLE *thread, const char *name, uint32_t stack_size,
+                                       uint32_t priority, const THREAD_FUNC_T func, void *const arg);
+#endif
+
 /**
  * @brief Terminal thread and release thread resources
  *

@@ -99,11 +99,16 @@ static int uart_open(at_transport_t *transport)
     (void)transport;
     at_uart_config_t *config = &s_uart.config;
     rcu_periph_clock_enable(config->gpio_clock);
+    rcu_periph_clock_enable(config->rx_gpio_clock);
     rcu_periph_clock_enable(config->usart_clock);
-    gpio_af_set(config->gpio_port, config->alternate_function, config->tx_pin | config->rx_pin);
-    gpio_mode_set(config->gpio_port, GPIO_MODE_AF, GPIO_PUPD_PULLUP, config->tx_pin | config->rx_pin);
+    gpio_af_set(config->gpio_port, config->alternate_function, config->tx_pin);
+    gpio_af_set(config->rx_gpio_port, config->rx_alternate_function, config->rx_pin);
+    gpio_mode_set(config->gpio_port, GPIO_MODE_AF, GPIO_PUPD_PULLUP, config->tx_pin);
+    gpio_mode_set(config->rx_gpio_port, GPIO_MODE_AF, GPIO_PUPD_PULLUP, config->rx_pin);
     gpio_output_options_set(config->gpio_port, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ,
-                            config->tx_pin | config->rx_pin);
+                            config->tx_pin);
+    gpio_output_options_set(config->rx_gpio_port, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ,
+                            config->rx_pin);
     usart_deinit(config->usart);
     usart_baudrate_set(config->usart, config->baudrate);
     usart_word_length_set(config->usart, config->word_length);

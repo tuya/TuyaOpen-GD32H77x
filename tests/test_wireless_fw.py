@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-FW_ROOT = ROOT / "wireless_fw" / "vw553"
+FW_ROOT = ROOT.parents[1] / "boards/GD32H77X/GD32H779V_START/firmware/vw553"
 UART_ROOT = FW_ROOT / "uart"
 SPI_ROOT = FW_ROOT / "spi"
 README = FW_ROOT / "README.md"

@@ -20,6 +20,8 @@ typedef struct {
     bool (*wait_ready)(void *context, uint32_t timeout_ms);
     bool (*recover_transport)(void *context);
     bool (*hardware_reset)(void *context);
+    /* Optional: a boot READY preempted the initial startup probe. */
+    bool (*ready_observed)(void *context);
 } at_module_reset_ops_t;
 
 typedef struct {
@@ -27,9 +29,11 @@ typedef struct {
     bool hardware_reset_attempted;
 } at_module_reset_result_t;
 
-/* Runs one bounded reset sequence. There are deliberately no implicit retries:
- * startup probes once, recovery first tries local transport recovery, then the
- * selected reset path uses AT+RST before the hardware reset fallback. */
+/* Runs one bounded reset sequence. There are deliberately no command retries:
+ * startup may recover once when a boot READY interrupted its first probe, so it
+ * can distinguish a booting module from an unresponsive one. Recovery first
+ * tries local transport recovery, then the selected reset path uses AT+RST
+ * before the hardware reset fallback. */
 bool at_module_reset_run(at_module_reset_mode_t mode, const at_module_reset_ops_t *ops,
                             void *context, uint32_t ready_timeout_ms,
                             at_module_reset_result_t *result);

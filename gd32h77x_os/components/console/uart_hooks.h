@@ -22,6 +22,7 @@ typedef struct {
 
 /* Snapshot counters accumulated by the USART1 RX path. */
 void gd32h77x_uart_get_stats(gd32h77x_uart_stats_t *stats);
+void gd32h77x_uart_get_port_stats(uint32_t port_id, gd32h77x_uart_stats_t *stats);
 
 /* Optional platform-side bring-up hooks. The default implementation is weak
  * and returns false; platform examples may provide strong implementations. */

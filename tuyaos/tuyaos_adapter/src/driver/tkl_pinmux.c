@@ -126,7 +126,7 @@ static const PIN_ROUTE_T s_routes[] = {
     R(26, TUYA_UART2_TX, 7), R(27, TUYA_UART2_RX, 7), /* PB10/PB11 */
 
     R(0, TUYA_UART3_TX, 8), R(1, TUYA_UART3_RX, 8), /* PA0/PA1 */
-    R(48, TUYA_UART3_TX, 8), R(49, TUYA_UART3_RX, 8), /* PD0/PD1 */
+    R(48, TUYA_UART3_RX, 8), R(49, TUYA_UART3_TX, 8), /* PD0/PD1 */
     R(42, TUYA_UART3_TX, 8), R(43, TUYA_UART3_RX, 8), /* PC10/PC11 */
 
     R(29, TUYA_UART4_TX, 14), R(28, TUYA_UART4_RX, 14), /* PB13/PB12 */

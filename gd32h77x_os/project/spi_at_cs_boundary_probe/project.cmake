@@ -1,0 +1,2 @@
+set(GD32H77X_PROJECT_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../spi_at_dma_boundary_probe/boundary_probe.c")
+list(APPEND GD32H77X_PROJECT_LINK_TARGETS gd32h77x_console gd32h77x_at)

@@ -48,6 +48,16 @@ static void check_codecs(void)
     assert(h_out.flags == h_in.flags && h_out.seq == h_in.seq && h_out.ack == h_in.ack);
     assert(h_out.length == h_in.length && memcmp(decoded, payload, sizeof(payload)) == 0);
 
+    /* A valid-CRC snapshot from the opposite CS/READY protocol is rejected. */
+    v_frame[2] = AT_SPI_PROTOCOL_VERSION == 1U ? 2U : 1U;
+    uint16_t crc = at_spi_crc16_ccitt_false(v_frame, 14U);
+    v_frame[14] = (uint8_t)crc;
+    v_frame[15] = (uint8_t)(crc >> 8);
+    assert(!at_spi_frame_decode(v_frame, &h_out, decoded));
+    assert(vw553_spi_frame_decode(v_frame, &v_flags, &v_seq, &v_ack,
+                                  &v_payload, &v_len) != 0);
+    memcpy(v_frame, h_frame, sizeof(v_frame));
+
     /* A payload bit error, header bit error, or nonzero pad must be rejected. */
     v_frame[AT_SPI_HEADER_SIZE + 17] ^= 0x80;
     assert(!at_spi_frame_decode(v_frame, &h_out, decoded));
@@ -66,6 +76,66 @@ static void check_codecs(void)
     assert(!at_spi_frame_decode(h_frame, &h_out, decoded));
     assert(vw553_spi_frame_decode(h_frame, &v_flags, &v_seq, &v_ack,
                                   &v_payload, &v_len) != 0);
+}
+
+static at_spi_frame_validation_t rejected_reason(uint8_t frame[AT_SPI_FRAME_SIZE])
+{
+    at_spi_frame_t decoded;
+    uint8_t payload[AT_SPI_PAYLOAD_SIZE];
+    at_spi_frame_validation_t reason = AT_SPI_FRAME_VALID;
+    assert(!at_spi_frame_decode_checked(frame, &decoded, payload, &reason));
+    return reason;
+}
+
+static void check_validation_reasons(void)
+{
+    uint8_t valid[AT_SPI_FRAME_SIZE];
+    uint8_t mutated[AT_SPI_FRAME_SIZE];
+    uint8_t payload[4] = {'A', 'T', '\r', '\n'};
+    at_spi_frame_t frame = {.flags = 0U, .seq = 1U, .ack = 2U,
+                            .length = sizeof(payload), .payload = payload};
+    at_spi_frame_t decoded;
+    uint8_t decoded_payload[AT_SPI_PAYLOAD_SIZE];
+    at_spi_frame_validation_t reason = AT_SPI_FRAME_INVALID_MAGIC;
+
+    assert(at_spi_frame_encode(valid, &frame));
+    assert(at_spi_frame_decode_checked(valid, &decoded, decoded_payload, &reason));
+    assert(reason == AT_SPI_FRAME_VALID);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[0] ^= 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_MAGIC);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[2] ^= 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_VERSION);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[3] = 3U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_FLAGS);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[10] = 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_RESERVED);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[4] ^= 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_HEADER_CRC);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[8] = (uint8_t)(AT_SPI_PAYLOAD_SIZE + 1U);
+    uint16_t crc = at_spi_crc16_ccitt_false(mutated, 14U);
+    mutated[14] = (uint8_t)crc;
+    mutated[15] = (uint8_t)(crc >> 8);
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_LENGTH);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[AT_SPI_HEADER_SIZE] ^= 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_PAYLOAD_CRC);
+
+    memcpy(mutated, valid, sizeof(mutated));
+    mutated[AT_SPI_FRAME_SIZE - 1U] = 1U;
+    assert(rejected_reason(mutated) == AT_SPI_FRAME_INVALID_PADDING);
 }
 
 static void h779_build(at_spi_link_state_t *link, uint8_t frame[AT_SPI_FRAME_SIZE])
@@ -169,11 +239,13 @@ static void check_retransmit_and_deduplicate(void)
     assert(v.rx_expected == 1U);
 }
 
-static void check_fragment_boundaries(void)
+static void check_fragment_boundaries(size_t size, size_t alignment)
 {
     at_spi_link_state_t h;
     vw553_spi_link_t v;
-    uint8_t source[481], h_tx[AT_SPI_FRAME_SIZE], v_tx[VW553_SPI_FRAME_SIZE];
+    _Alignas(8) uint8_t storage[4096 + 8];
+    uint8_t *source = storage + alignment;
+    uint8_t h_tx[AT_SPI_FRAME_SIZE], v_tx[VW553_SPI_FRAME_SIZE];
     const uint8_t *rx;
     uint16_t rx_len;
     at_spi_link_rx_result_t hr;
@@ -182,14 +254,15 @@ static void check_fragment_boundaries(void)
     unsigned accepted = 0;
     size_t i;
 
-    for (i = 0; i < sizeof(source); ++i) source[i] = (uint8_t)(i * 13U);
+    assert(size > 0 && size <= 4096U && alignment < 8U);
+    for (i = 0; i < 4096U; ++i) source[i] = (uint8_t)(i * 13U);
     source[0] = 0;
     source[239] = 0;
     source[240] = 0;
     source[480] = 0;
     establish(&h, &v);
-    while (offset < sizeof(source)) {
-        size_t chunk = sizeof(source) - offset;
+    while (offset < size) {
+        size_t chunk = size - offset;
         if (chunk > AT_SPI_PAYLOAD_SIZE) chunk = AT_SPI_PAYLOAD_SIZE;
         assert(at_spi_link_stage_tx(&h, source + offset, (uint16_t)chunk));
         h779_build(&h, h_tx);
@@ -211,14 +284,16 @@ static void check_fragment_boundaries(void)
         assert(hr == AT_SPI_LINK_RX_CONTROL);
         assert(!h.tx_pending);
     }
-    assert(accepted == 3U);
+    assert(accepted == (size + AT_SPI_PAYLOAD_SIZE - 1U) / AT_SPI_PAYLOAD_SIZE);
 }
 
-static void check_vw553_to_h779_fragments(void)
+static void check_vw553_to_h779_fragments(size_t size, size_t alignment)
 {
     at_spi_link_state_t h;
     vw553_spi_link_t v;
-    uint8_t source[481], h_tx[AT_SPI_FRAME_SIZE], v_tx[VW553_SPI_FRAME_SIZE];
+    _Alignas(8) uint8_t storage[4096 + 8];
+    uint8_t *source = storage + alignment;
+    uint8_t h_tx[AT_SPI_FRAME_SIZE], v_tx[VW553_SPI_FRAME_SIZE];
     const uint8_t *rx;
     uint16_t rx_len;
     at_spi_link_rx_result_t hr;
@@ -227,14 +302,15 @@ static void check_vw553_to_h779_fragments(void)
     unsigned accepted = 0;
     size_t i;
 
-    for (i = 0; i < sizeof(source); ++i) source[i] = (uint8_t)(255U - i * 7U);
+    assert(size > 0 && size <= 4096U && alignment < 8U);
+    for (i = 0; i < 4096U; ++i) source[i] = (uint8_t)(255U - i * 7U);
     source[0] = 0;
     source[239] = 0;
     source[240] = 0;
     source[480] = 0;
     establish(&h, &v);
-    while (offset < sizeof(source)) {
-        size_t chunk = sizeof(source) - offset;
+    while (offset < size) {
+        size_t chunk = size - offset;
         if (chunk > VW553_SPI_PAYLOAD_SIZE) chunk = VW553_SPI_PAYLOAD_SIZE;
         h779_build(&h, h_tx);
         vw553_build(&v, source + offset, chunk, v_tx);
@@ -253,7 +329,8 @@ static void check_vw553_to_h779_fragments(void)
         assert(hr == AT_SPI_LINK_RX_DUPLICATE && rx_len == 0);
         assert(vr == VW553_SPI_RX_CONTROL);
     }
-    assert(accepted == 3U);
+    assert(accepted == (size + VW553_SPI_PAYLOAD_SIZE - 1U) / VW553_SPI_PAYLOAD_SIZE);
+    assert(!v.pending_valid && h.rx_next == accepted);
 }
 
 static void check_lost_initial_hello_converges(void)
@@ -464,9 +541,19 @@ int main(void)
 {
     check_layout();
     check_codecs();
+    check_validation_reasons();
     check_retransmit_and_deduplicate();
-    check_fragment_boundaries();
-    check_vw553_to_h779_fragments();
+    static const size_t lengths[] = {
+        1,2,3,4,5,7,8,9,15,16,17,31,32,33,63,64,65,127,128,129,
+        239,240,241,255,256,257,479,480,481,1023,1024,1025,
+        2003,2004,2005,2017,2023,4095,4096
+    };
+    for (size_t alignment = 0; alignment < 8; ++alignment) {
+        for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+            check_fragment_boundaries(lengths[i], alignment);
+            check_vw553_to_h779_fragments(lengths[i], alignment);
+        }
+    }
     check_lost_initial_hello_converges();
     check_sequence_wrap();
     check_backpressure_still_processes_reverse_ack();

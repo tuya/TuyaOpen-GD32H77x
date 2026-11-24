@@ -132,6 +132,11 @@ bool at_client_set_wire_mode(at_client_t *client, at_wire_mode_t mode)
     return true;
 }
 
+void at_client_set_boot_ready_mode(at_client_t *client, bool enabled)
+{
+    if (client) client->boot_ready_mode = enabled;
+}
+
 bool at_client_begin(at_client_t *client, const char *command, size_t length, bool wait_prompt,
                            uint32_t now, uint32_t timeout_ms)
 {
@@ -181,7 +186,7 @@ void at_client_line(at_client_t *client, const char *line, size_t length)
         return;
     }
     if (length == 5 && memcmp(line, "READY", 5) == 0) {
-        at_client_fail(client, AT_RESULT_RESET);
+        if (!client->boot_ready_mode) at_client_fail(client, AT_RESULT_RESET);
         if (client->events.line) {
             client->events.line(client->context, line, length);
         }

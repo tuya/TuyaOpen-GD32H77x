@@ -109,7 +109,7 @@ project config 管理；烧录设备自动枚举，SWD Pack、UART 波特率和 
   report 和 manifest。烧录前必须重新校验布局、摘要和目标器件。
 - 烧录默认只写允许的启动/应用/代码分区，不全片擦除，不覆盖授权、KV、OTA
   metadata、backup 或 scratch 分区。
-- 不改 VW553 固件时，使用 `wireless_fw/vw553/` 中按 UART/SPI 分类的版本化
+- 不改 VW553 固件时，使用 `boards/GD32H77X/GD32H779V_START/firmware/vw553/` 中按 UART/SPI 分类的版本化
   预编译镜像；该目录不依赖 `platform/GD32` 源码构建。
 
 ## VW553 接口边界
@@ -162,6 +162,6 @@ AT 层必须保持以下边界：
 - [平台说明](../README.md)
 - [Flash 分区与板级覆盖](flash-layout.md)
 - [H779V-START 与 VW553 接线](gd32h779v_start_vw553_wiring.md)
-- [VW553 wireless firmware](../wireless_fw/vw553/README.md)
+- [VW553 wireless firmware](../../../boards/GD32H77X/GD32H779V_START/firmware/vw553/README.md)
 - [VW553 首期无线适配清单](vw553-capabilities.md)
 - [VW553 UART ISP 烧录](vw553-isp-flashing.md)

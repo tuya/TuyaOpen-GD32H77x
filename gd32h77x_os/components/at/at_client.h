@@ -68,6 +68,7 @@ typedef struct {
     bool                     saw_send_ok;
     bool                     plain_ok_payload;
     bool                     command_pending;
+    bool                     boot_ready_mode;
     bool                     tainted;
 } at_client_t;
 
@@ -82,6 +83,9 @@ at_callbacks_t at_client_parser_callbacks(void);
 bool at_client_begin(at_client_t *client, const char *command, size_t length, bool wait_prompt,
                            uint32_t now, uint32_t timeout_ms);
 bool at_client_set_wire_mode(at_client_t *client, at_wire_mode_t mode);
+/* During a host-controlled startup window READY is a boot notification and
+ * must not abort the probe that raced with it. */
+void at_client_set_boot_ready_mode(at_client_t *client, bool enabled);
 /* Returns the complete command including CRLF once; no credentials are logged. */
 bool at_client_take_command(at_client_t *client, char *destination, size_t capacity, size_t *length);
 void at_client_line(at_client_t *client, const char *line, size_t length);

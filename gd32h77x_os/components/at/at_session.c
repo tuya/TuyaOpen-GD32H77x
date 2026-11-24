@@ -6,6 +6,9 @@
 #include "at_session.h"
 #include "at_log.h"
 #include "at_transport.h"
+#if defined(AT_TRANSPORT_SPI) && AT_TRANSPORT_SPI
+#include "at_spi_transport.h"
+#endif
 
 #include "FreeRTOS.h"
 #include "queue.h"
@@ -65,6 +68,7 @@ typedef struct {
     bool poison_processed;
     volatile bool stopping;
     volatile uint32_t isr_fault;
+    volatile bool boot_ready_mode;
     at_transport_t *transport;
     at_session_events_t events;
     void *event_context;
@@ -118,6 +122,14 @@ static bool events_configured(const at_session_events_t *events)
 static uint32_t now_ms(void)
 {
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
+static bool boot_ready_mode_enabled(void)
+{
+    taskENTER_CRITICAL();
+    const bool enabled = s_transport.boot_ready_mode;
+    taskEXIT_CRITICAL();
+    return enabled;
 }
 
 static uint32_t map_transport_fault(uint32_t faults)
@@ -717,6 +729,9 @@ static void process_poison(void)
     AT_SUMMARY("transport poison reason=%d faults=0x%08lX", (int)reason,
                   (unsigned long)s_transport.isr_fault);
     log_transport_high_water("transport high-water");
+#if defined(AT_TRANSPORT_SPI) && AT_TRANSPORT_SPI
+    at_spi_transport_trace_dump();
+#endif
     at_transport_suspend(s_transport.transport);
     at_transport_flush(s_transport.transport);
     (void)xStreamBufferReset(s_transport.rx_stream);
@@ -751,6 +766,7 @@ static void rx_task(void *argument)
         .close_v2 = client_close_v2,
         .ipd_trailer_dropped = client_ipd_trailer_dropped};
     at_client_init(&s_transport.client, &events, NULL);
+    at_client_set_boot_ready_mode(&s_transport.client, boot_ready_mode_enabled());
     at_callbacks_t parser_callbacks = at_client_parser_callbacks();
     at_parser_init(&s_transport.parser, &parser_callbacks, &s_transport.client);
 
@@ -796,6 +812,9 @@ static void rx_task(void *argument)
                           (unsigned long)(s_transport.parser.frame_length - s_transport.parser.remaining),
                           (unsigned long)s_transport.parser.remaining);
             rx_trace_dump("RX PARTIAL", -1);
+#if defined(AT_TRANSPORT_SPI) && AT_TRANSPORT_SPI
+            at_spi_transport_trace_dump();
+#endif
             at_parser_drop_frame(&s_transport.parser);
         }
         start_pending_request();
@@ -1089,6 +1108,7 @@ at_status_t at_session_recover(void)
         .accept_v2 = client_accept_v2,
         .close_v2 = client_close_v2};
     at_client_init(&s_transport.client, &events, NULL);
+    at_client_set_boot_ready_mode(&s_transport.client, boot_ready_mode_enabled());
     at_callbacks_t parser_callbacks = at_client_parser_callbacks();
     at_parser_init(&s_transport.parser, &parser_callbacks, &s_transport.client);
 
@@ -1102,6 +1122,16 @@ at_status_t at_session_recover(void)
 
     (void)at_transport_resume(s_transport.transport);
     xSemaphoreGive(s_transport.caller_mutex);
+    return AT_STATUS_OK;
+}
+
+at_status_t at_session_set_boot_ready_mode(bool enabled)
+{
+    if (!s_transport.initialized) return AT_STATUS_NOT_READY;
+    taskENTER_CRITICAL();
+    s_transport.boot_ready_mode = enabled;
+    at_client_set_boot_ready_mode(&s_transport.client, enabled);
+    taskEXIT_CRITICAL();
     return AT_STATUS_OK;
 }
 

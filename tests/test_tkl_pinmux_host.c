@@ -165,6 +165,16 @@ static void test_af_routes_and_rejections(void)
     expect_single_no_change(116, TUYA_UART2_TX);
     expect_single_no_change(118, TUYA_UART2_RX);
 
+    /* PD0 is UART3_RX and PD1 is UART3_TX (GD32H779 AF8). */
+    assert(tkl_io_pinmux_config(48, TUYA_UART3_RX) == OPRT_OK);
+    assert(last_port == GPIOD && last_pin == GPIO_PIN_0 && last_af == GPIO_AF_8);
+    assert(tkl_io_pin_to_func(48, TUYA_IO_TYPE_UART) == 0x0301U);
+    assert(tkl_io_pinmux_config(49, TUYA_UART3_TX) == OPRT_OK);
+    assert(last_port == GPIOD && last_pin == GPIO_PIN_1 && last_af == GPIO_AF_8);
+    assert(tkl_io_pin_to_func(49, TUYA_IO_TYPE_UART) == 0x0300U);
+    expect_single_no_change(48, TUYA_UART3_TX);
+    expect_single_no_change(49, TUYA_UART3_RX);
+
     assert(tkl_io_pinmux_config(23, TUYA_IIC3_SDA) == OPRT_OK); /* PB7 AF6 */
     assert(last_port == GPIOB && last_pin == GPIO_PIN_7 && last_af == GPIO_AF_6);
     assert(last_mode == GPIO_MODE_AF && last_pupd == GPIO_PUPD_PULLUP);

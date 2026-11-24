@@ -23,10 +23,14 @@
 #include "tuya_error_code.h"
 #include "uart_hooks.h"
 
-#define UART_RX_STREAM_SIZE 1024U
+/* The CI3422 voice link runs at 1 Mbps. Keep at least 32 ms of RX data
+ * buffered while the worker drains the stream. */
+/* The TKL stream is only the ISR-to-worker handoff.  Keep it small; the
+ * per-port TAL ring buffer is the application-facing burst buffer. */
+#define UART_RX_STREAM_SIZE 2048U
 #define UART_RX_TASK_STACK  512U
-#define UART_RX_TASK_PRIO   (tskIDLE_PRIORITY + 2U)
-#define UART_IRQ_PRIORITY   6U
+#define UART_RX_TASK_PRIO   (tskIDLE_PRIORITY + 5U)
+#define UART_IRQ_PRIORITY   5U
 
 typedef struct {
     uint32_t port;
@@ -174,7 +178,7 @@ static uint32_t __uart_gpio_rcu(uint32_t port)
     return 0U;
 }
 
-static void __uart_apply_pin(const UART_PIN_T *pin)
+static void __uart_apply_pin(const UART_PIN_T *pin, uint32_t speed)
 {
     uint32_t rcu = __uart_gpio_rcu(pin->port);
 
@@ -184,14 +188,30 @@ static void __uart_apply_pin(const UART_PIN_T *pin)
     rcu_periph_clock_enable(rcu);
     gpio_af_set(pin->port, pin->af, pin->pin);
     gpio_mode_set(pin->port, GPIO_MODE_AF, GPIO_PUPD_PULLUP, pin->pin);
-    gpio_output_options_set(pin->port, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ,
-                            pin->pin);
+    gpio_output_options_set(pin->port, GPIO_OTYPE_PP, speed, pin->pin);
 }
 
-static void __uart_init_gpio(TUYA_UART_NUM_E port)
+static uint32_t __uart_tx_speed(uint32_t baudrate)
 {
-    __uart_apply_pin(&s_uart_pins[port].tx);
-    __uart_apply_pin(&s_uart_pins[port].rx);
+    /* GPIO slew rate is not the baud rate. Choose a conservative edge rate
+     * from the configured UART speed so applications do not need board-specific
+     * knowledge. High-rate links also cover series resistors and longer traces. */
+    if (baudrate > 921600U) {
+        return GPIO_OSPEED_100_220MHZ;
+    }
+    if (baudrate > 460800U) {
+        return GPIO_OSPEED_85MHZ;
+    }
+    if (baudrate > 115200U) {
+        return GPIO_OSPEED_60MHZ;
+    }
+    return GPIO_OSPEED_12MHZ;
+}
+
+static void __uart_init_gpio(TUYA_UART_NUM_E port, uint32_t baudrate)
+{
+    __uart_apply_pin(&s_uart_pins[port].tx, __uart_tx_speed(baudrate));
+    __uart_apply_pin(&s_uart_pins[port].rx, GPIO_OSPEED_60MHZ);
 }
 
 static uint32_t __uart_word_length(TUYA_UART_DATA_LEN_E databits)
@@ -245,6 +265,11 @@ static void __uart_configure_hw(TUYA_UART_NUM_E port,
     usart_parity_config(hw->usart, __uart_parity(cfg->parity));
     usart_transmit_config(hw->usart, USART_TRANSMIT_ENABLE);
     usart_receive_config(hw->usart, USART_RECEIVE_ENABLE);
+    /* Use the 16-entry hardware RX FIFO plus the receive data buffer.  With
+     * FIFO disabled, a 1 Mbps stream has only 10 us of ISR slack per byte. */
+    usart_fifo_enable(hw->usart);
+    usart_receive_fifo_threshold_config(hw->usart,
+                                        USART_RFTCFG_THRESHOLD_1_4);
     usart_enable(hw->usart);
 }
 
@@ -311,15 +336,30 @@ static void __uart_irq_handler(uint32_t port)
         state->rx_parity_errors++;
     }
 
-    while (usart_flag_get(usart, USART_FLAG_RBNE) == SET) {
-        uint8_t byte = (uint8_t)usart_data_receive(usart);
-        size_t sent = xStreamBufferSendFromISR(state->stream, &byte, 1U,
+    /*
+     * Drain the USART FIFO in batches.  At 1 Mbps a byte arrives every
+     * 10 us; calling xStreamBufferSendFromISR() once per byte is slower than
+     * the line rate and causes hardware RX overruns.  Read a local batch first,
+     * then make one FreeRTOS stream-buffer call for the whole batch.
+     */
+    while (usart_flag_get(usart, USART_FLAG_RFNE) == SET) {
+        uint8_t batch[64];
+        size_t batch_len = 0U;
+
+        while (usart_flag_get(usart, USART_FLAG_RFNE) == SET &&
+               batch_len < sizeof(batch)) {
+            batch[batch_len++] = (uint8_t)usart_data_receive(usart);
+        }
+
+        size_t sent = xStreamBufferSendFromISR(state->stream, batch,
+                                               batch_len,
                                                &higher_priority_task_woken);
-        if (sent == 1U) {
-            state->rx_bytes++;
+        state->rx_bytes += sent;
+        if (sent != 0U) {
             received = pdTRUE;
-        } else {
-            state->rx_stream_dropped++;
+        }
+        if (sent < batch_len) {
+            state->rx_stream_dropped += (uint32_t)(batch_len - sent);
         }
     }
 
@@ -377,6 +417,26 @@ void UART6_IRQHandler(void)
 void UART7_IRQHandler(void)
 {
     __uart_irq_handler(TUYA_UART_NUM_7);
+}
+
+void gd32h77x_uart_get_port_stats(uint32_t port_id, gd32h77x_uart_stats_t *stats)
+{
+    uint32_t port;
+
+    if (stats == NULL || !__uart_port_number((TUYA_UART_NUM_E)port_id, &port)) {
+        return;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+    taskENTER_CRITICAL();
+    stats->rx_bytes = s_uart[port].rx_bytes;
+    stats->rx_stream_dropped = s_uart[port].rx_stream_dropped;
+    stats->rx_overrun_errors = s_uart[port].rx_overrun_errors;
+    stats->rx_frame_errors = s_uart[port].rx_frame_errors;
+    stats->rx_noise_errors = s_uart[port].rx_noise_errors;
+    stats->rx_parity_errors = s_uart[port].rx_parity_errors;
+    stats->rx_callback_count = s_uart[port].rx_callback_count;
+    taskEXIT_CRITICAL();
 }
 
 void gd32h77x_uart_get_stats(gd32h77x_uart_stats_t *stats)
@@ -457,7 +517,7 @@ OPERATE_RET tkl_uart_init(TUYA_UART_NUM_E port_id, TUYA_UART_BASE_CFG_T *cfg)
         return OPRT_MALLOC_FAILED;
     }
 
-    __uart_init_gpio((TUYA_UART_NUM_E)port);
+    __uart_init_gpio((TUYA_UART_NUM_E)port, cfg->baudrate);
     __uart_configure_hw((TUYA_UART_NUM_E)port, cfg);
 
     taskENTER_CRITICAL();
@@ -477,7 +537,7 @@ OPERATE_RET tkl_uart_init(TUYA_UART_NUM_E port_id, TUYA_UART_BASE_CFG_T *cfg)
     state->stopping = pdFALSE;
     state->initialized = pdTRUE;
     state->initializing = pdFALSE;
-    usart_interrupt_enable(s_uart_hw[port].usart, USART_INT_RBNE);
+    usart_interrupt_enable(s_uart_hw[port].usart, USART_INT_RFNE);
     usart_interrupt_enable(s_uart_hw[port].usart, USART_INT_ERR);
     NVIC_ClearPendingIRQ(s_uart_hw[port].irqn);
     NVIC_SetPriority(s_uart_hw[port].irqn, UART_IRQ_PRIORITY);
@@ -505,7 +565,7 @@ OPERATE_RET tkl_uart_deinit(TUYA_UART_NUM_E port_id)
         return OPRT_RESOURCE_NOT_READY;
     }
     state->stopping = pdTRUE;
-    usart_interrupt_disable(s_uart_hw[port].usart, USART_INT_RBNE);
+    usart_interrupt_disable(s_uart_hw[port].usart, USART_INT_RFNE);
     usart_interrupt_disable(s_uart_hw[port].usart, USART_INT_ERR);
     NVIC_DisableIRQ(s_uart_hw[port].irqn);
     NVIC_ClearPendingIRQ(s_uart_hw[port].irqn);

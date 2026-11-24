@@ -18,6 +18,22 @@
 #define GD32H77X_ECNVM_PROGRAM_SIZE    UINT32_C(8)
 #define GD32H77X_ECNVM_PROGRAM_32_SIZE UINT32_C(32)
 
+/* Requests must fit wholly in one independent data region, not a repair bank.
+ * Inline this check so the RAM command path never fetches code from ECNVM.
+ */
+static inline __attribute__((always_inline)) bool gd32h77x_ecnvm_data_range_valid(
+    uint32_t address, uint32_t size, uint32_t data0_base, uint32_t data0_size,
+    uint32_t data1_base, uint32_t data1_size)
+{
+    if (size == 0U) {
+        return false;
+    }
+    return (size <= data0_size && address >= data0_base &&
+            address - data0_base <= data0_size - size) ||
+           (size <= data1_size && address >= data1_base &&
+            address - data1_base <= data1_size - size);
+}
+
 static inline bool gd32h77x_ecnvm_source_range_valid(const void *source, size_t size)
 {
     const uintptr_t start = (uintptr_t)source;

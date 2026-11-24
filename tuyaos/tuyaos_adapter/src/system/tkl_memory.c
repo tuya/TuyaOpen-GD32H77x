@@ -11,6 +11,7 @@
 
 // --- BEGIN: user defines and implements ---
 #include "tkl_memory.h"
+#include "gd32h77x_psram_mem.h"
 #include "tuya_error_code.h"
 /**
  * @file tkl_memory.c
@@ -19,7 +20,25 @@
  */
 
 #include "tkl_memory.h"
+#include "tkl_output.h"
 #include "FreeRTOS.h"
+#include "semphr.h"
+#include "gd32h77x_config.h"
+#if defined(ENABLE_GD32H77X_PSRAM) && (ENABLE_GD32H77X_PSRAM == 1)
+#ifdef BIT
+#undef BIT
+#endif
+#include "gd32h77x_78x.h"
+#include "gd32h77x_78x_gpio.h"
+#include "gd32h77x_78x_rcu.h"
+#include "gd32h77x_psram.h"
+#include "gd32h77x_psram_pool.h"
+#include "gd32h77x_psram_cache.h"
+#include "aps6404l.h"
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+#include "tuya_mem_heap.h"
+#endif
+#endif
 #include <limits.h>
 
 /* Keep the payload aligned for the Cortex-M7 double-precision ABI. */
@@ -195,3 +214,741 @@ int tkl_system_memcmp(const void *str1, const void *str2, size_t n)
     // --- END: user implements ---
 }
 
+
+#if defined(ENABLE_GD32H77X_PSRAM) && (ENABLE_GD32H77X_PSRAM == 1)
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1) && \
+    (!defined(GD32H77X_PSRAM_ACCESS_MAPPED) || \
+     (GD32H77X_PSRAM_ACCESS_MAPPED == 0))
+#error "ENABLE_EXT_RAM requires GD32H77X_PSRAM_ACCESS_MAPPED"
+#endif
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1) && \
+    defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+#error "ENABLE_EXT_RAM and ENABLE_PSRAM are mutually exclusive"
+#endif
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1) && \
+    (!defined(GD32H77X_PSRAM_ACCESS_MAPPED) || \
+     (GD32H77X_PSRAM_ACCESS_MAPPED == 0))
+#error "ENABLE_PSRAM requires GD32H77X_PSRAM_ACCESS_MAPPED"
+#endif
+
+static bool s_psram_initialized;
+
+#define TKL_PSRAM_ALIGNMENT 32U
+
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+#define TKL_PSRAM_MAX_BLOCKS 128U
+
+typedef struct {
+    gd32h77x_psram_pool_handle_t handle;
+    uint32_t size;
+    bool used;
+} tkl_psram_block_t;
+
+static tkl_psram_block_t s_psram_blocks[TKL_PSRAM_MAX_BLOCKS];
+static SemaphoreHandle_t s_psram_block_lock;
+static aps6404_dev_struct s_vendor_psram;
+static bool s_vendor_psram_ready;
+
+static bool __tkl_psram_lock(void)
+{
+    return s_psram_block_lock != NULL &&
+           xSemaphoreTake(s_psram_block_lock, portMAX_DELAY) == pdTRUE;
+}
+
+static void __tkl_psram_unlock(void)
+{
+    (void)xSemaphoreGive(s_psram_block_lock);
+}
+
+static bool __tkl_psram_range(const void *ptr, size_t size)
+{
+    if (ptr == NULL || size > UINT32_MAX) {
+        return false;
+    }
+    uintptr_t base = GD32H77X_PSRAM_MAPPED_BASE +
+                     GD32H77X_PSRAM_HEAP_OFFSET_BYTES;
+    uintptr_t address = (uintptr_t)ptr;
+    uint32_t capacity = GD32H77X_PSRAM_HEAP_SIZE_BYTES - TKL_PSRAM_ALIGNMENT;
+    return address >= base && address - base <= capacity &&
+           size <= capacity - (address - base);
+}
+
+static bool __tkl_psram_is_addr(const void *ptr)
+{
+    uintptr_t base = GD32H77X_PSRAM_MAPPED_BASE +
+                     GD32H77X_PSRAM_HEAP_OFFSET_BYTES;
+    uintptr_t address = (uintptr_t)ptr;
+    return address >= base && address < base + GD32H77X_PSRAM_HEAP_SIZE_BYTES;
+}
+
+static void __tkl_psram_copy_block(void *dst, const void *src)
+{
+    volatile uint32_t *out = (volatile uint32_t *)dst;
+    const volatile uint32_t *in = (const volatile uint32_t *)src;
+
+    configASSERT(((uintptr_t)dst & (TKL_PSRAM_ALIGNMENT - 1U)) == 0U);
+    configASSERT(((uintptr_t)src & (TKL_PSRAM_ALIGNMENT - 1U)) == 0U);
+    for (uint32_t index = 0U; index < TKL_PSRAM_ALIGNMENT / sizeof(uint32_t);
+         ++index) {
+        out[index] = in[index];
+    }
+    __DSB();
+}
+
+static OPERATE_RET __tkl_vendor_psram_init(void)
+{
+    if (s_psram_initialized) {
+        return OPRT_OK;
+    }
+    if (GD32H77X_PSRAM_HEAP_OFFSET_BYTES > GD32H77X_PSRAM_SIZE_BYTES ||
+        GD32H77X_PSRAM_HEAP_SIZE_BYTES <= TKL_PSRAM_ALIGNMENT ||
+        GD32H77X_PSRAM_HEAP_SIZE_BYTES >
+            GD32H77X_PSRAM_SIZE_BYTES - GD32H77X_PSRAM_HEAP_OFFSET_BYTES) {
+        return OPRT_INVALID_PARM;
+    }
+    if (s_psram_block_lock == NULL) {
+        s_psram_block_lock = xSemaphoreCreateMutex();
+        if (s_psram_block_lock == NULL) {
+            return OPRT_COM_ERROR;
+        }
+    }
+
+    tkl_log_output("[PSRAM] vendor init begin\r\n");
+    uint32_t ospi_clk_hz = rcu_clock_freq_get(CK_AHB);
+    if (aps6404_init(&s_vendor_psram, OSPI0, ospi_clk_hz,
+                     APS6404_MODE_SPI) != SUCCESS) {
+        tkl_log_output("[PSRAM] vendor init failed\r\n");
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+    if (aps6404_memory_map_enable(&s_vendor_psram) != SUCCESS) {
+        tkl_log_output("[PSRAM] vendor mapped enable failed\r\n");
+        aps6404_memory_map_disable(&s_vendor_psram);
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+    s_vendor_psram_ready = true;
+    if (gd32h77x_psram_pool_init(
+            GD32H77X_PSRAM_HEAP_OFFSET_BYTES,
+            GD32H77X_PSRAM_HEAP_SIZE_BYTES - TKL_PSRAM_ALIGNMENT) !=
+            GD32H77X_STATUS_OK) {
+        tkl_log_output("[PSRAM] vendor block pool init failed\r\n");
+        aps6404_memory_map_disable(&s_vendor_psram);
+        s_vendor_psram_ready = false;
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+    s_psram_initialized = true;
+    tkl_log_output("[PSRAM] vendor init complete free=%d\r\n",
+                   tkl_system_psram_get_free_heap_size());
+    return OPRT_OK;
+}
+#endif /* ENABLE_PSRAM */
+
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+#define TKL_PSRAM_MAGIC     0x5053524DU
+
+typedef struct {
+    uint32_t magic;
+    uint32_t size;
+    uint32_t raw_offset;
+} tkl_psram_header_t;
+
+static HEAP_HANDLE s_psram_heap;
+static SemaphoreHandle_t s_psram_heap_lock;
+static uintptr_t s_psram_heap_base;
+static uint32_t s_psram_heap_size;
+
+static void __tkl_psram_enter_critical(void)
+{
+    configASSERT(s_psram_heap_lock != NULL);
+    configASSERT(xSemaphoreTake(s_psram_heap_lock, portMAX_DELAY) == pdTRUE);
+}
+
+static void __tkl_psram_exit_critical(void)
+{
+    configASSERT(s_psram_heap_lock != NULL);
+    configASSERT(xSemaphoreGive(s_psram_heap_lock) == pdTRUE);
+}
+
+static void __tkl_psram_dbg_output(char *format, ...)
+{
+    (void)format;
+}
+
+static bool __tkl_psram_header_valid(const void *ptr, tkl_psram_header_t *header)
+{
+    uintptr_t address = (uintptr_t)ptr;
+    if (address < s_psram_heap_base + sizeof(tkl_psram_header_t) ||
+        address >= s_psram_heap_base + s_psram_heap_size) {
+        return false;
+    }
+    const tkl_psram_header_t *candidate =
+        (const tkl_psram_header_t *)(address - sizeof(tkl_psram_header_t));
+    if (candidate->magic != TKL_PSRAM_MAGIC ||
+        candidate->raw_offset < sizeof(tkl_psram_header_t) ||
+        candidate->raw_offset > sizeof(tkl_psram_header_t) +
+                                  TKL_PSRAM_ALIGNMENT) {
+        return false;
+    }
+    uintptr_t raw = address - candidate->raw_offset;
+    if (raw < s_psram_heap_base ||
+        raw >= s_psram_heap_base + s_psram_heap_size) {
+        return false;
+    }
+    if (header != NULL) {
+        *header = *candidate;
+    }
+    return true;
+}
+#endif /* ENABLE_EXT_RAM */
+
+static gd32h77x_psram_config_t __tkl_psram_config(void)
+{
+    return (gd32h77x_psram_config_t) {
+        .profile = GD32H77X_PSRAM_PROFILE,
+#if (defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)) || \
+    (defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1))
+        .mapped_base = GD32H77X_PSRAM_MAPPED_BASE,
+        .access_mode = GD32H77X_PSRAM_MODE_MAPPED,
+#else
+        .mapped_base = 0U,
+        .access_mode = GD32H77X_PSRAM_MODE_INDIRECT,
+#endif
+        .capacity_bytes = GD32H77X_PSRAM_SIZE_BYTES,
+        .clock_hz = GD32H77X_PSRAM_CLOCK_HZ,
+        .controller = {
+            .ospim_port = GD32H77X_PSRAM_OSPIM_PORT,
+            .clock_hz = GD32H77X_PSRAM_CLOCK_HZ,
+            .capacity_bytes = GD32H77X_PSRAM_SIZE_BYTES,
+            .set_pa1_switch = GD32H77X_PSRAM_PA1_SWITCH_SET != 0,
+            .pa1_switch_open = GD32H77X_PSRAM_PA1_SWITCH_OPEN != 0,
+            .set_pc2_switch = GD32H77X_PSRAM_PC2_SWITCH_SET != 0,
+            .pc2_switch_open = GD32H77X_PSRAM_PC2_SWITCH_OPEN != 0,
+            .cs = {
+                .port = GD32H77X_PSRAM_CS_GPIO_PORT,
+                .clock = GD32H77X_PSRAM_CS_GPIO_CLOCK,
+                .pin = GD32H77X_PSRAM_CS_GPIO_PIN,
+                .alternate = GD32H77X_PSRAM_CS_GPIO_AF,
+            },
+            .sck = {
+                .port = GD32H77X_PSRAM_SCK_GPIO_PORT,
+                .clock = GD32H77X_PSRAM_SCK_GPIO_CLOCK,
+                .pin = GD32H77X_PSRAM_SCK_GPIO_PIN,
+                .alternate = GD32H77X_PSRAM_SCK_GPIO_AF,
+            },
+            .io = {
+                {
+                    .port = GD32H77X_PSRAM_IO0_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO0_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO0_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO0_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO1_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO1_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO1_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO1_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO2_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO2_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO2_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO2_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO3_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO3_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO3_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO3_GPIO_AF,
+                },
+            },
+        },
+    };
+}
+
+static OPERATE_RET __tkl_psram_status(gd32h77x_status_t status)
+{
+    switch (status) {
+    case GD32H77X_STATUS_OK:
+        return OPRT_OK;
+    case GD32H77X_STATUS_INVALID_PARAM:
+        return OPRT_INVALID_PARM;
+    case GD32H77X_STATUS_UNSUPPORTED:
+        return OPRT_NOT_SUPPORTED;
+    case GD32H77X_STATUS_TIMEOUT:
+        return OPRT_TIMEOUT;
+    case GD32H77X_STATUS_NOT_READY:
+        return OPRT_RESOURCE_NOT_READY;
+    default:
+        return OPRT_COM_ERROR;
+    }
+}
+
+OPERATE_RET tkl_system_psram_init(void)
+{
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+    return __tkl_vendor_psram_init();
+#else
+    tkl_log_output("[PSRAM] platform init begin\r\n");
+    if (s_psram_initialized) {
+        tkl_log_output("[PSRAM] platform init already complete\r\n");
+        return OPRT_OK;
+    }
+
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+    if (s_psram_heap != NULL) {
+        return OPRT_OK;
+    }
+    if (GD32H77X_PSRAM_HEAP_OFFSET_BYTES > GD32H77X_PSRAM_SIZE_BYTES ||
+        GD32H77X_PSRAM_HEAP_SIZE_BYTES >
+            GD32H77X_PSRAM_SIZE_BYTES - GD32H77X_PSRAM_HEAP_OFFSET_BYTES) {
+        return OPRT_INVALID_PARM;
+    }
+    s_psram_heap_lock = xSemaphoreCreateMutex();
+    if (s_psram_heap_lock == NULL) {
+        return OPRT_COM_ERROR;
+    }
+#endif
+
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+    if (s_psram_block_lock != NULL) {
+        tkl_log_output("[PSRAM] block lock exists before pool init\r\n");
+        return OPRT_OK;
+    }
+    if (GD32H77X_PSRAM_HEAP_OFFSET_BYTES > GD32H77X_PSRAM_SIZE_BYTES ||
+        GD32H77X_PSRAM_HEAP_SIZE_BYTES <= TKL_PSRAM_ALIGNMENT ||
+        GD32H77X_PSRAM_HEAP_SIZE_BYTES >
+            GD32H77X_PSRAM_SIZE_BYTES - GD32H77X_PSRAM_HEAP_OFFSET_BYTES) {
+        return OPRT_INVALID_PARM;
+    }
+    s_psram_block_lock = xSemaphoreCreateMutex();
+    if (s_psram_block_lock == NULL) {
+        tkl_log_output("[PSRAM] block lock create failed\r\n");
+        return OPRT_COM_ERROR;
+    }
+#endif
+
+    gd32h77x_psram_config_t config = __tkl_psram_config();
+    tkl_log_output("[PSRAM] probing/mapping PSRAM\r\n");
+    gd32h77x_status_t psram_status = gd32h77x_psram_init(&config);
+    if (psram_status != GD32H77X_STATUS_OK) {
+        uint8_t probe_data[GD32H77X_PSRAM_PROBE_DATA_MAX] = {0};
+        uint32_t probe_len = gd32h77x_psram_last_probe_data(
+            probe_data, sizeof(probe_data));
+        tkl_log_output("[PSRAM] init failed status=%ld stage=%lu id=0x%02x\r\n",
+                       (long)psram_status,
+                       (unsigned long)gd32h77x_psram_stage(),
+                       (unsigned)gd32h77x_psram_last_id());
+        tkl_log_output("[PSRAM] probe data[%lu]=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                       (unsigned long)probe_len,
+                       probe_data[0], probe_data[1], probe_data[2], probe_data[3],
+                       probe_data[4], probe_data[5], probe_data[6], probe_data[7]);
+        (void)gd32h77x_psram_deinit();
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+        vSemaphoreDelete(s_psram_heap_lock);
+        s_psram_heap_lock = NULL;
+#endif
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+#endif
+        return __tkl_psram_status(psram_status);
+    }
+
+#if defined(GD32H77X_PSRAM_ACCESS_INDIRECT) && \
+    (GD32H77X_PSRAM_ACCESS_INDIRECT == 1)
+    if (gd32h77x_psram_pool_init(GD32H77X_PSRAM_HEAP_OFFSET_BYTES,
+                                 GD32H77X_PSRAM_HEAP_SIZE_BYTES) !=
+            GD32H77X_STATUS_OK ||
+        gd32h77x_psram_cache_init(GD32H77X_PSRAM_HEAP_SIZE_BYTES) !=
+            GD32H77X_STATUS_OK) {
+        (void)gd32h77x_psram_cache_deinit();
+        (void)gd32h77x_psram_pool_deinit();
+        (void)gd32h77x_psram_deinit();
+        return OPRT_COM_ERROR;
+    }
+#elif defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+    tkl_log_output("[PSRAM] initializing mapped block pool\r\n");
+    if (gd32h77x_psram_pool_init(
+            GD32H77X_PSRAM_HEAP_OFFSET_BYTES,
+            GD32H77X_PSRAM_HEAP_SIZE_BYTES - TKL_PSRAM_ALIGNMENT) !=
+            GD32H77X_STATUS_OK) {
+        tkl_log_output("[PSRAM] mapped block pool init failed\r\n");
+        (void)gd32h77x_psram_deinit();
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+#elif defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+    heap_context_t context = {
+        .enter_critical = __tkl_psram_enter_critical,
+        .exit_critical = __tkl_psram_exit_critical,
+        .dbg_output = __tkl_psram_dbg_output,
+    };
+    if (tuya_mem_heap_init(&context) != 0) {
+        (void)gd32h77x_psram_deinit();
+        vSemaphoreDelete(s_psram_heap_lock);
+        s_psram_heap_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+
+    s_psram_heap_base = GD32H77X_PSRAM_MAPPED_BASE +
+                        GD32H77X_PSRAM_HEAP_OFFSET_BYTES;
+    /* Reserve the last cache line used by the mapped experiment. */
+    s_psram_heap_size = GD32H77X_PSRAM_HEAP_SIZE_BYTES - 32U;
+    if (tuya_mem_heap_create((void *)s_psram_heap_base, s_psram_heap_size,
+                             &s_psram_heap) != 0 ||
+        s_psram_heap == NULL) {
+        s_psram_heap = NULL;
+        (void)gd32h77x_psram_deinit();
+        vSemaphoreDelete(s_psram_heap_lock);
+        s_psram_heap_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+#endif
+
+    s_psram_initialized = true;
+    tkl_log_output("[PSRAM] platform init complete\r\n");
+    return OPRT_OK;
+#endif
+}
+
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+void *tkl_system_psram_malloc(size_t size)
+{
+    if (size == 0U || size > UINT32_MAX) {
+        return NULL;
+    }
+    if (!__tkl_psram_lock()) {
+        tkl_log_output("[PSRAM] block allocator not ready size=%u\r\n",
+                       (unsigned)size);
+        return NULL;
+    }
+
+    tkl_psram_block_t *entry = NULL;
+    for (uint32_t index = 0U; index < TKL_PSRAM_MAX_BLOCKS; ++index) {
+        if (!s_psram_blocks[index].used) {
+            entry = &s_psram_blocks[index];
+            break;
+        }
+    }
+    if (entry == NULL) {
+        __tkl_psram_unlock();
+        return NULL;
+    }
+
+    gd32h77x_psram_pool_handle_t handle = {0};
+    if (gd32h77x_psram_pool_alloc(size, &handle) != GD32H77X_STATUS_OK) {
+        gd32h77x_psram_pool_stats_t stats = {0};
+        (void)gd32h77x_psram_pool_get_stats(&stats);
+        tkl_log_output("[PSRAM] pool alloc failed size=%u free=%u "
+                       "largest=%u blocks=%u\r\n",
+                       (unsigned)size, (unsigned)stats.free_size,
+                       (unsigned)stats.largest_free_block,
+                       (unsigned)stats.used_blocks);
+        __tkl_psram_unlock();
+        return NULL;
+    }
+
+    entry->handle = handle;
+    entry->size = (uint32_t)size;
+    entry->used = true;
+    void *ptr = (void *)(uintptr_t)(GD32H77X_PSRAM_MAPPED_BASE + handle.offset);
+    __tkl_psram_unlock();
+    return ptr;
+}
+
+void tkl_system_psram_free(void *ptr)
+{
+    if (ptr == NULL || !__tkl_psram_lock()) {
+        return;
+    }
+
+    for (uint32_t index = 0U; index < TKL_PSRAM_MAX_BLOCKS; ++index) {
+        tkl_psram_block_t *entry = &s_psram_blocks[index];
+        void *entry_ptr =
+            (void *)(uintptr_t)(GD32H77X_PSRAM_MAPPED_BASE +
+                                entry->handle.offset);
+        if (entry->used && entry_ptr == ptr) {
+            (void)gd32h77x_psram_pool_free(&entry->handle);
+            memset(entry, 0, sizeof(*entry));
+            break;
+        }
+    }
+    __tkl_psram_unlock();
+}
+
+void *gd32h77x_psram_memcpy(void *dst, const void *src, size_t size)
+{
+    if (size == 0U) {
+        return dst;
+    }
+    if (dst == NULL || src == NULL) {
+        return NULL;
+    }
+
+    bool dst_psram = __tkl_psram_is_addr(dst);
+    bool src_psram = __tkl_psram_is_addr(src);
+    if (!dst_psram && !src_psram) {
+        return memcpy(dst, src, size);
+    }
+    if ((dst_psram && !__tkl_psram_range(dst, size)) ||
+        (src_psram && !__tkl_psram_range(src, size))) {
+        return NULL;
+    }
+
+    /* Vendor-proven fast path: contiguous block-aligned PSRAM ranges are
+     * transferred as one 32-bit word stream with a single final barrier. */
+    if ((size % TKL_PSRAM_ALIGNMENT) == 0U &&
+        (!dst_psram ||
+         (((uintptr_t)dst % TKL_PSRAM_ALIGNMENT) == 0U)) &&
+        (!src_psram ||
+         (((uintptr_t)src % TKL_PSRAM_ALIGNMENT) == 0U)) &&
+        (((uintptr_t)dst % sizeof(uint32_t)) == 0U) &&
+        (((uintptr_t)src % sizeof(uint32_t)) == 0U)) {
+        volatile uint32_t *out32 = (volatile uint32_t *)dst;
+        const uint32_t *in32 = (const uint32_t *)src;
+        for (size_t index = 0U; index < size / sizeof(uint32_t); ++index) {
+            out32[index] = in32[index];
+        }
+        __DSB();
+        return dst;
+    }
+
+    uint8_t *out = dst;
+    const uint8_t *in = src;
+    while (size > 0U) {
+        uintptr_t dst_block = (uintptr_t)out & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+        uintptr_t src_block = (uintptr_t)in & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+        size_t dst_offset = (uintptr_t)out - dst_block;
+        size_t src_offset = (uintptr_t)in - src_block;
+        size_t chunk = TKL_PSRAM_ALIGNMENT - dst_offset;
+        if (chunk > TKL_PSRAM_ALIGNMENT - src_offset) {
+            chunk = TKL_PSRAM_ALIGNMENT - src_offset;
+        }
+        if (chunk > size) {
+            chunk = size;
+        }
+
+        uint8_t src_buf[TKL_PSRAM_ALIGNMENT]
+            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
+        uint8_t dst_buf[TKL_PSRAM_ALIGNMENT]
+            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
+        if (src_psram) {
+            __tkl_psram_copy_block(src_buf, (const void *)src_block);
+        } else {
+            memcpy(src_buf + src_offset, in, chunk);
+        }
+
+        if (dst_psram && dst_offset == 0U && src_offset == 0U &&
+            chunk == TKL_PSRAM_ALIGNMENT) {
+            __tkl_psram_copy_block((void *)dst_block,
+                                   src_psram ? (const void *)src_block : in);
+        } else if (dst_psram) {
+            __tkl_psram_copy_block(dst_buf, (void *)dst_block);
+            memcpy(dst_buf + dst_offset, src_buf + src_offset, chunk);
+            __tkl_psram_copy_block((void *)dst_block, dst_buf);
+        } else {
+            memcpy(out, src_buf + src_offset, chunk);
+        }
+
+        out += chunk;
+        in += chunk;
+        size -= chunk;
+    }
+    return dst;
+}
+
+void *gd32h77x_psram_memset(void *dst, int value, size_t size)
+{
+    if (size == 0U) {
+        return dst;
+    }
+    if (dst == NULL) {
+        return NULL;
+    }
+    if (!__tkl_psram_is_addr(dst)) {
+        return memset(dst, value, size);
+    }
+    if (!__tkl_psram_range(dst, size)) {
+        return NULL;
+    }
+
+    uint8_t *out = dst;
+    while (size > 0U) {
+        uintptr_t block = (uintptr_t)out & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+        size_t offset = (uintptr_t)out - block;
+        size_t chunk = TKL_PSRAM_ALIGNMENT - offset;
+        if (chunk > size) {
+            chunk = size;
+        }
+
+        uint8_t buffer[TKL_PSRAM_ALIGNMENT]
+            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
+        __tkl_psram_copy_block(buffer, (void *)block);
+        memset(buffer + offset, value, chunk);
+        __tkl_psram_copy_block((void *)block, buffer);
+
+        out += chunk;
+        size -= chunk;
+    }
+    return dst;
+}
+
+void *tkl_system_psram_calloc(size_t nitems, size_t size)
+{
+    if (nitems == 0U || size == 0U || nitems > SIZE_MAX / size) {
+        return NULL;
+    }
+    size_t total = nitems * size;
+    void *ptr = tkl_system_psram_malloc(total);
+    if (ptr != NULL) {
+        (void)gd32h77x_psram_memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void *tkl_system_psram_realloc(void *ptr, size_t size)
+{
+    if (ptr == NULL) {
+        return tkl_system_psram_malloc(size);
+    }
+    if (size == 0U) {
+        tkl_system_psram_free(ptr);
+        return NULL;
+    }
+
+    uint32_t old_size = 0U;
+    if (!__tkl_psram_lock()) {
+        return NULL;
+    }
+    for (uint32_t index = 0U; index < TKL_PSRAM_MAX_BLOCKS; ++index) {
+        tkl_psram_block_t *entry = &s_psram_blocks[index];
+        void *entry_ptr =
+            (void *)(uintptr_t)(GD32H77X_PSRAM_MAPPED_BASE +
+                                entry->handle.offset);
+        if (entry->used && entry_ptr == ptr) {
+            old_size = entry->size;
+            if (size <= old_size) {
+                entry->size = (uint32_t)size;
+                __tkl_psram_unlock();
+                return ptr;
+            }
+            break;
+        }
+    }
+    __tkl_psram_unlock();
+    if (old_size == 0U) {
+        return NULL;
+    }
+
+    void *replacement = tkl_system_psram_malloc(size);
+    if (replacement == NULL) {
+        return NULL;
+    }
+    (void)gd32h77x_psram_memcpy(replacement, ptr, old_size);
+    tkl_system_psram_free(ptr);
+    return replacement;
+}
+
+int tkl_system_psram_get_free_heap_size(void)
+{
+    gd32h77x_psram_pool_stats_t stats = {0};
+    return gd32h77x_psram_pool_get_stats(&stats) == GD32H77X_STATUS_OK
+               ? (stats.free_size > INT_MAX ? INT_MAX : (int)stats.free_size)
+               : 0;
+}
+#elif defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+void *tkl_system_psram_malloc(size_t size)
+{
+    if (s_psram_heap == NULL || size == 0U ||
+        size > UINT_MAX - sizeof(tkl_psram_header_t) - TKL_PSRAM_ALIGNMENT) {
+        return NULL;
+    }
+
+    void *raw = tuya_mem_heap_malloc(
+        s_psram_heap, (unsigned int)(size + sizeof(tkl_psram_header_t) +
+                                     TKL_PSRAM_ALIGNMENT - 1U));
+    if (raw == NULL) {
+        return NULL;
+    }
+
+    uintptr_t user = ((uintptr_t)raw + sizeof(tkl_psram_header_t) +
+                      TKL_PSRAM_ALIGNMENT - 1U) &
+                     ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+    tkl_psram_header_t *header =
+        (tkl_psram_header_t *)(user - sizeof(tkl_psram_header_t));
+    header->magic = TKL_PSRAM_MAGIC;
+    header->size = (uint32_t)size;
+    header->raw_offset = (uint32_t)(user - (uintptr_t)raw);
+    return (void *)user;
+}
+
+void tkl_system_psram_free(void *ptr)
+{
+    if (s_psram_heap == NULL || ptr == NULL) {
+        return;
+    }
+    tkl_psram_header_t header;
+    if (!__tkl_psram_header_valid(ptr, &header)) {
+        return;
+    }
+    void *raw = (void *)((uintptr_t)ptr - header.raw_offset);
+    ((tkl_psram_header_t *)((uintptr_t)ptr -
+                            sizeof(tkl_psram_header_t)))->magic = 0U;
+    tuya_mem_heap_free(s_psram_heap, raw);
+}
+
+void *tkl_system_psram_calloc(size_t nitems, size_t size)
+{
+    if (nitems == 0U || size == 0U || nitems > SIZE_MAX / size) {
+        return NULL;
+    }
+    size_t total = nitems * size;
+    void *ptr = tkl_system_psram_malloc(total);
+    if (ptr != NULL) {
+        memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void *tkl_system_psram_realloc(void *ptr, size_t size)
+{
+    if (ptr == NULL) {
+        return tkl_system_psram_malloc(size);
+    }
+    if (size == 0U) {
+        tkl_system_psram_free(ptr);
+        return NULL;
+    }
+
+    tkl_psram_header_t header;
+    if (!__tkl_psram_header_valid(ptr, &header)) {
+        return NULL;
+    }
+    if (size <= header.size) {
+        ((tkl_psram_header_t *)((uintptr_t)ptr -
+                                sizeof(tkl_psram_header_t)))->size =
+            (uint32_t)size;
+        return ptr;
+    }
+
+    void *replacement = tkl_system_psram_malloc(size);
+    if (replacement == NULL) {
+        return NULL;
+    }
+    memcpy(replacement, ptr, header.size);
+    tkl_system_psram_free(ptr);
+    return replacement;
+}
+
+int tkl_system_psram_get_free_heap_size(void)
+{
+    return s_psram_heap == NULL ? 0 : tuya_mem_heap_available(s_psram_heap);
+}
+#endif /* ENABLE_PSRAM / ENABLE_EXT_RAM */
+#endif /* ENABLE_GD32H77X_PSRAM */

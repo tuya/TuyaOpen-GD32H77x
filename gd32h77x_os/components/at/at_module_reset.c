@@ -10,15 +10,19 @@ static bool soft_reset_path(const at_module_reset_ops_t *ops, void *context, uin
                             at_module_reset_result_t *result)
 {
     result->software_reset_requested = true;
-    return ops->request_soft_reset(context) && ops->wait_ready(context, ready_timeout_ms) &&
-           ops->recover_transport(context) && ops->probe(context);
+    return ops->request_soft_reset(context) && ops->recover_transport(context) &&
+           ops->wait_ready(context, ready_timeout_ms) && ops->recover_transport(context) &&
+           ops->probe(context);
 }
 
 static bool hardware_reset_path(const at_module_reset_ops_t *ops, void *context,
+                                uint32_t ready_timeout_ms,
                                 at_module_reset_result_t *result)
 {
     result->hardware_reset_attempted = true;
-    return ops->hardware_reset(context) && ops->recover_transport(context) && ops->probe(context);
+    return ops->hardware_reset(context) && ops->recover_transport(context) &&
+           ops->wait_ready(context, ready_timeout_ms) && ops->recover_transport(context) &&
+           ops->probe(context);
 }
 
 bool at_module_reset_run(at_module_reset_mode_t mode, const at_module_reset_ops_t *ops,
@@ -36,9 +40,26 @@ bool at_module_reset_run(at_module_reset_mode_t mode, const at_module_reset_ops_
         ops->recover_transport(context) && ops->probe(context)) {
         return true;
     }
-    if (mode == AT_MODULE_RESET_STARTUP && !ops->probe(context)) {
-        return hardware_reset_path(ops, context, result);
+    if (mode == AT_MODULE_RESET_STARTUP) {
+        const bool probed = ops->probe(context);
+        const bool ready_observed = ops->ready_observed && ops->ready_observed(context);
+        if (probed && ready_observed) {
+            /* READY followed by the probe's own OK proves a clean boot. Do not
+             * issue AT+RST and create a second startup transition. */
+            return true;
+        }
+        if (!probed) {
+            /* If a boot READY arrived but the probe still failed, recover the
+             * local transport and prove liveness once before treating the
+             * module as unresponsive. */
+            if (ready_observed && ops->recover_transport(context) && ops->probe(context)) {
+                return true;
+            }
+            return hardware_reset_path(ops, context, ready_timeout_ms, result);
+        }
+        return soft_reset_path(ops, context, ready_timeout_ms, result) ||
+               hardware_reset_path(ops, context, ready_timeout_ms, result);
     }
     return soft_reset_path(ops, context, ready_timeout_ms, result) ||
-           hardware_reset_path(ops, context, result);
+           hardware_reset_path(ops, context, ready_timeout_ms, result);
 }

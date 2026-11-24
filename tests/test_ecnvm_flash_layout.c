@@ -12,6 +12,26 @@
 
 int main(void)
 {
+    /* Both W (7.5 MiB) and P (3.5 MiB) keep data regions independent of DIEEN. */
+    const uint32_t region_maps[][4] = {
+        {0x08200000U, 0x00300000U, 0x08900000U, 0x00080000U},
+        {0x08200000U, 0x00100000U, 0x08500000U, 0x00080000U},
+    };
+    for (unsigned i = 0; i < sizeof(region_maps) / sizeof(region_maps[0]); ++i) {
+        const uint32_t *m = region_maps[i];
+        assert(gd32h77x_ecnvm_data_range_valid(m[0], m[1], m[0], m[1], m[2], m[3]));
+        assert(gd32h77x_ecnvm_data_range_valid(m[2], m[3], m[0], m[1], m[2], m[3]));
+        assert(gd32h77x_ecnvm_data_range_valid(m[2] + m[3] - 8U, 8U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[0] + m[1], 8U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[2] - 8U, 8U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[0] + m[1] - 8U, 16U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[2] - 8U, 16U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[2] + m[3] - 8U, 16U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(UINT32_MAX - 7U, 16U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[2], 0U, m[0], m[1], m[2], m[3]));
+        assert(!gd32h77x_ecnvm_data_range_valid(m[0] - 8U, 8U, m[0], m[1], m[2], m[3]));
+    }
+
     TUYA_FLASH_BASE_INFO_T info;
     uint8_t pattern[32];
     uint8_t readback[32];

@@ -168,34 +168,56 @@ bool at_spi_frame_encode(uint8_t output[AT_SPI_FRAME_SIZE],
     return true;
 }
 
-bool at_spi_frame_decode(const uint8_t input[AT_SPI_FRAME_SIZE],
-                         at_spi_frame_t *frame,
-                         uint8_t payload[AT_SPI_PAYLOAD_SIZE])
+static at_spi_frame_validation_t validate_frame(const uint8_t input[AT_SPI_FRAME_SIZE])
 {
     uint16_t length;
 
-    if (input == NULL || frame == NULL || payload == NULL ||
-        input[0] != AT_SPI_MAGIC_0 || input[1] != AT_SPI_MAGIC_1 ||
-        input[2] != AT_SPI_PROTOCOL_VERSION ||
-        (input[3] & (uint8_t)~(AT_SPI_FLAG_HELLO | AT_SPI_FLAG_HELLO_ACK)) != 0U ||
-        input[3] == (AT_SPI_FLAG_HELLO | AT_SPI_FLAG_HELLO_ACK) ||
-        input[10] != 0U || input[11] != 0U ||
-        get_u16_le(&input[AT_SPI_HEADER_CRC_OFFSET]) !=
-            at_spi_crc16_ccitt_false(input, AT_SPI_HEADER_CRC_OFFSET)) {
-        return false;
+    if (input[0] != AT_SPI_MAGIC_0 || input[1] != AT_SPI_MAGIC_1) {
+        return AT_SPI_FRAME_INVALID_MAGIC;
+    }
+    if (input[2] != AT_SPI_PROTOCOL_VERSION) return AT_SPI_FRAME_INVALID_VERSION;
+    if ((input[3] & (uint8_t)~(AT_SPI_FLAG_HELLO | AT_SPI_FLAG_HELLO_ACK)) != 0U ||
+        input[3] == (AT_SPI_FLAG_HELLO | AT_SPI_FLAG_HELLO_ACK)) {
+        return AT_SPI_FRAME_INVALID_FLAGS;
+    }
+    if (input[10] != 0U || input[11] != 0U) return AT_SPI_FRAME_INVALID_RESERVED;
+    if (get_u16_le(&input[AT_SPI_HEADER_CRC_OFFSET]) !=
+        at_spi_crc16_ccitt_false(input, AT_SPI_HEADER_CRC_OFFSET)) {
+        return AT_SPI_FRAME_INVALID_HEADER_CRC;
     }
 
     length = get_u16_le(&input[8]);
     if (length > AT_SPI_PAYLOAD_SIZE ||
-        (input[3] != 0U && length != 0U) ||
-        get_u16_le(&input[AT_SPI_PAYLOAD_CRC_OFFSET]) !=
-            at_spi_crc16_ccitt_false(&input[AT_SPI_HEADER_SIZE], length)) {
-        return false;
+        (input[3] != 0U && length != 0U)) {
+        return AT_SPI_FRAME_INVALID_LENGTH;
+    }
+    if (get_u16_le(&input[AT_SPI_PAYLOAD_CRC_OFFSET]) !=
+        at_spi_crc16_ccitt_false(&input[AT_SPI_HEADER_SIZE], length)) {
+        return AT_SPI_FRAME_INVALID_PAYLOAD_CRC;
     }
     for (size_t i = AT_SPI_HEADER_SIZE + length; i < AT_SPI_FRAME_SIZE; ++i) {
-        if (input[i] != 0U) return false;
+        if (input[i] != 0U) return AT_SPI_FRAME_INVALID_PADDING;
     }
+    return AT_SPI_FRAME_VALID;
+}
 
+bool at_spi_frame_decode_checked(const uint8_t input[AT_SPI_FRAME_SIZE],
+                                 at_spi_frame_t *frame,
+                                 uint8_t payload[AT_SPI_PAYLOAD_SIZE],
+                                 at_spi_frame_validation_t *validation)
+{
+    at_spi_frame_validation_t reason = AT_SPI_FRAME_VALID;
+    uint16_t length;
+
+    if (input == NULL || frame == NULL || payload == NULL) {
+        if (validation) *validation = AT_SPI_FRAME_INVALID_MAGIC;
+        return false;
+    }
+    reason = validate_frame(input);
+    if (validation) *validation = reason;
+    if (reason != AT_SPI_FRAME_VALID) return false;
+
+    length = get_u16_le(&input[8]);
     frame->flags = input[3];
     frame->seq = get_u16_le(&input[4]);
     frame->ack = get_u16_le(&input[6]);
@@ -203,4 +225,11 @@ bool at_spi_frame_decode(const uint8_t input[AT_SPI_FRAME_SIZE],
     if (length != 0U) memcpy(payload, &input[AT_SPI_HEADER_SIZE], length);
     frame->payload = payload;
     return true;
+}
+
+bool at_spi_frame_decode(const uint8_t input[AT_SPI_FRAME_SIZE],
+                         at_spi_frame_t *frame,
+                         uint8_t payload[AT_SPI_PAYLOAD_SIZE])
+{
+    return at_spi_frame_decode_checked(input, frame, payload, NULL);
 }

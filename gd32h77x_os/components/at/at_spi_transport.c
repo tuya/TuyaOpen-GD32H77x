@@ -1,10 +1,11 @@
 /**
  * @file at_spi_transport.c
- * @brief SPI master transport for GD32H779V_START <-> GD32VW553.
+ * @brief Configurable GD32H77X SPI master AT transport for GD32VW553.
  */
 #include "at_spi_transport.h"
 
 #include "at_spi_protocol.h"
+#include "at_log.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
@@ -13,26 +14,25 @@
 #include "gd32h77x_78x_rcu.h"
 #include "gd32h77x_78x_spi.h"
 #include "gd32h77x_config.h"
+#include "gd32h77x_dma.h"
 
 #include <string.h>
 
-#define AT_SPI_PERIPH SPI3
-#define AT_SPI_REQUEST_PORT GPIOE
-#define AT_SPI_REQUEST_PIN GPIO_PIN_4
-#define AT_SPI_READY_PORT GPIOE
-#define AT_SPI_READY_PIN GPIO_PIN_3
-#define AT_SPI_CLOCK_PIN GPIO_PIN_2
-#define AT_SPI_MISO_PIN GPIO_PIN_5
-#define AT_SPI_MOSI_PIN GPIO_PIN_6
-#define AT_SPI_PIN_MASK (AT_SPI_CLOCK_PIN | AT_SPI_MISO_PIN | AT_SPI_MOSI_PIN)
 #define AT_SPI_READY_TIMEOUT_MS 100U
 #define AT_SPI_READY_IDLE_TIMEOUT_MS 1200U
 #define AT_SPI_FRAME_TIMEOUT_MS 100U
 #define AT_SPI_WRITE_QUEUE_LIMIT 16384U
 #define AT_SPI_WORKER_STACK 1024U
-#define AT_SPI_WORKER_PRIORITY (tskIDLE_PRIORITY + 3U)
+/* Keep clocks flowing while priority-5 application/TLS work is CPU-bound. */
+#define AT_SPI_WORKER_PRIORITY (tskIDLE_PRIORITY + 6U)
+_Static_assert(AT_SPI_WORKER_PRIORITY < configMAX_PRIORITIES,
+               "SPI AT worker priority must be a valid FreeRTOS priority");
 #define AT_SPI_POLL_DELAY_MS 2U
 #define AT_SPI_BAD_FRAME_LIMIT 4U
+#define AT_SPI_DMA_TX_DONE 1U
+#define AT_SPI_DMA_RX_DONE 2U
+#define AT_SPI_DMA_ERROR 4U
+#define AT_SPI_DMA_DONE (AT_SPI_DMA_TX_DONE | AT_SPI_DMA_RX_DONE)
 
 typedef struct {
     bool opened;
@@ -60,10 +60,74 @@ typedef struct {
     uint32_t rx_burst_high_water;
     uint8_t bad_frame_count;
     at_spi_transport_diag_t diag;
+    gd32h77x_dma_handle_t dma_tx;
+    gd32h77x_dma_handle_t dma_rx;
 } at_spi_context_t;
 
 static at_spi_context_t s_spi;
 static at_transport_t s_transport;
+/* Dedicated cache lines: invalidating DMA RX must not discard context data. */
+static uint8_t s_dma_tx[AT_SPI_FRAME_SIZE] __attribute__((aligned(32)));
+static uint8_t s_dma_rx[AT_SPI_FRAME_SIZE] __attribute__((aligned(32)));
+_Static_assert(AT_SPI_FRAME_SIZE % 32U == 0U, "DMA buffers must cover whole cache lines");
+/* Metadata only; keep printing out of the transfer path. */
+typedef struct {
+    uint32_t ms;
+    uint16_t seq, ack, length, expected;
+    int result;
+} spi_rx_trace_t;
+static spi_rx_trace_t s_rx_trace[16];
+static uint32_t s_rx_trace_count;
+
+void at_spi_transport_trace_dump(void)
+{
+    spi_rx_trace_t snapshot[16];
+    uint32_t count;
+    taskENTER_CRITICAL();
+    count = s_rx_trace_count;
+    memcpy(snapshot, s_rx_trace, sizeof(snapshot));
+    taskEXIT_CRITICAL();
+    const uint32_t used = count < 16U ? count : 16U;
+    for (uint32_t i = 0; i < used; ++i) {
+        const spi_rx_trace_t *row = &snapshot[(count - used + i) % 16U];
+        AT_SUMMARY("SPI_RX ms=%lu seq=%u ack=%u len=%u expected=%u result=%d",
+                   (unsigned long)row->ms, row->seq, row->ack, row->length,
+                   row->expected, row->result);
+    }
+    at_spi_transport_diag_t diag;
+    at_spi_transport_diag_get(&diag);
+    AT_SUMMARY("SPI_DIAG phase=%u pending=%u dma=%lu timeout=%lu error=%lu stat=%08lx ctl=%08lx",
+               diag.link_phase, diag.tx_pending, (unsigned long)diag.dma_frame_count,
+               (unsigned long)diag.dma_timeout_count, (unsigned long)diag.dma_error_count,
+               (unsigned long)diag.spi_stat, (unsigned long)diag.spi_ctl0);
+    AT_SUMMARY("SPI_HEADER %02x %02x %02x %02x %02x %02x %02x %02x",
+               diag.last_rx_header[0], diag.last_rx_header[1], diag.last_rx_header[2],
+               diag.last_rx_header[3], diag.last_rx_header[4], diag.last_rx_header[5],
+               diag.last_rx_header[6], diag.last_rx_header[7]);
+    AT_SUMMARY("SPI_STATE next=%u valid=%lu invalid=%lu ready_hi=%lu ready_lo=%lu idle=%lu",
+               diag.rx_next, (unsigned long)diag.valid_frame_count,
+               (unsigned long)diag.invalid_frame_count, (unsigned long)diag.ready_high_timeout,
+               (unsigned long)diag.ready_low_timeout, (unsigned long)diag.ready_idle_timeout);
+    AT_SUMMARY("SPI_INVALID magic=%lu version=%lu flags=%lu reserved=%lu hcrc=%lu len=%lu pcrc=%lu pad=%lu last=%u",
+               (unsigned long)diag.invalid_magic_count,
+               (unsigned long)diag.invalid_version_count,
+               (unsigned long)diag.invalid_flags_count,
+               (unsigned long)diag.invalid_reserved_count,
+               (unsigned long)diag.invalid_header_crc_count,
+               (unsigned long)diag.invalid_length_count,
+               (unsigned long)diag.invalid_payload_crc_count,
+               (unsigned long)diag.invalid_padding_count,
+               (unsigned)diag.last_invalid_reason);
+    AT_SUMMARY("SPI_INVALID_HEADER %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+               diag.last_invalid_header[0], diag.last_invalid_header[1],
+               diag.last_invalid_header[2], diag.last_invalid_header[3],
+               diag.last_invalid_header[4], diag.last_invalid_header[5],
+               diag.last_invalid_header[6], diag.last_invalid_header[7],
+               diag.last_invalid_header[8], diag.last_invalid_header[9],
+               diag.last_invalid_header[10], diag.last_invalid_header[11],
+               diag.last_invalid_header[12], diag.last_invalid_header[13],
+               diag.last_invalid_header[14], diag.last_invalid_header[15]);
+}
 static void finish_write(bool success);
 static void spi_suspend(at_transport_t *transport);
 
@@ -72,6 +136,15 @@ static uint32_t spi_now_ms(void)
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 }
 
+static void spi_select(bool active)
+{
+    if (active != (AT_SPI_CS_ONLY != 0))
+        gpio_bit_set(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
+    else
+        gpio_bit_reset(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
+}
+
+#if !AT_SPI_CS_ONLY
 static bool wait_pin(uint32_t port, uint32_t pin, FlagStatus value,
                      uint32_t timeout_ms)
 {
@@ -83,6 +156,7 @@ static bool wait_pin(uint32_t port, uint32_t pin, FlagStatus value,
     }
     return true;
 }
+#endif
 
 static bool wait_spi_flag(uint32_t flag, uint32_t start_ms)
 {
@@ -120,9 +194,24 @@ static bool spi_master_suspend(void)
     return true;
 }
 
+static void spi_dma_complete(gd32h77x_dma_handle_t *handle,
+                             GD32H77X_DMA_EVENT_E event, void *arg)
+{
+    (void)arg;
+    BaseType_t wake = pdFALSE;
+    uint32_t bits = event == GD32H77X_DMA_EVENT_ERROR ? AT_SPI_DMA_ERROR :
+                    (handle == &s_spi.dma_tx ? AT_SPI_DMA_TX_DONE : AT_SPI_DMA_RX_DONE);
+    (void)xTaskNotifyFromISR(s_spi.worker, bits, eSetBits, &wake);
+    portYIELD_FROM_ISR(wake);
+}
+
 static bool spi_transfer_frame(const uint8_t tx[AT_SPI_FRAME_SIZE],
                                uint8_t rx[AT_SPI_FRAME_SIZE])
 {
+    bool success = false;
+    uint32_t notified;
+    uint32_t completed = 0U;
+#if !AT_SPI_CS_ONLY
     if (!wait_pin(AT_SPI_READY_PORT, AT_SPI_READY_PIN, SET,
                   AT_SPI_READY_TIMEOUT_MS)) {
         if (!s_spi.suspended && !s_spi.stop_requested) {
@@ -130,52 +219,136 @@ static bool spi_transfer_frame(const uint8_t tx[AT_SPI_FRAME_SIZE],
         }
         return false;
     }
+#else
+    /* Setup time is not a readiness promise: an unarmed/busy slave gives an
+     * invalid snapshot, which is retried without retiring stream bytes. */
+    vTaskDelay(pdMS_TO_TICKS(1U));
+#endif
     if (!spi_master_suspend()) return false;
+    if (gd32h77x_dma_claim(&s_spi.dma_tx, AT_SPI_DMA_TX_REQUEST,
+                          spi_dma_complete, NULL) != GD32H77X_DMA_OK) {
+        ++s_spi.diag.dma_error_count;
+        return false;
+    }
+    if (gd32h77x_dma_claim(&s_spi.dma_rx, AT_SPI_DMA_RX_REQUEST,
+                          spi_dma_complete, NULL) != GD32H77X_DMA_OK) {
+        ++s_spi.diag.dma_error_count;
+        gd32h77x_dma_release(&s_spi.dma_tx);
+        return false;
+    }
+    /* No other user owns the SPI worker's task notification. Drain a late
+     * completion from the previous transfer before enabling either channel. */
+    (void)xTaskNotifyWait(0U, UINT32_MAX, &notified, 0U);
+    memcpy(s_dma_tx, tx, sizeof(s_dma_tx));
+    if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U) {
+        SCB_CleanDCache_by_Addr((volatile void *)s_dma_tx, sizeof(s_dma_tx));
+        SCB_CleanInvalidateDCache_by_Addr((volatile void *)s_dma_rx, sizeof(s_dma_rx));
+    }
 
     SPI_CTL0(AT_SPI_PERIPH) &= ~SPI_CTL0_SPIEN;
     SPI_STATC(AT_SPI_PERIPH) = SPI_STATC_ETC | SPI_STATC_SPDC |
                                SPI_STATC_TXURERRC | SPI_STATC_RXORERRC |
                                SPI_STATC_CONFERRC;
+    spi_word_access_disable(AT_SPI_PERIPH);
+    spi_byte_access_enable(AT_SPI_PERIPH);
+    spi_fifo_threshold_level_set(AT_SPI_PERIPH, SPI_FIFO_TH_01DATA);
     spi_current_data_num_config(AT_SPI_PERIPH, AT_SPI_FRAME_SIZE);
+    GD32H77X_DMA_SINGLE_CFG_T cfg = {
+        .periph_addr = (uint32_t)&SPI_TDATA(AT_SPI_PERIPH),
+        .memory_addr = (uint32_t)s_dma_tx,
+        .memory_increment = true,
+        .width = DMA_PERIPH_WIDTH_8BIT,
+        .direction = DMA_MEMORY_TO_PERIPH,
+        .frames = AT_SPI_FRAME_SIZE,
+        .priority = DMA_PRIORITY_HIGH,
+    };
+    if (gd32h77x_dma_single_config(&s_spi.dma_tx, &cfg) != GD32H77X_DMA_OK) goto cleanup;
+    cfg.periph_addr = (uint32_t)&SPI_RDATA(AT_SPI_PERIPH);
+    cfg.memory_addr = (uint32_t)s_dma_rx;
+    cfg.direction = DMA_PERIPH_TO_MEMORY;
+    if (gd32h77x_dma_single_config(&s_spi.dma_rx, &cfg) != GD32H77X_DMA_OK) goto cleanup;
+    spi_dma_enable(AT_SPI_PERIPH, SPI_DMA_RECEIVE);
+    spi_dma_enable(AT_SPI_PERIPH, SPI_DMA_TRANSMIT);
     SPI_CTL0(AT_SPI_PERIPH) |= SPI_CTL0_SPIEN;
-    spi_master_transfer_start(AT_SPI_PERIPH, SPI_TRANS_START);
+    if (gd32h77x_dma_start(&s_spi.dma_rx, true) != GD32H77X_DMA_OK ||
+        gd32h77x_dma_start(&s_spi.dma_tx, true) != GD32H77X_DMA_OK) goto cleanup;
     s_spi.transaction_started = true;
+    spi_master_transfer_start(AT_SPI_PERIPH, SPI_TRANS_START);
 
     const uint32_t frame_start = spi_now_ms();
-    for (size_t index = 0U; index < AT_SPI_FRAME_SIZE; ++index) {
-        if (!wait_spi_flag(SPI_FLAG_TP, frame_start)) return false;
-        SPI_TDATA(AT_SPI_PERIPH) = tx[index];
-        if (!wait_spi_flag(SPI_FLAG_RP, frame_start)) return false;
-        rx[index] = (uint8_t)SPI_RDATA(AT_SPI_PERIPH);
+    while ((completed & AT_SPI_DMA_DONE) != AT_SPI_DMA_DONE) {
+        if (xTaskNotifyWait(0U, UINT32_MAX, &notified, pdMS_TO_TICKS(5U)) == pdTRUE) {
+            completed |= notified;
+        }
+        if ((completed & AT_SPI_DMA_ERROR) != 0U ||
+            s_spi.suspended || s_spi.stop_requested) goto cleanup;
+        if ((uint32_t)(spi_now_ms() - frame_start) >= AT_SPI_FRAME_TIMEOUT_MS) {
+            ++s_spi.diag.dma_timeout_count;
+            goto cleanup;
+        }
     }
-    if (!wait_spi_flag(SPI_FLAG_ET, frame_start)) return false;
-    if (!spi_master_suspend()) return false;
+    /* TX DMA completion only means FIFO loaded; RX completion plus ET is
+     * required before dropping REQUEST or reusing either buffer. */
+    if (!wait_spi_flag(SPI_FLAG_ET, frame_start) || !spi_master_suspend()) goto cleanup;
+    if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U) {
+        SCB_InvalidateDCache_by_Addr((volatile void *)s_dma_rx, sizeof(s_dma_rx));
+    }
+    memcpy(rx, s_dma_rx, sizeof(s_dma_rx));
     s_spi.transaction_started = false;
-    return true;
+    ++s_spi.diag.dma_frame_count;
+    success = true;
+cleanup:
+    spi_dma_disable(AT_SPI_PERIPH, SPI_DMA_TRANSMIT);
+    spi_dma_disable(AT_SPI_PERIPH, SPI_DMA_RECEIVE);
+    gd32h77x_dma_release(&s_spi.dma_tx);
+    gd32h77x_dma_release(&s_spi.dma_rx);
+    if (!success) {
+        ++s_spi.diag.dma_error_count;
+        spi_disable(AT_SPI_PERIPH);
+    }
+    return success;
+}
+
+static void spi_hw_disable(void)
+{
+    spi_disable(AT_SPI_PERIPH);
 }
 
 static void spi_gpio_and_peripheral_init(void)
 {
     spi_parameter_struct config;
 
-    rcu_periph_clock_enable(RCU_GPIOE);
-    rcu_spi_clock_config(IDX_SPI3, RCU_SPISRC_APB2);
-    rcu_periph_clock_enable(RCU_SPI3);
-    gpio_af_set(GPIOE, GPIO_AF_5, AT_SPI_PIN_MASK);
-    gpio_mode_set(GPIOE, GPIO_MODE_AF, GPIO_PUPD_NONE, AT_SPI_PIN_MASK);
-    gpio_output_options_set(GPIOE, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ, AT_SPI_PIN_MASK);
+    rcu_periph_clock_enable(AT_SPI_REQUEST_CLOCK);
+    rcu_spi_clock_config(AT_SPI_INDEX, AT_SPI_CLOCK_SOURCE);
+    rcu_periph_clock_enable(AT_SPI_CLOCK_GATE);
+    rcu_periph_clock_enable(AT_SPI_CLOCK_CLOCK);
+    gpio_af_set(AT_SPI_CLOCK_PORT, AT_SPI_CLOCK_AF, AT_SPI_CLOCK_PIN);
+    gpio_mode_set(AT_SPI_CLOCK_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, AT_SPI_CLOCK_PIN);
+    gpio_output_options_set(AT_SPI_CLOCK_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ, AT_SPI_CLOCK_PIN);
+    rcu_periph_clock_enable(AT_SPI_MISO_CLOCK);
+    gpio_af_set(AT_SPI_MISO_PORT, AT_SPI_MISO_AF, AT_SPI_MISO_PIN);
+    gpio_mode_set(AT_SPI_MISO_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, AT_SPI_MISO_PIN);
+    gpio_output_options_set(AT_SPI_MISO_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ, AT_SPI_MISO_PIN);
+    rcu_periph_clock_enable(AT_SPI_MOSI_CLOCK);
+    gpio_af_set(AT_SPI_MOSI_PORT, AT_SPI_MOSI_AF, AT_SPI_MOSI_PIN);
+    gpio_mode_set(AT_SPI_MOSI_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, AT_SPI_MOSI_PIN);
+    gpio_output_options_set(AT_SPI_MOSI_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ, AT_SPI_MOSI_PIN);
 
+    spi_select(false); /* Set the output latch before enabling the CS driver. */
     gpio_mode_set(AT_SPI_REQUEST_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
                   AT_SPI_REQUEST_PIN);
     gpio_output_options_set(AT_SPI_REQUEST_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_60MHZ,
                             AT_SPI_REQUEST_PIN);
+#if !AT_SPI_CS_ONLY
+    rcu_periph_clock_enable(AT_SPI_READY_CLOCK);
     gpio_mode_set(AT_SPI_READY_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN,
                   AT_SPI_READY_PIN);
-    gpio_bit_reset(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
+#endif
+    spi_select(false);
 
     spi_disable(AT_SPI_PERIPH);
-    rcu_periph_reset_enable(RCU_SPI3RST);
-    rcu_periph_reset_disable(RCU_SPI3RST);
+    rcu_periph_reset_enable(AT_SPI_RESET_GATE);
+    rcu_periph_reset_disable(AT_SPI_RESET_GATE);
     spi_struct_para_init(&config);
     config.device_mode = SPI_MASTER;
     config.trans_mode = SPI_TRANSMODE_FULLDUPLEX;
@@ -265,22 +438,61 @@ static bool rx_backpressure(const at_spi_frame_t *frame)
                                           frame->length);
 }
 
+static void record_invalid_frame(at_spi_frame_validation_t validation)
+{
+    ++s_spi.diag.invalid_frame_count;
+    s_spi.diag.last_invalid_reason = (uint8_t)validation;
+    memcpy(s_spi.diag.last_invalid_header, s_spi.rx_frame,
+           sizeof(s_spi.diag.last_invalid_header));
+    switch (validation) {
+    case AT_SPI_FRAME_INVALID_MAGIC:
+        ++s_spi.diag.invalid_magic_count;
+        break;
+    case AT_SPI_FRAME_INVALID_VERSION:
+        ++s_spi.diag.invalid_version_count;
+        break;
+    case AT_SPI_FRAME_INVALID_FLAGS:
+        ++s_spi.diag.invalid_flags_count;
+        break;
+    case AT_SPI_FRAME_INVALID_RESERVED:
+        ++s_spi.diag.invalid_reserved_count;
+        break;
+    case AT_SPI_FRAME_INVALID_HEADER_CRC:
+        ++s_spi.diag.invalid_header_crc_count;
+        break;
+    case AT_SPI_FRAME_INVALID_LENGTH:
+        ++s_spi.diag.invalid_length_count;
+        break;
+    case AT_SPI_FRAME_INVALID_PAYLOAD_CRC:
+        ++s_spi.diag.invalid_payload_crc_count;
+        break;
+    case AT_SPI_FRAME_INVALID_PADDING:
+        ++s_spi.diag.invalid_padding_count;
+        break;
+    default:
+        break;
+    }
+}
+
 static void process_received_frame(void)
 {
     at_spi_frame_t frame;
     at_spi_link_rx_result_t result;
+    at_spi_frame_validation_t validation = AT_SPI_FRAME_VALID;
     const uint8_t *rx_data = NULL;
     uint16_t rx_length = 0U;
 
     memcpy(s_spi.diag.last_rx_header, s_spi.rx_frame, sizeof(s_spi.diag.last_rx_header));
-    if (!at_spi_frame_decode(s_spi.rx_frame, &frame, s_spi.rx_payload)) {
-        s_spi.diag.invalid_frame_count++;
+    if (!at_spi_frame_decode_checked(s_spi.rx_frame, &frame, s_spi.rx_payload, &validation)) {
+        record_invalid_frame(validation);
+#if !AT_SPI_CS_ONLY
         if (++s_spi.bad_frame_count >= AT_SPI_BAD_FRAME_LIMIT) {
             s_spi.bad_frame_count = 0U;
             if (s_spi.link.phase == AT_SPI_LINK_ESTABLISHED) {
                 reset_link_and_notify();
             }
         }
+#endif
         return;
     }
     s_spi.diag.valid_frame_count++;
@@ -288,8 +500,15 @@ static void process_received_frame(void)
     bool accept_payload = !rx_backpressure(&frame);
 
     const bool had_inflight = s_spi.link.tx_pending;
+    const uint16_t expected = s_spi.link.rx_next;
     result = at_spi_link_process_frame(&s_spi.link, &frame, accept_payload,
                                        &rx_data, &rx_length);
+    if (frame.length != 0U) {
+        taskENTER_CRITICAL();
+        s_rx_trace[s_rx_trace_count++ % 16U] = (spi_rx_trace_t){
+            spi_now_ms(), frame.seq, frame.ack, frame.length, expected, (int)result};
+        taskEXIT_CRITICAL();
+    }
     if (result == AT_SPI_LINK_RX_RESET) {
         finish_write(false);
         s_spi.staged_length = 0U;
@@ -334,6 +553,7 @@ static void spi_worker(void *argument)
         /* A reset during a slave DMA frame can leave READY asserted until
          * its DMA timeout drains the partial transfer. Keep REQUEST low and
          * wait for that old transaction to finish before issuing a new one. */
+#if !AT_SPI_CS_ONLY
         if (!wait_pin(AT_SPI_READY_PORT, AT_SPI_READY_PIN, RESET,
                       AT_SPI_READY_IDLE_TIMEOUT_MS)) {
             if (!s_spi.suspended && !s_spi.stop_requested) {
@@ -346,11 +566,13 @@ static void spi_worker(void *argument)
             vTaskDelay(pdMS_TO_TICKS(AT_SPI_POLL_DELAY_MS));
             continue;
         }
+#endif
         (void)stage_write_chunk();
         at_spi_link_build_frame(&s_spi.link, s_spi.tx_frame);
-        gpio_bit_set(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
+        spi_select(true);
         bool transferred = spi_transfer_frame(s_spi.tx_frame, s_spi.rx_frame);
-        gpio_bit_reset(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
+        spi_select(false);
+#if !AT_SPI_CS_ONLY
         if (!wait_pin(AT_SPI_READY_PORT, AT_SPI_READY_PIN, RESET,
                       AT_SPI_READY_TIMEOUT_MS)) {
             if (!s_spi.suspended && !s_spi.stop_requested) {
@@ -358,6 +580,7 @@ static void spi_worker(void *argument)
             }
             transferred = false;
         }
+#endif
         if (transferred) {
             process_received_frame();
         } else {
@@ -401,11 +624,13 @@ static int spi_open(at_transport_t *transport)
         return AT_TRANSPORT_ERROR;
     }
     spi_gpio_and_peripheral_init();
+    AT_SUMMARY("SPI master DMA+IRQ enabled worker_priority=%u", (unsigned)AT_SPI_WORKER_PRIORITY);
+    AT_SUMMARY("SPI protocol=%u cs_only=%u", AT_SPI_PROTOCOL_VERSION, AT_SPI_CS_ONLY);
     s_spi.opened = true;
     if (xTaskCreate(spi_worker, "at_spi", AT_SPI_WORKER_STACK, NULL,
                     AT_SPI_WORKER_PRIORITY, &s_spi.worker) != pdPASS) {
         s_spi.opened = false;
-        spi_disable(AT_SPI_PERIPH);
+        spi_hw_disable();
         vSemaphoreDelete(s_spi.write_mutex);
         vSemaphoreDelete(s_spi.write_done_sem);
         vSemaphoreDelete(s_spi.worker_exit_sem);
@@ -430,8 +655,8 @@ static void spi_close(at_transport_t *transport)
         xSemaphoreGive(s_spi.write_mutex);
     }
     s_spi.opened = false;
-    gpio_bit_reset(AT_SPI_REQUEST_PORT, AT_SPI_REQUEST_PIN);
-    spi_disable(AT_SPI_PERIPH);
+    spi_select(false);
+    spi_hw_disable();
     if (s_spi.write_mutex) vSemaphoreDelete(s_spi.write_mutex);
     if (s_spi.write_done_sem) vSemaphoreDelete(s_spi.write_done_sem);
     if (s_spi.worker_exit_sem) vSemaphoreDelete(s_spi.worker_exit_sem);
@@ -561,8 +786,8 @@ void at_spi_transport_diag_get(at_spi_transport_diag_t *diag)
     diag->tx_pending = s_spi.link.tx_pending ? 1U : 0U;
     diag->tx_next = s_spi.link.tx_next;
     diag->rx_next = s_spi.link.rx_next;
-    diag->gpio_istat = GPIO_ISTAT(GPIOE);
-    diag->gpio_octl = GPIO_OCTL(GPIOE);
+    diag->gpio_istat = GPIO_ISTAT(AT_SPI_REQUEST_PORT);
+    diag->gpio_octl = GPIO_OCTL(AT_SPI_REQUEST_PORT);
     diag->spi_stat = SPI_STAT(AT_SPI_PERIPH);
     diag->spi_ctl0 = SPI_CTL0(AT_SPI_PERIPH);
     diag->spi_cfg0 = SPI_CFG0(AT_SPI_PERIPH);

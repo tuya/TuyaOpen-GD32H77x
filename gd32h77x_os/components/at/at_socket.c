@@ -62,6 +62,8 @@ typedef struct {
     bool nonblock;
     bool broadcast;
     bool ap_listener_invalid;
+    bool tcp_options_configured;
+    at_socket_tcp_options_t tcp_options;
     int recv_timeout;
     int send_timeout;
     uint8_t stream[RX_RING_SIZE];
@@ -100,6 +102,8 @@ typedef struct {
     bool nonblock;
     bool broadcast;
     bool ap_listener_invalid;
+    bool tcp_options_configured;
+    at_socket_tcp_options_t tcp_options;
     int recv_timeout;
     int send_timeout;
     size_t stream_size;
@@ -335,6 +339,7 @@ static int reserve_slot(at_socket_type_t type)
             s_slots[i].generation = generation;
             s_slots[i].state = SLOT_CREATED;
             s_slots[i].type = type;
+            s_slots[i].tcp_options = (at_socket_tcp_options_t){1, 0, 60, 1, 3};
             s_slots[i].remote_id = -1;
             s_slots[i].lwip_fd = -1;
             s_slots[i].recv_timeout = -1;
@@ -480,12 +485,14 @@ static remote_snapshot_t query_remote(int remote_id)
     const char *line = reply;
     while ((line = strstr(line, "+CIPSTATE:")) != NULL) {
         int id = -1, remote_port = -1, local_port = -1, raw = -1, role = -1;
+        unsigned generation = 0;
         char type[4] = {0}, ip[16] = {0};
-        if (sscanf(line, "+CIPSTATE:%d,%3[^,],%15[^,],%d,%d,%d,%d", &id, type, ip, &remote_port,
-                   &local_port, &raw, &role) == 7 && id == remote_id && raw >= 0 &&
+        if (sscanf(line, "+CIPSTATE:%d,%3[^,],%15[^,],%d,%d,%d,%d,%u", &id, type, ip, &remote_port,
+                   &local_port, &raw, &role, &generation) >= 7 && id == remote_id && raw >= 0 &&
             (strcmp(type, "TCP") == 0 || strcmp(type, "UDP") == 0)) {
             snapshot.state = REMOTE_STATE_ACTIVE;
             snapshot.raw_fd = raw;
+            snapshot.generation = generation;
             return snapshot;
         }
         line += sizeof("+CIPSTATE:") - 1U;
@@ -531,6 +538,8 @@ static int get_slot(int fd, socket_meta_t *copy)
                                 .peer_port = slot->peer_port, .nonblock = slot->nonblock,
                                 .broadcast = slot->broadcast,
                                 .ap_listener_invalid = slot->ap_listener_invalid,
+                                .tcp_options_configured = slot->tcp_options_configured,
+                                .tcp_options = slot->tcp_options,
                                 .recv_timeout = slot->recv_timeout,
                                 .send_timeout = slot->send_timeout, .stream_size = slot->stream_size,
                                 .rx_events = slot->rx_events, .rx_bytes = slot->rx_bytes};
@@ -744,6 +753,8 @@ static void replay_pending_accepts_locked(void)
     }
 }
 
+static at_status_t set_tcp_options(int fd, const at_socket_tcp_options_t *options);
+
 int at_socket_create(at_socket_type_t type)
 {
     if (type != AT_SOCKET_TYPE_STREAM && type != AT_SOCKET_TYPE_DATAGRAM) { s_last_errno = AT_SOCKET_ERRNO_INVALID; return -1; }
@@ -889,6 +900,11 @@ at_socket_errno_t at_socket_connect(int fd, uint32_t addr, uint16_t port)
     }
     state_unlock();
     wake_waiters();
+    if (slot.type == AT_SOCKET_TYPE_STREAM && slot.tcp_options_configured &&
+        set_tcp_options(fd, &slot.tcp_options) != AT_STATUS_OK) {
+        (void)at_socket_close(fd);
+        return fail_with(AT_SOCKET_ERRNO_CONNECTION_RESET);
+    }
     AT_SUMMARY("CIPSTART con=%d raw=%d connected elapsed=%lums", remote, raw,
                   (unsigned long)(at_socket_now_ms() - connect_start));
     return AT_SOCKET_ERRNO_NONE;
@@ -1595,7 +1611,8 @@ at_socket_errno_t at_socket_listen(int fd, int backlog)
     }
     for (unsigned i = 0; i < SOCKET_COUNT; ++i)
         if (i != (unsigned)idx && s_slots[i].type == AT_SOCKET_TYPE_STREAM &&
-            (s_slots[i].state == SLOT_STARTING_LISTENER || s_slots[i].state == SLOT_LISTENER)) {
+            (s_slots[i].state == SLOT_STARTING_LISTENER || s_slots[i].state == SLOT_LISTENER) &&
+            s_slots[i].local_port == slot.local_port) {
             state_unlock(); return fail_with(AT_SOCKET_ERRNO_ADDRESS_IN_USE);
         }
     s_slots[idx].state = SLOT_STARTING_LISTENER;
@@ -1866,6 +1883,93 @@ at_status_t at_socket_set_bufsize(int fd, int size, at_socket_transfer_t type)
 { (void)type; if (size <= 0) return AT_STATUS_INVALID_PARAM; socket_meta_t slot; return get_slot(fd, &slot) >= 0 && size <= (int)RX_RING_SIZE ? AT_STATUS_OK : AT_STATUS_INVALID_PARAM; }
 at_status_t at_socket_set_broadcast(int fd)
 { if (!state_lock()) return AT_STATUS_IO_ERROR; int idx = find_logical(fd); if (idx < 0 || s_slots[idx].type != AT_SOCKET_TYPE_DATAGRAM) { state_unlock(); return AT_STATUS_INVALID_PARAM; } s_slots[idx].broadcast = true; state_unlock(); return AT_STATUS_OK; }
+static at_status_t tcp_options_rpc(const socket_meta_t *slot,
+                                   const at_socket_tcp_options_t *desired,
+                                   at_socket_tcp_options_t *actual)
+{
+    char command[128], reply[192] = {0};
+    size_t length = 0;
+    if (!slot->remote_generation) {
+        AT_SUMMARY("TCP options require CIPSTATE generation; update VW553 firmware");
+        return AT_STATUS_UNSUPPORTED;
+    }
+    if (desired) {
+        (void)snprintf(command, sizeof(command), "AT+CIPTCPOPT=%d,%lu,%d,%d,%d,%d,%d",
+                       slot->remote_id, (unsigned long)slot->remote_generation,
+                       desired->nodelay, desired->alive, desired->idle, desired->interval, desired->count);
+    } else {
+        (void)snprintf(command, sizeof(command), "AT+CIPTCPOPT=%d,%lu",
+                       slot->remote_id, (unsigned long)slot->remote_generation);
+    }
+    at_status_t status = run_at(command, NULL, 0, false, reply, sizeof(reply), &length, NULL);
+    if (status != AT_STATUS_OK) return status;
+    const char *line = strstr(reply, "+CIPTCPOPT:");
+    AT_SUMMARY("TCP option readback con=%d generation=%lu bytes=%lu line=%.*s", slot->remote_id,
+               (unsigned long)slot->remote_generation, (unsigned long)length,
+               line ? (int)strcspn(line, "\r\n") : 0, line ? line : "");
+    int id; unsigned generation;
+    if (!line || sscanf(line, "+CIPTCPOPT:%d,%u,%d,%d,%d,%d,%d", &id, &generation,
+                        &actual->nodelay, &actual->alive, &actual->idle,
+                        &actual->interval, &actual->count) != 7 ||
+        id != slot->remote_id || generation != slot->remote_generation) return AT_STATUS_IO_ERROR;
+    if (desired && (actual->nodelay != desired->nodelay || actual->alive != desired->alive ||
+        actual->idle != desired->idle || actual->interval != desired->interval ||
+        actual->count != desired->count)) return AT_STATUS_IO_ERROR;
+    return AT_STATUS_OK;
+}
+
+at_status_t at_socket_get_tcp_options(int fd, at_socket_tcp_options_t *options)
+{
+    socket_meta_t slot;
+    if (!options || get_slot(fd, &slot) < 0 || slot.type != AT_SOCKET_TYPE_STREAM)
+        return AT_STATUS_INVALID_PARAM;
+    if (slot.state == SLOT_CREATED) { *options = slot.tcp_options; return AT_STATUS_OK; }
+    if (slot.state != SLOT_CONNECTED) return AT_STATUS_NOT_READY;
+    return tcp_options_rpc(&slot, NULL, options);
+}
+
+static at_status_t set_tcp_options(int fd, const at_socket_tcp_options_t *options)
+{
+    socket_meta_t slot;
+    int idx = get_slot(fd, &slot);
+    if (idx < 0 || slot.type != AT_SOCKET_TYPE_STREAM) return AT_STATUS_INVALID_PARAM;
+    if (slot.state == SLOT_CONNECTED) {
+        at_socket_tcp_options_t actual;
+        at_status_t status = tcp_options_rpc(&slot, options, &actual);
+        if (status != AT_STATUS_OK) return status;
+        AT_SUMMARY("TCP options verified fd=%d nodelay=%d alive=%d idle=%d interval=%d count=%d",
+                   fd, actual.nodelay, actual.alive, actual.idle, actual.interval, actual.count);
+    } else if (slot.state != SLOT_CREATED) return AT_STATUS_NOT_READY;
+    if (!state_lock()) return AT_STATUS_BUSY;
+    if (s_slots[idx].generation != slot.generation || s_slots[idx].state != slot.state) {
+        state_unlock(); return AT_STATUS_NOT_READY;
+    }
+    s_slots[idx].tcp_options = *options;
+    s_slots[idx].tcp_options_configured = true;
+    state_unlock();
+    return AT_STATUS_OK;
+}
+
+at_status_t at_socket_disable_nagle(int fd)
+{
+    at_socket_tcp_options_t options;
+    at_status_t status = at_socket_get_tcp_options(fd, &options);
+    if (status != AT_STATUS_OK) return status;
+    options.nodelay = 1;
+    return set_tcp_options(fd, &options);
+}
+
+at_status_t at_socket_set_keepalive(int fd, bool alive, uint32_t idle, uint32_t interval, uint32_t count)
+{
+    if (alive && (!idle || idle > INT_MAX / 1000U || !interval ||
+                  interval > INT_MAX / 1000U || !count || count > 127U)) return AT_STATUS_INVALID_PARAM;
+    at_socket_tcp_options_t options;
+    at_status_t status = at_socket_get_tcp_options(fd, &options);
+    if (status != AT_STATUS_OK) return status;
+    options.alive = alive ? 1 : 0;
+    if (alive) { options.idle = (int)idle; options.interval = (int)interval; options.count = (int)count; }
+    return set_tcp_options(fd, &options);
+}
 at_status_t at_socket_getsockname(int fd, uint32_t *addr, uint16_t *port)
 { if (!addr || !port) return AT_STATUS_INVALID_PARAM; socket_meta_t slot; if (get_slot(fd, &slot) < 0) return AT_STATUS_INVALID_PARAM; *addr = 0U; *port = (slot.state == SLOT_LISTENER) ? slot.local_port : 0U; return AT_STATUS_OK; }
 at_status_t at_socket_getpeername(int fd, uint32_t *addr, uint16_t *port)
