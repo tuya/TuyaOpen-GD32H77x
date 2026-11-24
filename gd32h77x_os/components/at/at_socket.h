@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 #define AT_SOCKET_FD_BASE 3
-#define AT_SOCKET_FD_LIMIT 15
+#define AT_SOCKET_FD_LIMIT 10
 #define AT_SOCKET_FD_SET_SIZE ((AT_SOCKET_FD_LIMIT + 8) / 8)
 
 typedef enum {
@@ -49,6 +49,10 @@ typedef struct {
     uint8_t bits[AT_SOCKET_FD_SET_SIZE];
 } at_socket_fd_set_t;
 
+typedef struct {
+    int nodelay, alive, idle, interval, count;
+} at_socket_tcp_options_t;
+
 at_status_t at_socket_init(void);
 bool at_socket_has_active_socket(void);
 void at_socket_on_device_event(void *context, const at_device_event_t *event);
@@ -82,6 +86,9 @@ at_status_t at_socket_gethostbyname(const char *domain, uint32_t *addr);
 at_status_t at_socket_set_timeout(int fd, int timeout_ms, at_socket_transfer_t type);
 at_status_t at_socket_set_bufsize(int fd, int size, at_socket_transfer_t type);
 at_status_t at_socket_set_broadcast(int fd);
+at_status_t at_socket_disable_nagle(int fd);
+at_status_t at_socket_set_keepalive(int fd, bool alive, uint32_t idle, uint32_t interval, uint32_t count);
+at_status_t at_socket_get_tcp_options(int fd, at_socket_tcp_options_t *options);
 at_status_t at_socket_getsockname(int fd, uint32_t *addr, uint16_t *port);
 at_status_t at_socket_getpeername(int fd, uint32_t *addr, uint16_t *port);
 

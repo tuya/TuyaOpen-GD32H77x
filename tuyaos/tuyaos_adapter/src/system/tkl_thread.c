@@ -81,6 +81,16 @@ OPERATE_RET tkl_thread_create(TKL_THREAD_HANDLE *thread, const char *name, uint3
     // --- END: user implements ---
 }
 
+#if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
+OPERATE_RET tkl_thread_create_in_psram(TKL_THREAD_HANDLE *thread, const char *name, uint32_t stack_size,
+                                       uint32_t priority, const THREAD_FUNC_T func, void *const arg)
+{
+    /* Task stacks stay in internal SRAM until external-stack context switching
+     * and access latency are validated on hardware. */
+    return tkl_thread_create(thread, name, stack_size, priority, func, arg);
+}
+#endif
+
 /**
  * @brief Terminal thread and release thread resources
  *

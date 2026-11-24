@@ -340,6 +340,16 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                 self.using, str(package), "", 0, str(self.root), None)
         return result, module, lib
 
+    def test_dfu_autostart_follows_platform_setting(self):
+        for setting in ("y", "n"):
+            with self.subTest(setting=setting):
+                (self.board_dir / "gd32h77x.config").write_text(
+                    "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_DFU=y\n"
+                    f"CONFIG_ENABLE_GD32H77X_FLASH_DFU_AUTOSTART={setting}\n",
+                    encoding="utf-8")
+                config = bridge._board_flash_config(self.using, str(self.root))
+                self.assertEqual(config["CONFIG_FLASH_DFU_LEAVE"], setting)
+
     def test_board_flash_backend_and_fixed_runtime_defaults(self):
         (self.board_dir / "gd32h77x.config").write_text(
             "CONFIG_ENABLE_GD32H77X_FLASH_BACKEND_SWD=y\n",

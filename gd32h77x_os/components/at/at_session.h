@@ -76,6 +76,7 @@ typedef struct {
 at_status_t at_session_init(const at_session_events_t *events, void *context);
 at_status_t at_session_execute(const at_request_t *request, at_result_t *result);
 at_status_t at_session_recover(void);
+at_status_t at_session_set_boot_ready_mode(bool enabled);
 at_status_t at_session_transact(const char *command, size_t length, bool wait_prompt,
                                       uint32_t timeout_ms, at_result_t *result);
 at_status_t at_session_negotiate(uint32_t timeout_ms);

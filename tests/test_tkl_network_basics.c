@@ -19,6 +19,19 @@ typedef struct {
 
 static int fake_send_result;
 static int fake_recv_result;
+static at_status_t fake_nagle_status;
+
+at_status_t at_socket_disable_nagle(int fd)
+{
+    assert(fd == 3);
+    return fake_nagle_status;
+}
+
+at_status_t at_socket_set_keepalive(int fd, bool alive, uint32_t idle, uint32_t interval, uint32_t count)
+{
+    assert(fd == 3 && alive && idle == 100 && interval == 5 && count == 1);
+    return fake_nagle_status;
+}
 
 int at_socket_send(int fd, const void *buf, uint32_t length)
 {
@@ -143,6 +156,12 @@ static void recv_length_passthrough(void)
 
 int main(void)
 {
+    fake_nagle_status = AT_STATUS_OK;
+    assert(tkl_net_disable_nagle(3) == OPRT_OK);
+    assert(tkl_net_set_keepalive(3, TRUE, 100, 5, 1) == OPRT_OK);
+    fake_nagle_status = AT_STATUS_INVALID_PARAM;
+    assert(tkl_net_disable_nagle(3) == OPRT_INVALID_PARM);
+    assert(tkl_net_set_keepalive(3, TRUE, 100, 5, 1) == OPRT_INVALID_PARM);
     fd_set_bounds_and_bitmap();
     strict_ipv4_host_order();
     send_length_passthrough();

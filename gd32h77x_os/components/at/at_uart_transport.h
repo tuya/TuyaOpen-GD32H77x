@@ -17,6 +17,9 @@ typedef struct {
     uint32_t tx_pin;
     uint32_t rx_pin;
     uint32_t alternate_function;
+    rcu_periph_enum rx_gpio_clock;
+    uint32_t rx_gpio_port;
+    uint32_t rx_alternate_function;
     IRQn_Type irq;
     uint32_t baudrate;
     uint32_t word_length;

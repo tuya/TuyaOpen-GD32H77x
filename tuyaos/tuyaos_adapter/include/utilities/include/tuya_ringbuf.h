@@ -16,13 +16,20 @@ extern "C" {
 
 #include "tuya_cloud_types.h"
 
+#if (defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)) || \
+    (defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1))
+#define TUYA_RINGBUF_PSRAM_ENABLED 1
+#else
+#define TUYA_RINGBUF_PSRAM_ENABLED 0
+#endif
+
 typedef void *TUYA_RINGBUFF_T;
 
 typedef enum {
     OVERFLOW_STOP_TYPE = 0, ///< unread buff area will not be overwritten when writing overflow
     OVERFLOW_COVERAGE_TYPE, ///< unread buff area will be overwritten when writing overflow
-    OVERFLOW_PSRAM_STOP_TYPE = OVERFLOW_STOP_TYPE, ///< PSRAM variant (maps to normal for non-MCU platforms)
-    OVERFLOW_PSRAM_COVERAGE_TYPE = OVERFLOW_COVERAGE_TYPE, ///< PSRAM variant (maps to normal for non-MCU platforms)
+    OVERFLOW_PSRAM_STOP_TYPE, ///< unread buff area is stored in PSRAM
+    OVERFLOW_PSRAM_COVERAGE_TYPE, ///< PSRAM overwrite variant (not implemented)
 } RINGBUFF_TYPE_E;
 
 /**

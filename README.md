@@ -4,7 +4,7 @@
 
 长期架构和板级接线分别见 [平台架构](docs/architecture.md) 与
 [H779V-START/VW553 接线](docs/gd32h779v_start_vw553_wiring.md)。无需修改
-VW553 时直接使用 [wireless_fw/vw553](wireless_fw/vw553/README.md) 中的稳定
+VW553 时直接使用 [START 配套 VW553 固件](../../boards/GD32H77X/GD32H779V_START/firmware/vw553/README.md) 中的稳定
 预编译镜像，不依赖 `platform/GD32` 源码仓库。
 
 ## 当前状态
@@ -408,11 +408,11 @@ ISP 烧录见 [VW553 UART ISP](docs/vw553-isp-flashing.md)。
 当前稳定 UART 镜像同时预置在 H77 仓库：
 
 ```text
-platform/GD32H77X/wireless_fw/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
+boards/GD32H77X/GD32H779V_START/firmware/vw553/uart/vw553_at_gateway_uart_v0.5.2.bin
 ```
 
 其版本、引脚、SHA256 和烧录命令见
-[wireless_fw/vw553](wireless_fw/vw553/README.md)。SPI gateway 尚待开发和实板验收。
+[START 配套 VW553 固件](../../boards/GD32H77X/GD32H779V_START/firmware/vw553/README.md)。旧版 SPI 镜像的验证范围见其 README；Desk Buddy 使用独立的板级配套固件。
 
 不要再使用旧的 `/tmp/gd32vw553-diag`、`MSDK/projects/vw553_at_gateway`、
 外部 `cmake_build` 工程目录、overlay/staging 或手工 `patch -p*` 作为当前构建步骤。

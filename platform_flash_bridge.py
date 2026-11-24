@@ -54,7 +54,6 @@ _DFU_USB_VID = "28e9"
 _DFU_USB_PID = "0189"
 _DFU_ALT = "0"
 _DFU_ALT_NAME = "InternalFlash"
-_DFU_LEAVE = "n"
 _UART_ISP_ERASE_MODE = "extended"
 _DFUSE_MODULE = None
 _FLASH_PACKAGE_MODULE = None
@@ -156,7 +155,8 @@ def _board_flash_config(using_data: dict, boards_root: str) -> Dict[str, str]:
         "CONFIG_FLASH_USB_SERIAL": "",
         "CONFIG_FLASH_DFU_ALT": _DFU_ALT,
         "CONFIG_FLASH_DFU_ALT_NAME": _DFU_ALT_NAME,
-        "CONFIG_FLASH_DFU_LEAVE": _DFU_LEAVE,
+        "CONFIG_FLASH_DFU_LEAVE": platform_config.get(
+            "CONFIG_ENABLE_GD32H77X_FLASH_DFU_AUTOSTART", "n"),
         "CONFIG_FLASH_UART_PORT": "",
         "CONFIG_FLASH_UART_BAUD": "auto",
         "CONFIG_FLASH_UART_EXPECTED_ID": _uart_expected_id(
@@ -926,6 +926,8 @@ def _flash_dfu(config, report, image, start, limit, capacity, device_geometry,
                     "CNVM readback mismatch at 0x{:08X}".format(start + mismatch))
 
         if leave:
+            if logger:
+                logger.info("Verification complete; requesting application start via DfuSe leave")
             protocol.leave()
         if ecnvm_plan is not None:
             message = ("DfuSe CNVM+ECNVM download and verification complete"

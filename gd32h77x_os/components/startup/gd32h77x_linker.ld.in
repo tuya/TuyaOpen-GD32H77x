@@ -63,6 +63,15 @@ SECTIONS
         . = ALIGN(8); _end = .;
         . += 16K; _heap_end = .;
     } > AXISRAM
+    /* FreeRTOS heap_4 manages this entire linker-owned range lazily on its
+     * first allocation, including allocations made before the scheduler. */
+    .rtos_heap (NOLOAD) : {
+        . = ALIGN(8);
+        __rtos_heap_start = .;
+        ucHeap = .;
+        . = ABSOLUTE(_stack_bottom);
+        __rtos_heap_end = .;
+    } > AXISRAM
     .ARM.attributes 0 : { *(.ARM.attributes) }
 }
 ASSERT(SIZEOF(.boot_table) == 8, "boot table must contain SP and reset entry")
@@ -71,3 +80,7 @@ ASSERT(SIZEOF(.ramfunc) > 0, "CNVM runtime command routine must be linked into A
 ASSERT(ADDR(.ramfunc) >= ORIGIN(AXISRAM) && ADDR(.ramfunc) + SIZEOF(.ramfunc) <= ORIGIN(AXISRAM) + LENGTH(AXISRAM), "RAM functions must execute from AXI SRAM")
 ASSERT(LOADADDR(.ramfunc) >= ORIGIN(CNVM) && LOADADDR(.ramfunc) + SIZEOF(.ramfunc) <= ORIGIN(CNVM) + LENGTH(CNVM), "RAM function load image must fit CNVM")
 ASSERT(_heap_end <= _stack_bottom, "AXI SRAM stack/heap overlap")
+ASSERT(__rtos_heap_start == _heap_end, "FreeRTOS heap must follow libc arena")
+ASSERT(__rtos_heap_end == _stack_bottom, "FreeRTOS heap must end below main stack")
+ASSERT(__rtos_heap_end - __rtos_heap_start >= 1024, "Insufficient AXI SRAM for FreeRTOS heap")
+ASSERT((__rtos_heap_start & 7) == 0 && (__rtos_heap_end & 7) == 0, "FreeRTOS heap must be 8-byte aligned")

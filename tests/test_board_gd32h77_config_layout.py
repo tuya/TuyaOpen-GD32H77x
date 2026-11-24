@@ -46,9 +46,6 @@ def main() -> int:
                     f"{board_name}: flash_devices.csv duplicates the GD32H779VW chip default and must not exist")
         elif board_name != "GD32H779V_START":
             failures.append(f"{board_name}: missing optional platform_config/ directory")
-        if board_name == "GD32H779V_START" and config_dir.exists():
-            failures.append(
-                f"{board_name}: must use GD32H779VW chip defaults without platform_config/")
         if board_name == "GD32H779I_DESK_BUDDY" and config_dir.is_dir():
             for name in ("gd32h77x.config",):
                 if not (config_dir / name).is_file():
@@ -306,16 +303,16 @@ def main() -> int:
             failures.append(f"{canonical}: missing chips/{canonical}/{name}")
         for name in sorted(actual_files - expected_files):
             failures.append(f"{canonical}: unexpected chips/{canonical}/{name}")
-    forbidden_target_tokens = (
-        "tuya_", "TUYA_", "tkl_", "tal_", "OPRT_", "OPERATE_RET")
+    forbidden_target_pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:tuya_|TUYA_|tkl_|tal_|OPRT_|OPERATE_RET)")
     for source in sorted(components_root.rglob("*")):
         if not source.is_file() or source.suffix not in {".c", ".h", ".S", ".s"}:
             continue
         text = source.read_text(errors="replace")
-        for token in forbidden_target_tokens:
-            if token in text:
-                failures.append(
-                    f"component source must not depend on {token}: {source}")
+        match = forbidden_target_pattern.search(text)
+        if match:
+            failures.append(
+                f"component source must not depend on {match.group(0)}: {source}")
     shared_linker = components_root / "startup" / "gd32h77x_linker.ld.in"
     if not shared_linker.is_file():
         failures.append("missing components/startup/gd32h77x_linker.ld.in")

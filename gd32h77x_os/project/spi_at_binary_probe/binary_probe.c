@@ -12,7 +12,9 @@
 
 static at_transport_t *link;
 static StreamBufferHandle_t rx;
-static uint8_t outgoing[4096], incoming[4096];
+static uint8_t tx_storage[4096 + 16] __attribute__((aligned(32)));
+static uint8_t rx_storage[4096 + 16] __attribute__((aligned(32)));
+static uint8_t *outgoing = tx_storage, *incoming = rx_storage;
 static volatile bool reset_done;
 static volatile uint32_t faults;
 static void fault(void *arg, uint32_t mask) { (void)arg; if (mask) ++faults; }
@@ -87,6 +89,8 @@ static bool run_case(size_t size, unsigned kind, unsigned sequence, bool inject)
     unsigned long got_crc;
     uint32_t deadline;
     uint8_t ch = 0;
+    memset(tx_storage, 0xa5, sizeof(tx_storage));
+    memset(rx_storage, 0x5a, sizeof(rx_storage));
     pattern(size, kind, sequence);
     (void)xStreamBufferReset(rx);
     int n = snprintf(command, sizeof(command), "AT+TY553XLOOP=%u,%u\r\n", (unsigned)size, sequence);
@@ -107,13 +111,26 @@ static bool run_case(size_t size, unsigned kind, unsigned sequence, bool inject)
     if (sscanf(header, "+TY553XLOOP:%u,%u,%lx", &got_sequence, &got_size, &got_crc) != 3 ||
         got_sequence != sequence || got_size != size || got_crc != crc32(outgoing, size)) return false;
     if (!read_exact(incoming, size, deadline) || !read_exact(trailer, sizeof(trailer), deadline)) return false;
+    for (size_t i = 0; i < sizeof(tx_storage); ++i) {
+        size_t offset = (size_t)(outgoing - tx_storage);
+        if ((i < offset || i >= offset + size) &&
+            (tx_storage[i] != 0xa5 || rx_storage[i] != 0x5a)) return false;
+    }
     return memcmp(outgoing, incoming, size) == 0 && crc32(incoming, size) == got_crc &&
            memcmp(trailer, "\r\nOK\r\n", 6) == 0;
 }
 void app_entry(void *arg)
 {
     (void)arg;
+#if defined(BINARY_PROBE_BOUNDARY_ONLY) && BINARY_PROBE_BOUNDARY_ONLY
+    static const size_t lengths[] = {
+        1,2,3,4,5,7,8,9,15,16,17,31,32,33,63,64,65,127,128,129,
+        239,240,241,255,256,257,479,480,481,1023,1024,1025,
+        2003,2004,2005,2017,2023,4095,4096
+    };
+#else
     static const size_t lengths[] = {1,239,240,241,1024,4096};
+#endif
     unsigned sequence = 1, pass = 0, failed = 0;
     rx = xStreamBufferCreate(8192, 1);
     link = at_transport_get();
@@ -126,7 +143,15 @@ void app_entry(void *arg)
     if (crc32((const uint8_t *)"123456789", 9) != 0xcbf43926U) {
         gd32h77x_console_printf("BINARY_CRC_SELFTEST_FAIL\r\n"); vTaskDelete(NULL); return;
     }
+#if defined(BINARY_PROBE_BOUNDARY_ONLY) && BINARY_PROBE_BOUNDARY_ONLY
+    for (unsigned alignment = 0; alignment < 8; ++alignment) {
+        outgoing = tx_storage + alignment;
+        incoming = rx_storage + alignment;
+        gd32h77x_console_printf("BINARY_ALIGNMENT offset=%u\r\n", alignment);
+    for (unsigned round = 0; round < 1; ++round)
+#else
     for (unsigned round = 0; round < 5; ++round)
+#endif
         for (unsigned kind = 0; kind < 4; ++kind)
             for (unsigned i = 0; i < sizeof(lengths)/sizeof(lengths[0]); ++i) {
                 bool ok = run_case(lengths[i], kind, sequence++, false);
@@ -135,6 +160,10 @@ void app_entry(void *arg)
                                         (unsigned)lengths[i], kind, ok ? "PASS" : "FAIL");
                 if (!ok) goto done;
             }
+#if defined(BINARY_PROBE_BOUNDARY_ONLY) && BINARY_PROBE_BOUNDARY_ONLY
+    }
+    goto done; /* Boundary matrix never requires a user-triggered reset. */
+#endif
 #if defined(BINARY_PROBE_AUTOMATIC_RESET) && BINARY_PROBE_AUTOMATIC_RESET
     rcu_periph_clock_enable(RCU_GPIOC);
     gpio_bit_set(GPIOC, GPIO_PIN_5);

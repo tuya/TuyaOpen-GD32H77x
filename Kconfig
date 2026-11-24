@@ -24,6 +24,14 @@ choice
           GD32 ROM system-memory UART ISP.
 endchoice
 
+config ENABLE_GD32H77X_FLASH_DFU_AUTOSTART
+    bool "Start application after successful DFU flashing"
+    depends on ENABLE_GD32H77X_FLASH_BACKEND_DFU
+    default n
+    help
+      Send the ROM DfuSe leave command after programming and verification.
+      BOOT must be low for subsequent hardware resets to start the application.
+
 config GD32H77X_PMU_SMPS_MODE
     string "VCORE PMU supply mode"
     default ""
@@ -32,6 +40,20 @@ config GD32H77X_PMU_SMPS_MODE
       reset/default PMU configuration. Use "bypass" when VCORE is supplied by
       an external regulator and the internal SMPS is not used; use "direct"
       when the internal SMPS supplies VCORE.
+
+config ENABLE_GD32H77X_POWER_HOLD
+    bool "Assert power hold GPIO during early platform initialization"
+    default n
+
+config GD32H77X_POWER_HOLD_GPIO
+    string "Power hold GPIO"
+    depends on ENABLE_GD32H77X_POWER_HOLD
+    default "PC13"
+
+config ENABLE_GD32H77X_POWER_HOLD_ACTIVE_HIGH
+    bool "Power hold is active high"
+    depends on ENABLE_GD32H77X_POWER_HOLD
+    default y
 
 menu "Console UART binding"
 
@@ -116,7 +138,7 @@ choice
         bool "UART AT transport"
 
     config ENABLE_GD32H77X_AT_TRANSPORT_SPI
-        bool "SPI AT transport (GD32H779V_START <-> GD32VW553)"
+        bool "SPI AT transport"
 endchoice
 
 choice
@@ -130,6 +152,46 @@ choice
     config ENABLE_GD32H77X_AT_SPI_PSC_256
         bool "/256 (slow and conservative)"
 endchoice
+
+config ENABLE_GD32H77X_AT_SPI_CS_ONLY
+    bool "SPI AT v2: active-low CS polling, without READY"
+    depends on ENABLE_GD32H77X_AT_TRANSPORT_SPI
+    default n
+    help
+      Requires matching VW553 CS_ONLY firmware. The old REQUEST pin becomes
+      active-low CS; READY is neither configured nor sampled. Version 2 frames
+      prevent accidentally communicating with the legacy READY-based peer.
+
+config GD32H77X_AT_SPI_NUMBER
+    int "AT SPI controller (0..5)"
+    range 0 5
+    default 3
+    help
+      Signal routes are checked against at_routes.py during configuration
+      generation. AF, clock source, reset gate and DMA requests are derived.
+
+config GD32H77X_AT_SPI_SCK
+    string "AT SPI SCK route (e.g. PB13)"
+    default "PE2"
+    help
+      Ordinary-pad name from the verified controller routing catalogue.
+      Invalid routes and H779 package conflicts stop the build before compile.
+
+config GD32H77X_AT_SPI_MISO
+    string "AT SPI MISO route (e.g. PB14)"
+    default "PE5"
+
+config GD32H77X_AT_SPI_MOSI
+    string "AT SPI MOSI route (e.g. PB15)"
+    default "PE6"
+
+config GD32H77X_AT_SPI_CS
+    string "AT SPI active-low CS GPIO"
+    default "PE4"
+
+config GD32H77X_AT_SPI_READY
+    string "AT SPI READY GPIO (legacy protocol only)"
+    default "PE3"
 
 menu "AT UART binding"
 
@@ -196,11 +258,22 @@ config GD32H77X_AT_RX_PIN_NUMBER
       GPIO pin number on the selected AT UART GPIO port.
 
 config GD32H77X_AT_AF_NUMBER
-    int "AT UART alternate function"
+    int "Legacy AT UART alternate function (ignored by explicit routes)"
     range 0 31
     default 14
     help
       GD32 alternate-function number used by both AT UART pins.
+
+config GD32H77X_AT_UART_TX_ROUTE
+    string "AT UART TX route (empty uses legacy GPIO settings)"
+    default ""
+    help
+      Enter a datasheet pin name such as PA9. AF is derived automatically.
+      TX and RX may use different GPIO ports and AF numbers.
+
+config GD32H77X_AT_UART_RX_ROUTE
+    string "AT UART RX route (empty uses legacy GPIO settings)"
+    default ""
 
 config GD32H77X_AT_BAUD
     int "AT UART baud rate"
@@ -213,6 +286,12 @@ config GD32H77X_AT_IRQ_PRIORITY
     default 6
     help
       Must remain at or below the FreeRTOS maximum syscall priority.
+
+config ENABLE_GD32H77X_AT_SHARED_RESET
+    bool "AT module reset is connected to the host reset"
+    default n
+    help
+      Disable module GPIO reset pulses when they would reset the host too.
 
 choice
     prompt "AT reset GPIO port"
@@ -258,6 +337,112 @@ choice
 endchoice
 
 endmenu
+
+endmenu
+
+
+menu "External PSRAM"
+
+config ENABLE_GD32H77X_PSRAM
+    bool "Enable external PSRAM on OSPI0"
+    default n
+    help
+      Enable the GD32H77X OSPI0 PSRAM controller, device profile and TKL
+      PSRAM heap. Boards without PSRAM must leave this disabled.
+
+config GD32H77X_PSRAM_PROFILE
+    string "PSRAM device profile"
+    depends on ENABLE_GD32H77X_PSRAM
+    default "APS6404L-3SQR"
+    help
+      Verified PSRAM profile name. The profile owns device-specific commands,
+      reset sequence, dummy cycles and timing limits.
+
+choice
+    prompt "PSRAM access mode"
+    depends on ENABLE_GD32H77X_PSRAM
+    default GD32H77X_PSRAM_ACCESS_INDIRECT
+
+    config GD32H77X_PSRAM_ACCESS_INDIRECT
+        bool "indirect"
+        help
+          Access PSRAM only through the explicit offset-based read/write API.
+          The OSPI memory-mapped window stays disabled. This mode supports
+          arbitrary byte offsets and lengths at the cost of CPU-polled copies.
+
+    config GD32H77X_PSRAM_ACCESS_MAPPED
+        bool "memory-mapped"
+        help
+          Enter the OSPI memory-mapped window. This requires every access path
+          to satisfy the device and Cortex-M7 mapping constraints and is not
+          yet accepted for a general-purpose PSRAM heap on this board.
+endchoice
+
+choice
+    prompt "PSRAM OSPIM port"
+    depends on ENABLE_GD32H77X_PSRAM
+    default GD32H77X_PSRAM_OSPIM_PORT0
+
+    config GD32H77X_PSRAM_OSPIM_PORT0
+        bool "OSPIM Port 0"
+
+    config GD32H77X_PSRAM_OSPIM_PORT1
+        bool "OSPIM Port 1"
+endchoice
+
+config GD32H77X_PSRAM_CS_PIN
+    string "PSRAM CS pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_SCK_PIN
+    string "PSRAM SCK pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_IO0_PIN
+    string "PSRAM IO0 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_IO1_PIN
+    string "PSRAM IO1 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_IO2_PIN
+    string "PSRAM IO2 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_IO3_PIN
+    string "PSRAM IO3 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+
+config GD32H77X_PSRAM_CLOCK_HZ
+    int "PSRAM clock in Hz"
+    depends on ENABLE_GD32H77X_PSRAM
+    range 1000000 84000000
+    default 75000000
+
+config GD32H77X_PSRAM_SIZE_MB
+    int "PSRAM capacity in MiB"
+    depends on ENABLE_GD32H77X_PSRAM
+    range 1 64
+    default 8
+
+config GD32H77X_PSRAM_HEAP_OFFSET_KB
+    int "PSRAM runtime heap offset in KiB"
+    depends on ENABLE_GD32H77X_PSRAM
+    range 0 65536
+    default 4096
+
+config GD32H77X_PSRAM_HEAP_SIZE_KB
+    int "PSRAM runtime heap size in KiB"
+    depends on ENABLE_GD32H77X_PSRAM
+    range 1 65536
+    default 4096
 
 endmenu
 

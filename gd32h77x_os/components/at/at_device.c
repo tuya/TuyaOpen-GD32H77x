@@ -25,6 +25,7 @@
 #define AT_READY_TIMEOUT_MS 5000U
 #define AT_SOFT_RESET_TIMEOUT_MS 3000U
 #define AT_PROBE_TIMEOUT_MS 1000U
+#define AT_READY_SETTLE_MS 250U
 
 typedef struct {
     at_device_event_handler_t handler;
@@ -62,6 +63,10 @@ static void request_recovery(void)
 
 void at_device_reset(void)
 {
+#if defined(ENABLE_GD32H77X_AT_SHARED_RESET) && ENABLE_GD32H77X_AT_SHARED_RESET
+    AT_LOG("hardware reset suppressed: shared host reset");
+    return;
+#endif
     AT_LOG("hardware reset start");
     rcu_periph_clock_enable(AT_RESET_CLOCK);
     gpio_mode_set(AT_RESET_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, AT_RESET_PIN);
@@ -236,6 +241,18 @@ static bool probe_module_once(void)
 {
     at_result_t result = AT_RESULT_NONE;
     at_status_t status = at_session_transact("AT", 2U, false, AT_PROBE_TIMEOUT_MS, &result);
+    if (status == AT_STATUS_OK && result == AT_RESULT_RESET) {
+        /* READY is emitted by the module boot path. Record it here rather than
+         * depending on the lower-priority event task delivering the line first. */
+        taskENTER_CRITICAL();
+        s_ready_observed = true;
+        taskEXIT_CRITICAL();
+        AT_SUMMARY("module probe interrupted by READY");
+        /* VW553 creates the ATCMD task before READY and may still be draining
+         * the command that raced with boot. Let that response settle so the
+         * explicit transport recovery below starts from an idle parser. */
+        vTaskDelay(pdMS_TO_TICKS(AT_READY_SETTLE_MS) ? pdMS_TO_TICKS(AT_READY_SETTLE_MS) : 1U);
+    }
     return status == AT_STATUS_OK && result == AT_RESULT_OK;
 }
 
@@ -285,8 +302,22 @@ static bool recover_module_transport(void *context)
 static bool reset_module_hardware(void *context)
 {
     (void)context;
+#if defined(ENABLE_GD32H77X_AT_SHARED_RESET) && ENABLE_GD32H77X_AT_SHARED_RESET
+    return false;
+#else
     at_device_reset();
     return true;
+#endif
+}
+
+static bool module_ready_observed(void *context)
+{
+    (void)context;
+    bool observed;
+    taskENTER_CRITICAL();
+    observed = s_ready_observed;
+    taskEXIT_CRITICAL();
+    return observed;
 }
 
 static const at_module_reset_ops_t s_module_reset_ops = {
@@ -295,10 +326,15 @@ static const at_module_reset_ops_t s_module_reset_ops = {
     .wait_ready = wait_module_ready,
     .recover_transport = recover_module_transport,
     .hardware_reset = reset_module_hardware,
+    .ready_observed = module_ready_observed,
 };
 
 static int32_t run_module_reset_locked(at_module_reset_mode_t mode)
 {
+    if (at_session_set_boot_ready_mode(true) != AT_STATUS_OK) {
+        AT_SUMMARY("module boot READY mode unavailable");
+        return AT_STATUS_IO_ERROR;
+    }
     taskENTER_CRITICAL();
     s_module_reset_active = true;
     s_ready_observed = false;
@@ -306,6 +342,7 @@ static int32_t run_module_reset_locked(at_module_reset_mode_t mode)
 
     at_module_reset_result_t result = {0};
     bool ok = at_module_reset_run(mode, &s_module_reset_ops, NULL, AT_READY_TIMEOUT_MS, &result);
+    (void)at_session_set_boot_ready_mode(false);
 
     taskENTER_CRITICAL();
     s_module_reset_active = false;

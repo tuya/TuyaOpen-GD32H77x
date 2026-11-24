@@ -12,11 +12,27 @@ if(EXISTS "${GD32H77X_VW553_SPI_PROTOCOL}")
 endif()
 
 option(ENABLE_SANITIZERS "Enable address and undefined-behavior sanitizers" ON)
+set(VW553_TCP_OPTIONS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../GD32/gd32_os/MSDK/vw553_at_gateway")
+if(EXISTS "${VW553_TCP_OPTIONS_DIR}/gateway_tcp_options.c")
+    add_executable(test_vw553_tcp_options test_vw553_tcp_options.c "${VW553_TCP_OPTIONS_DIR}/gateway_tcp_options.c")
+    target_include_directories(test_vw553_tcp_options PRIVATE "${VW553_TCP_OPTIONS_DIR}")
+    target_compile_definitions(test_vw553_tcp_options PRIVATE GATEWAY_TCP_OPTIONS_HOST_TEST=1)
+    add_test(NAME vw553_tcp_options_readback COMMAND test_vw553_tcp_options)
+    add_executable(test_vw553_tcp_option_masks test_vw553_tcp_option_masks.c)
+    target_include_directories(test_vw553_tcp_option_masks PRIVATE "${VW553_TCP_OPTIONS_DIR}")
+    target_compile_definitions(test_vw553_tcp_option_masks PRIVATE
+        GATEWAY_TCP_OPTIONS_SOURCE="${VW553_TCP_OPTIONS_DIR}/gateway_tcp_options.c")
+    add_test(NAME vw553_tcp_option_masks COMMAND test_vw553_tcp_option_masks)
+endif()
 if(TOS_PYTHON)
     set(GD32H77X_TEST_PYTHON "${TOS_PYTHON}")
 else()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(GD32H77X_TEST_PYTHON "${Python3_EXECUTABLE}")
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../GD32/gd32_os/MSDK/vw553_at_gateway/ble/atcmd_ble.c")
+    add_test(NAME gd32h77x_ble_urc_interleave
+        COMMAND "${GD32H77X_TEST_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/ble_urc_host/run.py")
 endif()
 set(GD32H77X_TEST_CONFIG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/platform_config")
 set(GD32H77X_OPEN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
@@ -37,6 +53,8 @@ if(NOT GD32H77X_TEST_PROJECT_CONFIG_RESULT EQUAL 0)
 ${GD32H77X_TEST_PROJECT_CONFIG_OUTPUT}${GD32H77X_TEST_PROJECT_CONFIG_ERROR}")
 endif()
 set(GD32H77X_TEST_PROJECT_CONFIG_ARGS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/../at_routes.py")
 if(EXISTS "${GD32H77X_TEST_PROJECT_CONFIG}")
     list(APPEND GD32H77X_TEST_PROJECT_CONFIG_ARGS
         --project-config "${GD32H77X_TEST_PROJECT_CONFIG}")
@@ -117,6 +135,7 @@ target_compile_definitions(test_tkl_network_basics PRIVATE TUYA_FD_MAX_COUNT=64)
 target_compile_options(test_tkl_network_basics PRIVATE -ffunction-sections -fdata-sections)
 target_link_options(test_tkl_network_basics PRIVATE -Wl,--gc-sections)
 add_test(NAME tkl_network_common_semantics COMMAND test_tkl_network_basics)
+
 
 add_executable(test_tkl_wifi test_tkl_wifi.c
     ../tuyaos/tuyaos_adapter/src/driver/tkl_wifi.c)
@@ -282,6 +301,9 @@ add_test(NAME gd32h77x_tkl_random_adapter
 
 set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_socket test_profile test_module_reset test_tkl_network_basics test_storage_bounds test_flash_info_partial
     test_flash_routing test_flash_layout_generated test_ecnvm_flash_layout test_nor_protocol test_entropy test_http_response_content_length)
+if(TARGET test_vw553_tcp_options)
+    list(APPEND GD32H77X_HOST_TESTS test_vw553_tcp_options test_vw553_tcp_option_masks)
+endif()
 foreach(test_target IN LISTS GD32H77X_HOST_TESTS)
     target_compile_options(${test_target} PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     if(ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -307,9 +329,13 @@ add_test(NAME gd32h77x_build_example
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_build_example.py")
 add_test(NAME gd32h77x_layout_csv_format
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_format_layout_csv.py")
+add_test(NAME gd32h77x_rtos_heap
+    COMMAND "${GD32H77X_TEST_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/test_rtos_heap.py")
 find_program(GD32H77X_TEST_ARM_GCC arm-none-eabi-gcc
     HINTS /opt/gcc-arm-none-eabi-10.3-2021.10/bin)
 if(GD32H77X_TEST_ARM_GCC)
+    set_tests_properties(gd32h77x_rtos_heap PROPERTIES
+        ENVIRONMENT "ARM_NONE_EABI_GCC=${GD32H77X_TEST_ARM_GCC}")
     add_test(NAME gd32h77x_uart_isp
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_uart_isp.py")
     set_tests_properties(gd32h77x_uart_isp PROPERTIES

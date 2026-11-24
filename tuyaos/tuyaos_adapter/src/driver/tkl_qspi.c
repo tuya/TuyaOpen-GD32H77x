@@ -369,7 +369,9 @@ static OPERATE_RET __qspi_dma_write_chunk(const QSPI_HW_T *hw,
     uint32_t width = lines == TUYA_QSPI_4WIRE ? DMA_PERIPH_WIDTH_32BIT :
                                                 DMA_PERIPH_WIDTH_8BIT;
     uint32_t frames = lines == TUYA_QSPI_4WIRE ? size / 4U : size;
-    bool need_rx_dummy = lines == TUYA_QSPI_1WIRE;
+    /* Quad write mode still produces receive packets. Keep RX DMA active so
+     * RxFIFO cannot overrun and prevent end-of-transfer completion. */
+    bool need_rx_dummy = true;
     OPERATE_RET rt;
 
     if ((lines == TUYA_QSPI_4WIRE &&

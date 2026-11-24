@@ -8,6 +8,7 @@
 #define FREERTOS_CONFIG_H
 
 #include <stdint.h>
+#include <stddef.h>
 extern uint32_t SystemCoreClock;
 void            gd32h77x_platform_panic(const char *message);
 
@@ -17,7 +18,12 @@ void            gd32h77x_platform_panic(const char *message);
 #define configTICK_TYPE_WIDTH_IN_BITS                TICK_TYPE_WIDTH_32_BITS
 #define configMAX_PRIORITIES                         8U
 #define configMINIMAL_STACK_SIZE                     256U
-#define configTOTAL_HEAP_SIZE                        (384U * 1024U)
+/* The linker gives FreeRTOS all AXI SRAM remaining after static data and
+ * the separate libc arena, up to the reserved main/interrupt stack. */
+extern uint8_t __rtos_heap_start[];
+extern uint8_t __rtos_heap_end[];
+#define configAPPLICATION_ALLOCATED_HEAP             1
+#define configTOTAL_HEAP_SIZE                        ((size_t)((uintptr_t)__rtos_heap_end - (uintptr_t)__rtos_heap_start))
 #define configMAX_TASK_NAME_LEN                      24U
 #define configUSE_MUTEXES                            1
 #define configUSE_RECURSIVE_MUTEXES                  1

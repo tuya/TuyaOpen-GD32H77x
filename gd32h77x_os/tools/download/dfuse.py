@@ -88,6 +88,14 @@ class DfuError(RuntimeError):
     """DfuSe transport or protocol failure."""
 
 
+class DfuTransferError(DfuError):
+    """USB I/O error; only retried during application handover."""
+
+
+class DfuStalled(DfuTransferError):
+    """USB endpoint stalled, including during ROM application handover."""
+
+
 class DfuDisconnected(DfuError):
     """The USB device disappeared while completing a DFU operation."""
 
@@ -384,12 +392,24 @@ class DfuSeProtocol:
                     progress(len(result))
         return bytes(result)
 
+    def _leave_status(self):
+        # The H779 ROM can stall GETSTATUS briefly before disconnecting.
+        # A persistent stall remains an error; do not report a failed jump as success.
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                return self.get_status()
+            except DfuTransferError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
     def leave(self) -> None:
         """Issue the DfuSe leave request so the ROM starts the new image."""
         self.set_address(0x08000000)
         self._control_out(DFU_DNLOAD, 0, b"")
         try:
-            status, poll_ms, state = self.get_status()
+            status, poll_ms, state = self._leave_status()
         except DfuDisconnected:
             return
         if status != 0:
@@ -398,7 +418,7 @@ class DfuSeProtocol:
         while state in (STATE_DFU_MANIFEST_SYNC, STATE_DFU_MANIFEST):
             self._wait_poll(poll_ms, deadline, "leaving DFU mode")
             try:
-                status, poll_ms, state = self.get_status()
+                status, poll_ms, state = self._leave_status()
             except DfuDisconnected:
                 return
             if status != 0:
@@ -631,6 +651,10 @@ class UsbDevice:
             self._handle, bm, request, value, index, buffer, length, timeout_ms)
         if result == -4:
             raise DfuDisconnected("USB device disconnected")
+        if result == -9:
+            raise DfuStalled("USB control in failed: endpoint stalled")
+        if result == -1:
+            raise DfuTransferError("USB control in failed: Input/Output Error")
         if result < 0:
             raise DfuError("USB control in failed: {}".format(self._lib.error(result)))
         return bytes(bytearray(buffer[:result]))

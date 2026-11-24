@@ -415,6 +415,15 @@ static void ble_lines_and_ready_fail_closed(void)
     at_client_line(&client, "READY", 5);
     take_result(&client, AT_RESULT_RESET);
     assert(!at_client_begin(&client, "AT", 2, false, 3, 100));
+
+    assert(at_client_resynchronize(&client));
+    at_client_set_boot_ready_mode(&client, true);
+    assert(at_client_begin(&client, "AT", 2, false, 4, 100));
+    at_client_line(&client, "READY", 5);
+    assert(at_client_busy(&client));
+    at_client_line(&client, "OK", 2);
+    take_result(&client, AT_RESULT_OK);
+    at_client_set_boot_ready_mode(&client, false);
 }
 
 static void ble_status_urc_does_not_poison_transaction(void)

@@ -57,6 +57,9 @@ static bool inject_early_accept;
 static bool inject_early_udp_listener_dgram;
 static bool inject_early_udp2_listener_dgram;
 static bool tcp_server_active;
+static bool tcp_server2_active;
+static bool reject_tcp_options;
+static at_socket_tcp_options_t tcp_options[16];
 static bool udp_server_active;
 static bool udp_server2_active;
 static bool listener_stop_timeout;
@@ -107,10 +110,27 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
         cipmux_enabled = true;
         return AT_STATUS_OK;
     }
+    if (!strncmp(last_command, "AT+CIPTCPOPT=", 13)) {
+        int id; unsigned gen;
+        at_socket_tcp_options_t options;
+        int count = sscanf(last_command, "AT+CIPTCPOPT=%d,%u,%d,%d,%d,%d,%d", &id, &gen,
+                           &options.nodelay, &options.alive, &options.idle, &options.interval, &options.count);
+        assert(id >= 0 && id < 16);
+        assert(gen != 0 && gen == remote_gen);
+        if (reject_tcp_options) { reject_tcp_options = false; return AT_STATUS_IO_ERROR; }
+        if (count == 7) tcp_options[id] = options;
+        options = tcp_options[id];
+        char reply[192];
+        snprintf(reply, sizeof(reply), "+CIPTCPOPT:%d,%u,%d,%d,%d,%d,%d\r\nOK\r\n", id, gen,
+                 options.nodelay, options.alive, options.idle, options.interval, options.count);
+        reply_set(request, reply);
+        return AT_STATUS_OK;
+    }
     if (!strncmp(last_command, "AT+CIPSTART=", 12)) {
         int con_id = 0;
         (void)sscanf(last_command, "AT+CIPSTART=%d,", &con_id);
         remote_id = con_id;
+        tcp_options[con_id] = (at_socket_tcp_options_t){1, 0, 60, 1, 3};
         remote_fd = 42 + con_id; remote_gen = 17U + (uint32_t)con_id;
         remote_active = true; remote_retired = false;
         if (cipstart_timeout) {
@@ -159,8 +179,8 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
         if (fail_state_query) return AT_STATUS_IO_ERROR;
         char reply[256];
         if (remote_active)
-            snprintf(reply, sizeof(reply), "+CIPSTATE:%d,TCP,198.51.100.2,443,0,%d,0\r\nOK\r\n",
-                     remote_id, remote_fd);
+            snprintf(reply, sizeof(reply), "+CIPSTATE:%d,TCP,198.51.100.2,443,0,%d,0,%u\r\nOK\r\n",
+                     remote_id, remote_fd, remote_gen);
         else strcpy(reply, "OK\r\n");
         reply_set(request, reply); return AT_STATUS_OK;
     }
@@ -180,6 +200,12 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
     }
     if (!strncmp(last_command, "AT+TY553XCLOSE=", 15)) { remote_retired = false; return AT_STATUS_OK; }
     if (!strncmp(last_command, "AT+TY553XSERVER=TCP,", 20)) {
+        unsigned tcp_port = 0;
+        (void)sscanf(last_command, "AT+TY553XSERVER=TCP,%u", &tcp_port);
+        if (tcp_port == 5055U) {
+            tcp_server2_active = !strstr(last_command, ",0");
+            return AT_STATUS_OK;
+        }
         tcp_server_active = !strstr(last_command, ",0");
         if (tcp_server_active && inject_early_accept) {
             static const uint8_t early[] = "listener-early";
@@ -232,6 +258,7 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
     if (!strcmp(last_command, "AT+TY553XSERVER?")) {
         char reply[256] = {0};
         if (tcp_server_active) strcat(reply, "+TY553XSERVER2:TCP,7001,66,7\r\n");
+        if (tcp_server2_active) strcat(reply, "+TY553XSERVER2:TCP,5055,67,8\r\n");
         if (udp_server_active) strcat(reply, "+TY553XSERVER2:UDP,6667,55,4\r\n");
         if (udp_server2_active) strcat(reply, "+TY553XSERVER2:UDP,6668,56,5\r\n");
         strcat(reply, "OK\r\n"); reply_set(request, reply);
@@ -260,9 +287,28 @@ int main(void)
     assert(now_ms - select_start <= 11000U);
 
     int tcp = at_socket_create(AT_SOCKET_TYPE_STREAM); assert(tcp == (int)AT_SOCKET_FD_BASE);
+    assert(at_socket_disable_nagle(-1) == AT_STATUS_INVALID_PARAM);
+    assert(at_socket_disable_nagle(AT_SOCKET_FD_LIMIT + 1) == AT_STATUS_INVALID_PARAM);
+    assert(at_socket_disable_nagle(tcp) == AT_STATUS_OK);
+    assert(at_socket_set_keepalive(tcp, true, 100, 5, 1) == AT_STATUS_OK);
+    assert(at_socket_set_keepalive(tcp, true, 0, 5, 1) == AT_STATUS_INVALID_PARAM);
+    assert(at_socket_set_keepalive(tcp, true, 100, 0, 1) == AT_STATUS_INVALID_PARAM);
+    assert(at_socket_set_keepalive(tcp, true, 100, 5, 0) == AT_STATUS_INVALID_PARAM);
     assert(at_socket_bind(tcp, UINT32_C(0xC0A80128), 0) == AT_SOCKET_ERRNO_NONE);
     inject_early_data = true;
     assert(at_socket_connect(tcp, UINT32_C(0xC6336402), 443) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_disable_nagle(tcp) == AT_STATUS_OK);
+    at_socket_tcp_options_t actual;
+    assert(at_socket_get_tcp_options(tcp, &actual) == AT_STATUS_OK);
+    assert(actual.nodelay == 1 && actual.alive == 1 && actual.idle == 100 && actual.interval == 5 && actual.count == 1);
+    assert(at_socket_set_keepalive(tcp, false, 0, 0, 0) == AT_STATUS_OK);
+    assert(at_socket_get_tcp_options(tcp, &actual) == AT_STATUS_OK && actual.alive == 0);
+    reject_tcp_options = true;
+    assert(at_socket_set_keepalive(tcp, true, 100, 5, 1) != AT_STATUS_OK);
+    assert(at_socket_get_tcp_options(tcp, &actual) == AT_STATUS_OK && actual.alive == 0);
+    assert(at_socket_set_keepalive(tcp, true, 101, 7, 2) == AT_STATUS_OK);
+    assert(at_socket_get_tcp_options(tcp, &actual) == AT_STATUS_OK);
+    assert(actual.alive == 1 && actual.idle == 101 && actual.interval == 7 && actual.count == 2);
     uint8_t received[32] = {0};
     assert(at_socket_recv(tcp, received, sizeof(received)) == 5 && !memcmp(received, "early", 5));
     assert(at_socket_recv(tcp, NULL, 0U) == 0);
@@ -302,12 +348,18 @@ int main(void)
     assert(strcmp(last_command, "AT+CIPCLOSE=1") == 0 || strcmp(last_command, "AT+CIPSTATE?") == 0);
 
     assert(at_socket_close(tcp) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_disable_nagle(tcp) == AT_STATUS_INVALID_PARAM);
     assert(strcmp(last_command, "AT+CIPCLOSE=0") == 0 || strcmp(last_command, "AT+CIPSTATE?") == 0);
 
     int tcp_listener = at_socket_create(AT_SOCKET_TYPE_STREAM); assert(tcp_listener == (int)AT_SOCKET_FD_BASE);
     assert(at_socket_bind(tcp_listener, 0, 7001) == AT_SOCKET_ERRNO_NONE);
     inject_early_accept = true;
     assert(at_socket_listen(tcp_listener, 2) == AT_SOCKET_ERRNO_NONE);
+    int monitor = at_socket_create(AT_SOCKET_TYPE_STREAM);
+    assert(at_socket_bind(monitor, 0, 5055) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_listen(monitor, 5) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_close(monitor) == AT_SOCKET_ERRNO_NONE);
+    assert(tcp_server_active && !tcp_server2_active);
     uint32_t accepted_peer = 0; uint16_t accepted_port = 0;
     int accepted = at_socket_accept(tcp_listener, &accepted_peer, &accepted_port);
     assert(accepted >= 0 && accepted_peer == UINT32_C(0xC000022C) && accepted_port == 4567);
@@ -318,6 +370,7 @@ int main(void)
     assert(at_socket_close(tcp_listener) == AT_SOCKET_ERRNO_NONE);
 
     int udp = at_socket_create(AT_SOCKET_TYPE_DATAGRAM); assert(udp == (int)AT_SOCKET_FD_BASE);
+    assert(at_socket_disable_nagle(udp) == AT_STATUS_INVALID_PARAM);
     inject_early_udp_listener_dgram = true;
     assert(at_socket_bind(udp, 0, 6667) == AT_SOCKET_ERRNO_NONE);
     uint32_t listener_peer = 0; uint16_t listener_peer_port = 0;

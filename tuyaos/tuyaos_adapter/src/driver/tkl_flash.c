@@ -30,6 +30,29 @@
 #include <stdint.h>
 #include <string.h>
 
+#if defined(__arm__) || defined(__thumb__)
+#include "gd32h77x_78x.h"
+#include "tkl_output.h"
+#endif
+
+static void gd32h77x_flash_report_failure(const char *stage, uint32_t address,
+                                         uint32_t size, int status)
+{
+#if defined(__arm__) || defined(__thumb__)
+    tkl_log_output("[flash] %s failed addr=0x%08lx size=%lu status=%d "
+                   "OBREPCTL_EFT=0x%08lx DIEEN=%lu ECNVM_STAT=0x%08lx\r\n",
+                   stage, (unsigned long)address, (unsigned long)size, status,
+                   (unsigned long)NVMC_OBREPCTL_EFT,
+                   (unsigned long)((NVMC_OBREPCTL_EFT & NVMC_OBREPCTL_EFT_DIEEN) != 0U),
+                   (unsigned long)NVMC_ECNVM_STAT);
+#else
+    (void)stage;
+    (void)address;
+    (void)size;
+    (void)status;
+#endif
+}
+
 /* Tuya KV subranges are generated from the board partitions.csv. Legacy
  * boards without explicit tuya_* rows retain the vendor-compatible defaults. */
 #ifdef GD32H77X_LAYOUT_TUYA_UF_BASE
@@ -219,6 +242,9 @@ static bool gd32h77x_flash_erase_chunk(const gd32h77x_flash_route_chunk_t *chunk
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
         erase_context->result = gd32h77x_native_status_to_oprt(
             gd32h77x_ecnvm_erase(address, chunk->size));
+        if (erase_context->result != OPRT_OK) {
+            gd32h77x_flash_report_failure("ECNVM erase", address, chunk->size, erase_context->result);
+        }
     } else {
         const uint32_t address = chunk->device->cpu_base + chunk->device_offset;
         erase_context->result = gd32h77x_native_status_to_oprt(
@@ -320,6 +346,7 @@ OPERATE_RET tkl_flash_erase(uint32_t addr, uint32_t size)
     const OPERATE_RET preflight =
         gd32h77x_flash_access_preflight(addr, size, GD32H77X_FLASH_OP_ERASE);
     if (preflight != OPRT_OK) {
+        gd32h77x_flash_report_failure("erase preflight", addr, size, preflight);
         return preflight;
     }
 

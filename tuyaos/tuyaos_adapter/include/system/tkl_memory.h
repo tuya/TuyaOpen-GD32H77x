@@ -90,6 +90,46 @@ void *tkl_system_realloc(void *ptr, size_t size);
 int tkl_system_get_free_heap_size(void);
 
 /**
+ * @brief Initialize the platform PSRAM device.
+ *
+ * In indirect mode this only validates and starts the device. The explicit
+ * gd32h77x_psram_read/write/fill APIs are used for data access. In mapped mode
+ * it also creates the TKL PSRAM heap. The implementation is compiled only when
+ * ENABLE_GD32H77X_PSRAM is enabled.
+ */
+OPERATE_RET tkl_system_psram_init(void);
+
+#if (defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)) || \
+    (defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1))
+#define TKL_SYSTEM_PSRAM_ALIGNMENT 32U
+
+/**
+ * @brief Allocate a 32-byte aligned block from mapped PSRAM.
+ */
+void *tkl_system_psram_malloc(size_t size);
+
+/**
+ * @brief Free memory allocated from the external PSRAM heap.
+ */
+void tkl_system_psram_free(void *ptr);
+
+/**
+ * @brief Allocate and clear memory from the external PSRAM heap.
+ */
+void *tkl_system_psram_calloc(size_t nitems, size_t size);
+
+/**
+ * @brief Reallocate memory from the external PSRAM heap.
+ */
+void *tkl_system_psram_realloc(void *ptr, size_t size);
+
+/**
+ * @brief Get the free size of the external PSRAM heap.
+ */
+int tkl_system_psram_get_free_heap_size(void);
+#endif
+
+/**
  * @brief Compare two pieces of memory
  *
  * @param[in]       str1        memory 1

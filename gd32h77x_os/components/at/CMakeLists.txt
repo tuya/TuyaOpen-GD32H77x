@@ -12,6 +12,7 @@ target_include_directories(gd32h77x_at_core PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(gd32h77x_at_core PUBLIC gd32h77x_freertos gd32h77x_gd32_sdk)
 
 if(CONFIG_ENABLE_GD32H77X_AT_TRANSPORT_SPI)
+    target_compile_definitions(gd32h77x_at_core PRIVATE AT_TRANSPORT_SPI=1)
     add_library(gd32h77x_at_spi_transport INTERFACE)
     target_sources(gd32h77x_at_spi_transport INTERFACE
         at_transport.c
@@ -20,6 +21,9 @@ if(CONFIG_ENABLE_GD32H77X_AT_TRANSPORT_SPI)
     )
     target_include_directories(gd32h77x_at_spi_transport INTERFACE ${CMAKE_CURRENT_LIST_DIR})
     target_compile_definitions(gd32h77x_at_spi_transport INTERFACE AT_TRANSPORT_SPI=1)
+    if(CONFIG_ENABLE_GD32H77X_AT_SPI_CS_ONLY)
+        target_compile_definitions(gd32h77x_at_spi_transport INTERFACE AT_SPI_CS_ONLY=1)
+    endif()
     target_link_libraries(gd32h77x_at_spi_transport INTERFACE
         gd32h77x_at_core
         gd32h77x_drivers)

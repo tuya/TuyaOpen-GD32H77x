@@ -69,7 +69,7 @@ python3 platform/GD32H77X/gd32h77x_os/tools/build_project.py \
   --chip GD32H779VW --board GD32H779V_START
 ```
 
-VW553 SPI 候选固件及 SHA256 见 [SPI gateway 候选固件](../wireless_fw/vw553/spi/README.md)，其源码构建入口见 [VW553 AT gateway](../../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)。SPI 候选保持普通 AT/TCP/IP/BLE 字节流，但不支持依赖 UART idle 检测的 `AT+CIPMODE=1` 与 BLE passthrough。
+VW553 SPI 候选固件及 SHA256 见 [SPI gateway 候选固件](../../../boards/GD32H77X/GD32H779V_START/firmware/vw553/spi/README.md)，其源码构建入口见 [VW553 AT gateway](../../GD32/gd32_os/MSDK/vw553_at_gateway/docs/README.md)。SPI 候选保持普通 AT/TCP/IP/BLE 字节流，但不支持依赖 UART idle 检测的 `AT+CIPMODE=1` 与 BLE passthrough。
 
 SPI 基础实机 smoke 记录：H779 通过 `AT` 收到 `OK`，`AT+GMR` 返回
 `v1.0.3g-04f35186ae4a8741`；探针结果 `SPI_AT_PROBE_RESULT PASS at=1 version=1`，
@@ -77,7 +77,7 @@ SPI 基础实机 smoke 记录：H779 通过 `AT` 收到 `OK`，`AT+GMR` 返回
 在 VW553 正常启动后复位 H779，探针通过，尚不能声称冷启动稳定。二进制 payload、
 Socket/BLE 业务、吞吐和长稳均未验收，逻辑分析仪波形与电气裕量也未确认。UART
 主链路已按 UART4 ↔ VW553 UART2 完成联调；稳定 UART 固件见
-[VW553 wireless firmware](../wireless_fw/vw553/README.md)。
+[VW553 wireless firmware](../../../boards/GD32H77X/GD32H779V_START/firmware/vw553/README.md)。
 
 ### 启动与复位恢复补充（2026-11-12）
 

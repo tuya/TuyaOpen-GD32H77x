@@ -222,6 +222,15 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
             raise ValueError(f"FreeRTOS handler not installed: {name}")
     if not ram_base <= symbols["_sbss"] <= symbols["_ebss"] <= symbols["_heap_end"] <= symbols["_stack_bottom"] < stack:
         raise ValueError("RAM sections overlap")
+    if "__rtos_heap_start" in symbols or "__rtos_heap_end" in symbols:
+        heap_start = symbols.get("__rtos_heap_start", 0)
+        heap_end = symbols.get("__rtos_heap_end", 0)
+        if (heap_start != symbols["_heap_end"] or
+                heap_end != symbols["_stack_bottom"] or
+                heap_end - heap_start < 1024 or
+                heap_start % 8 or heap_end % 8 or
+                symbols.get("ucHeap") != heap_start):
+            raise ValueError("Invalid linker-managed FreeRTOS heap bounds")
     app_entry = symbols["app_entry"] & ~1
     in_cnvm_app = vector_base <= app_entry < app_limit
     in_ecnvm_app = bool(ecnvm_regions) and ecnvm_base <= app_entry < ecnvm_limit

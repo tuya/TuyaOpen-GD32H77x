@@ -15,6 +15,10 @@ from pathlib import Path
 
 import kconfiglib
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from at_routes import UART_ROUTES, SPI_ROUTES, pin_binding, signal_binding, validate_package
+from ospi_routes import ospi_signal_binding, validate_ospi_package
+
 
 PLATFORM = "GD32H77X"
 CHIPS_DIR = Path("gd32h77x_os") / "chips"
@@ -97,6 +101,9 @@ def resolve_config(platform_root: Path, chip: str,
         str(kconfig), warn_to_stderr=False, suppress_traceback=True)
     kconf.load_config(str(chip_config), replace=True)
     if project_config is not None:
+        if "CONFIG_ENABLE_GD32H77X_AT_SPI_START_DESK_SIM=y" in project_config.read_text():
+            raise ValueError("Removed AT SPI board preset: configure GD32H77X_AT_SPI_NUMBER, "
+                             "SCK, MISO, MOSI and CS routes explicitly")
         kconf.load_config(str(project_config), replace=False)
 
     values = {
@@ -104,6 +111,7 @@ def resolve_config(platform_root: Path, chip: str,
         for sym in kconf.unique_defined_syms
         if sym.config_string
     }
+    values["CONFIG_GD32H77X_CANONICAL_CHIP"] = _canonical_chip
     return values
 
 
@@ -150,6 +158,11 @@ def _selected_option(values: dict[str, str], prefix: str,
     return selected[0]
 
 
+def _physical_pin_key(pin: str) -> str:
+    """Collapse paired analog-switch pads onto one physical pin key."""
+    return pin[:-2] if pin.endswith("_C") else pin
+
+
 def _config_int(values: dict[str, str], symbol: str, minimum: int,
                 maximum: int) -> int:
     raw = values.get(f"CONFIG_{symbol}")
@@ -161,6 +174,72 @@ def _config_int(values: dict[str, str], symbol: str, minimum: int,
         raise ValueError(
             f"{symbol} must be in range {minimum}..{maximum}, got {raw!r}")
     return value
+
+
+def _psram_bindings(values: dict[str, str], pins: dict[str, str],
+                    extra: dict[str, str]) -> None:
+    """Resolve and validate GD32H77X PSRAM pin bindings."""
+    if values.get("CONFIG_ENABLE_GD32H77X_PSRAM") != "y":
+        return
+
+    port_values = [
+        port for port in (0, 1)
+        if values.get(f"CONFIG_GD32H77X_PSRAM_OSPIM_PORT{port}") == "y"
+    ]
+    if len(port_values) != 1:
+        raise ValueError("Exactly one PSRAM OSPIM port must be selected")
+    port = port_values[0]
+
+    profile = values.get("CONFIG_GD32H77X_PSRAM_PROFILE", "")
+    if not profile:
+        raise ValueError("GD32H77X_PSRAM_PROFILE must not be empty")
+
+    access_modes = [
+        mode for mode, symbol in (
+            ("indirect", "CONFIG_GD32H77X_PSRAM_ACCESS_INDIRECT"),
+            ("mapped", "CONFIG_GD32H77X_PSRAM_ACCESS_MAPPED"),
+        ) if values.get(symbol) == "y"
+    ]
+    if len(access_modes) != 1:
+        raise ValueError("Exactly one PSRAM access mode must be selected")
+
+    size_mb = _config_int(values, "GD32H77X_PSRAM_SIZE_MB", 1, 8)
+    heap_offset_kb = _config_int(
+        values, "GD32H77X_PSRAM_HEAP_OFFSET_KB", 0, 8192)
+    heap_size_kb = _config_int(
+        values, "GD32H77X_PSRAM_HEAP_SIZE_KB", 1, 8192)
+    _config_int(values, "GD32H77X_PSRAM_CLOCK_HZ", 1000000, 84000000)
+    if heap_offset_kb + heap_size_kb > size_mb * 1024:
+        raise ValueError(
+            "PSRAM heap offset + size exceeds configured PSRAM capacity")
+
+    psram_pins: list[str] = []
+    for signal in ("CS", "SCK", "IO0", "IO1", "IO2", "IO3"):
+        pin = values.get(f"CONFIG_GD32H77X_PSRAM_{signal}_PIN", "")
+        if not pin:
+            raise ValueError(f"PSRAM {signal} pin must not be empty")
+        binding = ospi_signal_binding(port, signal, pin)
+        for suffix, token in binding.items():
+            extra[f"GD32H77X_PSRAM_{signal}_GPIO_{suffix}"] = token
+        pins[f"PSRAM {signal}"] = pin
+        psram_pins.append(pin)
+
+    validate_ospi_package(
+        values.get("CONFIG_GD32H77X_PSRAM_CANONICAL_CHIP", ""), psram_pins)
+
+    selected = set(psram_pins)
+    extra["GD32H77X_PSRAM_OSPIM_PORT"] = str(port)
+    extra["GD32H77X_PSRAM_MAPPED_BASE"] = "0x90000000U"
+    extra["GD32H77X_PSRAM_SIZE_BYTES"] = f"{size_mb * 1024 * 1024}U"
+    extra["GD32H77X_PSRAM_HEAP_OFFSET_BYTES"] = f"{heap_offset_kb * 1024}U"
+    extra["GD32H77X_PSRAM_HEAP_SIZE_BYTES"] = f"{heap_size_kb * 1024}U"
+
+    extra["GD32H77X_PSRAM_PA1_SWITCH_SET"] = "1" if "PA1" in selected else "0"
+    extra["GD32H77X_PSRAM_PA1_SWITCH_OPEN"] = "1"
+    extra["GD32H77X_PSRAM_PC2_SWITCH_SET"] = (
+        "1" if selected.intersection({"PC2", "PC2_C"}) else "0")
+    extra["GD32H77X_PSRAM_PC2_SWITCH_OPEN"] = (
+        "0" if "PC2_C" in selected else "1")
 
 
 def hardware_bindings_from_config(values: dict[str, str]) -> dict[str, str]:
@@ -192,23 +271,69 @@ def hardware_bindings_from_config(values: dict[str, str]) -> dict[str, str]:
         values, "GD32H77X_AT_IRQ_PRIORITY", 5, 15)
     reset_pin = _config_int(values, "GD32H77X_AT_RESET_PIN_NUMBER", 0, 15)
 
-    if console_uart == at_uart:
-        raise ValueError(
-            f"Console and AT cannot share UART peripheral {console_uart}")
+    spi_active = values.get("CONFIG_ENABLE_GD32H77X_AT_TRANSPORT_SPI") == "y"
+    for signal, pin in (("TX", console_tx), ("RX", console_rx)):
+        binding = signal_binding(UART_ROUTES, console_uart, signal, f"P{console_port}{pin}")
+        if binding["AF"] != f"GPIO_AF_{console_af}":
+            raise ValueError(f"Console {signal}: invalid AF {console_af}; expected {binding['AF']}")
+    if not spi_active and console_uart == at_uart:
+        raise ValueError(f"Console and AT cannot share UART peripheral {console_uart}")
+    tx_route = values.get("CONFIG_GD32H77X_AT_UART_TX_ROUTE") or f"P{at_port}{at_tx}"
+    rx_route = values.get("CONFIG_GD32H77X_AT_UART_RX_ROUTE") or f"P{at_port}{at_rx}"
+    uart_tx = ({**pin_binding(tx_route), "AF": f"GPIO_AF_{at_af}"} if spi_active else
+               signal_binding(UART_ROUTES, at_uart, "TX", tx_route))
+    uart_rx = ({**pin_binding(rx_route), "AF": f"GPIO_AF_{at_af}"} if spi_active else
+               signal_binding(UART_ROUTES, at_uart, "RX", rx_route))
+    if not spi_active:
+        for signal, route, binding in (("TX", tx_route, uart_tx), ("RX", rx_route, uart_rx)):
+            if not values.get(f"CONFIG_GD32H77X_AT_UART_{signal}_ROUTE") and binding["AF"] != f"GPIO_AF_{at_af}":
+                raise ValueError(f"AT {signal} {route}: invalid legacy AF {at_af}; expected {binding['AF']}")
 
-    used_pins: dict[tuple[str, int], str] = {}
-    for label, port, pin in (
-            ("console TX", console_port, console_tx),
-            ("console RX", console_port, console_rx),
-            ("AT TX", at_port, at_tx),
-            ("AT RX", at_port, at_rx),
-            ("AT reset", reset_port, reset_pin)):
-        key = (port, pin)
+    pins = {"console TX": f"P{console_port}{console_tx}",
+            "console RX": f"P{console_port}{console_rx}",
+            "AT reset": f"P{reset_port}{reset_pin}"}
+    extra = {}
+    if spi_active:
+        number = _config_int(values, "GD32H77X_AT_SPI_NUMBER", 0, 5)
+        for signal in ("SCK", "MISO", "MOSI"):
+            pin = values[f"CONFIG_GD32H77X_AT_SPI_{signal}"]
+            pins[f"SPI {signal}"] = pin
+            prefix = "CLOCK" if signal == "SCK" else signal
+            binding = signal_binding(SPI_ROUTES, number, signal, pin)
+            for suffix, token in binding.items():
+                extra[f"AT_SPI_{prefix}_{suffix}"] = token
+        for signal, prefix in (("CS", "REQUEST"), ("READY", "READY")):
+            if signal == "READY" and values.get("CONFIG_ENABLE_GD32H77X_AT_SPI_CS_ONLY") == "y":
+                continue
+            pin = values[f"CONFIG_GD32H77X_AT_SPI_{signal}"]
+            pins[f"SPI {signal}"] = pin
+            for suffix, token in pin_binding(pin).items():
+                extra[f"AT_SPI_{prefix}_{suffix}"] = token
+        extra.update({"AT_SPI_PERIPH": f"SPI{number}", "AT_SPI_INDEX": f"IDX_SPI{number}",
+                      "AT_SPI_CLOCK_SOURCE": "RCU_SPISRC_PLL0Q" if number < 3 else "RCU_SPISRC_APB2",
+                      "AT_SPI_CLOCK_GATE": f"RCU_SPI{number}",
+                      "AT_SPI_RESET_GATE": f"RCU_SPI{number}RST",
+                      "AT_SPI_DMA_TX_REQUEST": f"DMA_REQUEST_SPI{number}_TX",
+                      "AT_SPI_DMA_RX_REQUEST": f"DMA_REQUEST_SPI{number}_RX"})
+    else:
+        pins.update({"AT TX": tx_route, "AT RX": rx_route})
+    if values.get("CONFIG_ENABLE_GD32H77X_POWER_HOLD") == "y":
+        pin = values["CONFIG_GD32H77X_POWER_HOLD_GPIO"]
+        pins["power hold"] = pin
+        for suffix, token in pin_binding(pin).items():
+            extra[f"GD32H77X_POWER_HOLD_{suffix}"] = token
+        extra["GD32H77X_POWER_HOLD_LEVEL"] = (
+            "1" if values.get("CONFIG_ENABLE_GD32H77X_POWER_HOLD_ACTIVE_HIGH") == "y" else "0")
+    _psram_bindings(values, pins, extra)
+    validate_package(values.get("CONFIG_GD32H77X_CANONICAL_CHIP", ""), pins.values())
+    used_pins = {}
+    for label, pin in pins.items():
+        key = _physical_pin_key(pin)
         previous = used_pins.get(key)
         if previous is not None:
             raise ValueError(
                 f"{label} and {previous} use the same GPIO pin "
-                f"GPIO{port}_{pin}")
+                f"{key}")
         used_pins[key] = label
 
     console_usart, console_clock, console_irq, console_handler, _console_dma = \
@@ -219,7 +344,7 @@ def hardware_bindings_from_config(values: dict[str, str]) -> dict[str, str]:
     at_gpio, at_gpio_clock = GPIO_PORT_OPTIONS[at_port]
     reset_gpio, reset_clock = GPIO_PORT_OPTIONS[reset_port]
 
-    return {
+    bindings = {
         "GD32H77X_CONSOLE_USART": console_usart,
         "GD32H77X_CONSOLE_USART_CLOCK": console_clock,
         "GD32H77X_CONSOLE_GPIO_CLOCK": console_gpio_clock,
@@ -245,6 +370,15 @@ def hardware_bindings_from_config(values: dict[str, str]) -> dict[str, str]:
         "AT_UART_BAUD": str(at_baud),
         "AT_UART_IRQ_PRIORITY": str(at_priority),
     }
+    for signal, route in (("TX", uart_tx), ("RX", uart_rx)):
+        for suffix, token in route.items():
+            bindings[f"AT_UART_{signal}_{suffix}"] = token
+    bindings.update(extra)
+    # Compatibility aliases describe TX; RX has its own independent binding.
+    bindings["AT_UART_GPIO_PORT"] = uart_tx["PORT"]
+    bindings["AT_UART_GPIO_CLOCK"] = uart_tx["CLOCK"]
+    bindings["AT_UART_AF"] = uart_tx["AF"]
+    return bindings
 
 
 def _c_macro_value(sym) -> str:
@@ -322,31 +456,7 @@ def write_outputs(platform_root: Path, chip: str, board: str,
         "",
         "/* Hardware bindings derived from the platform Kconfig choices. */",
     ])
-    for name in (
-            "GD32H77X_CONSOLE_USART",
-            "GD32H77X_CONSOLE_USART_CLOCK",
-            "GD32H77X_CONSOLE_GPIO_CLOCK",
-            "GD32H77X_CONSOLE_GPIO_PORT",
-            "GD32H77X_CONSOLE_TX_PIN",
-            "GD32H77X_CONSOLE_RX_PIN",
-            "GD32H77X_CONSOLE_AF",
-            "GD32H77X_CONSOLE_IRQn",
-            "GD32H77X_CONSOLE_IRQHandler",
-            "AT_UART_IRQ_HANDLER",
-            "AT_RESET_CLOCK",
-            "AT_RESET_PORT",
-            "AT_RESET_PIN",
-            "AT_UART_USART",
-            "AT_UART_CLOCK",
-            "AT_UART_GPIO_CLOCK",
-            "AT_UART_GPIO_PORT",
-            "AT_UART_TX_PIN",
-            "AT_UART_RX_PIN",
-            "AT_UART_AF",
-            "AT_UART_IRQn",
-            "AT_UART_DMA_RX_REQUEST",
-            "AT_UART_BAUD",
-            "AT_UART_IRQ_PRIORITY"):
+    for name in sorted(bindings):
         header_lines.append(f"#define {name} {bindings[name]}")
 
     header_lines.extend([
@@ -354,11 +464,14 @@ def write_outputs(platform_root: Path, chip: str, board: str,
         "    { \\",
         f"        .usart = {bindings['AT_UART_USART']}, \\",
         f"        .usart_clock = {bindings['AT_UART_CLOCK']}, \\",
-        f"        .gpio_clock = {bindings['AT_UART_GPIO_CLOCK']}, \\",
-        f"        .gpio_port = {bindings['AT_UART_GPIO_PORT']}, \\",
+        f"        .gpio_clock = {bindings['AT_UART_TX_CLOCK']}, \\",
+        f"        .gpio_port = {bindings['AT_UART_TX_PORT']}, \\",
+        f"        .rx_gpio_clock = {bindings['AT_UART_RX_CLOCK']}, \\",
+        f"        .rx_gpio_port = {bindings['AT_UART_RX_PORT']}, \\",
+        f"        .rx_alternate_function = {bindings['AT_UART_RX_AF']}, \\",
         f"        .tx_pin = {bindings['AT_UART_TX_PIN']}, \\",
         f"        .rx_pin = {bindings['AT_UART_RX_PIN']}, \\",
-        f"        .alternate_function = {bindings['AT_UART_AF']}, \\",
+        f"        .alternate_function = {bindings['AT_UART_TX_AF']}, \\",
         f"        .irq = {bindings['AT_UART_IRQn']}, \\",
         f"        .baudrate = {bindings['AT_UART_BAUD']}U, \\",
         "        .word_length = USART_WL_8BIT, \\",

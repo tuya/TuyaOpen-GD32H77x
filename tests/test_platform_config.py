@@ -18,6 +18,111 @@ SPEC.loader.exec_module(platform_config)
 
 class PlatformConfigTests(unittest.TestCase):
 
+    def test_desk_buddy_routes_and_early_power_hold(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H779IW",
+            ROOT / "boards/GD32H77X/GD32H779I_DESK_BUDDY/platform_config/gd32h77x.config")
+        bindings = platform_config.hardware_bindings_from_config(values)
+        expected = {
+            "GD32H77X_CONSOLE_USART": "USART0",
+            "GD32H77X_CONSOLE_GPIO_PORT": "GPIOF",
+            "GD32H77X_CONSOLE_AF": "GPIO_AF_4",
+            "AT_SPI_PERIPH": "SPI1", "AT_SPI_CLOCK_PORT": "GPIOC",
+            "AT_SPI_CLOCK_PIN": "GPIO_PIN_3",
+            "AT_SPI_MISO_PORT": "GPIOC", "AT_SPI_MISO_PIN": "GPIO_PIN_2",
+            "AT_SPI_MOSI_PORT": "GPIOC", "AT_SPI_MOSI_PIN": "GPIO_PIN_1",
+            "AT_RESET_PORT": "GPIOH", "AT_RESET_PIN": "GPIO_PIN_10",
+            "GD32H77X_POWER_HOLD_PORT": "GPIOC", "GD32H77X_POWER_HOLD_PIN": "GPIO_PIN_13",
+            "GD32H77X_POWER_HOLD_LEVEL": "1",
+        }
+        for key, expected_value in expected.items():
+            self.assertEqual(bindings[key], expected_value, key)
+        values["CONFIG_ENABLE_GD32H77X_POWER_HOLD_ACTIVE_HIGH"] = "n"
+        self.assertEqual(platform_config.hardware_bindings_from_config(values)["GD32H77X_POWER_HOLD_LEVEL"], "0")
+
+    def test_power_hold_cannot_overlap_spi(self):
+        values = self.spi_values()
+        values["CONFIG_ENABLE_GD32H77X_POWER_HOLD"] = "y"
+        values["CONFIG_GD32H77X_POWER_HOLD_GPIO"] = "PB13"
+        with self.assertRaisesRegex(ValueError, "same GPIO pin"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_start_keeps_hardware_spi_default(self):
+        values = self.spi_values()
+        bindings = platform_config.hardware_bindings_from_config(values)
+        self.assertEqual(bindings["AT_SPI_MOSI_AF"], "GPIO_AF_5")
+        self.assertEqual(bindings["AT_SPI_MOSI_PORT"], "GPIOB")
+        self.assertEqual(bindings["AT_SPI_MOSI_PIN"], "GPIO_PIN_15")
+
+    def spi_values(self):
+        return platform_config.resolve_config(
+            PLATFORM, "GD32H779VW",
+            ROOT / "boards/GD32H77X/GD32H779V_START/platform_config/gd32h77x.config")
+
+    def test_spi_routes_derive_controller_clock_and_dma(self):
+        bindings = platform_config.hardware_bindings_from_config(self.spi_values())
+        self.assertEqual(bindings["AT_SPI_PERIPH"], "SPI1")
+        self.assertEqual(bindings["AT_SPI_CLOCK_SOURCE"], "RCU_SPISRC_PLL0Q")
+        self.assertEqual(bindings["AT_SPI_DMA_RX_REQUEST"], "DMA_REQUEST_SPI1_RX")
+        self.assertEqual(bindings["AT_SPI_REQUEST_PORT"], "GPIOC")
+        self.assertEqual(bindings["AT_SPI_REQUEST_PIN"], "GPIO_PIN_0")
+        self.assertNotIn("AT_SPI_READY_PORT", bindings)
+
+    def test_spi_illegal_signal_is_rejected(self):
+        values = self.spi_values()
+        values["CONFIG_GD32H77X_AT_SPI_MOSI"] = "PB14"
+        with self.assertRaisesRegex(ValueError, "unsupported route"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_spi_duplicate_cs_and_signal_is_rejected(self):
+        values = self.spi_values()
+        values["CONFIG_GD32H77X_AT_SPI_CS"] = "PB13"
+        with self.assertRaisesRegex(ValueError, "same GPIO pin"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_spi_package_rejects_unbonded_normal_pc3(self):
+        values = self.spi_values()
+        values["CONFIG_GD32H77X_AT_SPI_SCK"] = "PC3"
+        with self.assertRaisesRegex(ValueError, "not an ordinary bonded pad"):
+            platform_config.hardware_bindings_from_config(values)
+        values["CONFIG_GD32H77X_CANONICAL_CHIP"] = "GD32H779IW"
+        bindings = platform_config.hardware_bindings_from_config(values)
+        self.assertEqual(bindings["AT_SPI_CLOCK_AF"], "GPIO_AF_6")
+        self.assertEqual(bindings["AT_SPI_MISO_PORT"], "GPIOB")
+
+    def test_legacy_ready_clock_and_conflict(self):
+        values = self.spi_values()
+        values["CONFIG_ENABLE_GD32H77X_AT_SPI_CS_ONLY"] = "n"
+        self.assertEqual(platform_config.hardware_bindings_from_config(values)[
+            "AT_SPI_READY_CLOCK"], "RCU_GPIOE")
+        values["CONFIG_GD32H77X_AT_SPI_READY"] = "PC5"
+        with self.assertRaisesRegex(ValueError, "same GPIO pin"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_uart_cross_port_and_different_af(self):
+        values = platform_config.resolve_config(PLATFORM, "GD32H779IW")
+        values["CONFIG_ENABLE_GD32H77X_AT_UART_UART4"] = "n"
+        values["CONFIG_ENABLE_GD32H77X_AT_UART_USART0"] = "y"
+        values["CONFIG_GD32H77X_AT_UART_TX_ROUTE"] = "PF4"
+        values["CONFIG_GD32H77X_AT_UART_RX_ROUTE"] = "PA10"
+        bindings = platform_config.hardware_bindings_from_config(values)
+        self.assertEqual(bindings["AT_UART_TX_PORT"], "GPIOF")
+        self.assertEqual(bindings["AT_UART_RX_PORT"], "GPIOA")
+        self.assertEqual(bindings["AT_UART_TX_AF"], "GPIO_AF_4")
+        self.assertEqual(bindings["AT_UART_RX_AF"], "GPIO_AF_7")
+
+    def test_invalid_legacy_uart_af_is_rejected(self):
+        values = platform_config.resolve_config(PLATFORM, "GD32H779VW")
+        values["CONFIG_GD32H77X_AT_AF_NUMBER"] = "3"
+        with self.assertRaisesRegex(ValueError, "invalid legacy AF"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_special_c_pad_requires_separate_support(self):
+        values = self.spi_values()
+        values["CONFIG_GD32H77X_AT_SPI_MOSI"] = "PC3_C"
+        with self.assertRaisesRegex(ValueError, "unsupported route"):
+            platform_config.hardware_bindings_from_config(values)
+
     def test_h779_chip_default_selects_swd_backend(self):
         values = platform_config.resolve_config(PLATFORM, "GD32H779VW")
         self.assertEqual(
@@ -112,10 +217,8 @@ class PlatformConfigTests(unittest.TestCase):
             project_config = Path(tmp) / "project.config"
             project_config.write_text(
                 "CONFIG_ENABLE_GD32H77X_AT_UART_UART6=y\n"
-                "CONFIG_ENABLE_GD32H77X_AT_GPIO_PORT_K=y\n"
-                "CONFIG_GD32H77X_AT_TX_PIN_NUMBER=1\n"
-                "CONFIG_GD32H77X_AT_RX_PIN_NUMBER=2\n"
-                "CONFIG_GD32H77X_AT_AF_NUMBER=3\n"
+                'CONFIG_GD32H77X_AT_UART_TX_ROUTE="PE8"\n'
+                'CONFIG_GD32H77X_AT_UART_RX_ROUTE="PE7"\n'
                 "CONFIG_ENABLE_GD32H77X_AT_RESET_GPIO_PORT_A=y\n"
                 "CONFIG_GD32H77X_AT_RESET_PIN_NUMBER=4\n")
             values = platform_config.resolve_config(
@@ -126,17 +229,15 @@ class PlatformConfigTests(unittest.TestCase):
             self.assertEqual(
                 bindings["AT_UART_DMA_RX_REQUEST"],
                 "DMA_REQUEST_UART6_RX")
-            self.assertEqual(bindings["AT_UART_GPIO_PORT"], "GPIOK")
-            self.assertEqual(bindings["AT_UART_TX_PIN"], "GPIO_PIN_1")
-            self.assertEqual(bindings["AT_UART_RX_PIN"], "GPIO_PIN_2")
+            self.assertEqual(bindings["AT_UART_TX_PORT"], "GPIOE")
+            self.assertEqual(bindings["AT_UART_TX_PIN"], "GPIO_PIN_8")
+            self.assertEqual(bindings["AT_UART_RX_PIN"], "GPIO_PIN_7")
             self.assertEqual(bindings["AT_RESET_PORT"], "GPIOA")
             self.assertEqual(bindings["AT_RESET_PIN"], "GPIO_PIN_4")
 
     def test_hardware_bindings_reject_duplicate_gpio_pin(self):
         values = platform_config.resolve_config(PLATFORM, "GD32H779VW")
-        values["CONFIG_ENABLE_GD32H77X_AT_GPIO_PORT_B"] = "n"
-        values["CONFIG_ENABLE_GD32H77X_AT_GPIO_PORT_C"] = "y"
-        values["CONFIG_GD32H77X_AT_TX_PIN_NUMBER"] = "6"
+        values["CONFIG_GD32H77X_AT_RESET_PIN_NUMBER"] = "6"
         with self.assertRaisesRegex(ValueError, "same GPIO pin"):
             platform_config.hardware_bindings_from_config(values)
 
@@ -179,6 +280,72 @@ class PlatformConfigTests(unittest.TestCase):
     def test_unknown_chip_fails_without_implicit_fallback(self):
         with self.assertRaisesRegex(ValueError, "Unknown GD32H77X CHIP_CHOICE"):
             platform_config.resolve_config(PLATFORM, "GD32H77UNKNOWN")
+
+
+    def test_desk_buddy_psram_bindings(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H779IW",
+            ROOT / "boards/GD32H77X/GD32H779I_DESK_BUDDY/platform_config/gd32h77x.config")
+        self.assertEqual(values["CONFIG_GD32H77X_PSRAM_ACCESS_INDIRECT"], "n")
+        self.assertEqual(values["CONFIG_GD32H77X_PSRAM_ACCESS_MAPPED"], "y")
+        bindings = platform_config.hardware_bindings_from_config(values)
+        expected = {
+            "GD32H77X_PSRAM_CS_GPIO_PORT": "GPIOE",
+            "GD32H77X_PSRAM_CS_GPIO_PIN": "GPIO_PIN_11",
+            "GD32H77X_PSRAM_CS_GPIO_AF": "GPIO_AF_11",
+            "GD32H77X_PSRAM_SCK_GPIO_PORT": "GPIOB",
+            "GD32H77X_PSRAM_SCK_GPIO_PIN": "GPIO_PIN_2",
+            "GD32H77X_PSRAM_SCK_GPIO_AF": "GPIO_AF_9",
+            "GD32H77X_PSRAM_IO0_GPIO_PIN": "GPIO_PIN_2",
+            "GD32H77X_PSRAM_IO0_GPIO_AF": "GPIO_AF_6",
+            "GD32H77X_PSRAM_IO1_GPIO_PIN": "GPIO_PIN_0",
+            "GD32H77X_PSRAM_IO1_GPIO_AF": "GPIO_AF_4",
+            "GD32H77X_PSRAM_IO2_GPIO_PORT": "GPIOA",
+            "GD32H77X_PSRAM_IO2_GPIO_PIN": "GPIO_PIN_3",
+            "GD32H77X_PSRAM_IO2_GPIO_AF": "GPIO_AF_6",
+            "GD32H77X_PSRAM_IO3_GPIO_PIN": "GPIO_PIN_1",
+            "GD32H77X_PSRAM_IO3_GPIO_AF": "GPIO_AF_9",
+            "GD32H77X_PSRAM_OSPIM_PORT": "0",
+            "GD32H77X_PSRAM_PA1_SWITCH_OPEN": "1",
+            "GD32H77X_PSRAM_PC2_SWITCH_OPEN": "1",
+            "GD32H77X_PSRAM_SIZE_BYTES": "8388608U",
+            "GD32H77X_PSRAM_HEAP_OFFSET_BYTES": "4194304U",
+            "GD32H77X_PSRAM_HEAP_SIZE_BYTES": "4194304U",
+        }
+        for key, expected_value in expected.items():
+            self.assertEqual(bindings[key], expected_value, key)
+
+    def test_psram_rejects_unverified_route(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H779IW",
+            ROOT / "boards/GD32H77X/GD32H779I_DESK_BUDDY/platform_config/gd32h77x.config")
+        values["CONFIG_GD32H77X_PSRAM_CS_PIN"] = "PE10"
+        with self.assertRaisesRegex(ValueError, "unsupported route"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_psram_rejects_heap_outside_capacity(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H779IW",
+            ROOT / "boards/GD32H77X/GD32H779I_DESK_BUDDY/platform_config/gd32h77x.config")
+        values["CONFIG_GD32H77X_PSRAM_HEAP_SIZE_KB"] = "8192"
+        with self.assertRaisesRegex(ValueError, "exceeds configured PSRAM capacity"):
+            platform_config.hardware_bindings_from_config(values)
+
+    def test_board_without_psram_does_not_emit_psram_bindings(self):
+        values = platform_config.resolve_config(PLATFORM, "GD32H779VW")
+        bindings = platform_config.hardware_bindings_from_config(values)
+        self.assertFalse(any("PSRAM" in key for key in bindings))
+
+
+    def test_psram_pc2_c_conflicts_with_at_pc2(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H779IW",
+            ROOT / "boards/GD32H77X/GD32H779I_DESK_BUDDY/platform_config/gd32h77x.config")
+        values["CONFIG_GD32H77X_AT_SPI_MOSI"] = "PC1"
+        values["CONFIG_GD32H77X_AT_SPI_MISO"] = "PC2"
+        values["CONFIG_GD32H77X_PSRAM_IO2_PIN"] = "PC2_C"
+        with self.assertRaisesRegex(ValueError, "same GPIO pin PC2"):
+            platform_config.hardware_bindings_from_config(values)
 
 
 if __name__ == "__main__":

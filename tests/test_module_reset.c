@@ -11,6 +11,7 @@ typedef struct {
     unsigned probe_calls;
     unsigned soft_calls;
     unsigned ready_calls;
+    unsigned ready_check_calls;
     unsigned recover_calls;
     unsigned hardware_calls;
     bool local_recovery;
@@ -23,6 +24,8 @@ typedef struct {
     bool recover_ok;
     bool hardware_recover_ok;
     bool hardware_ok;
+    bool ready_during_probe;
+    bool ready_recovery_ok;
 } fake_t;
 
 static void append(fake_t *fake, char event)
@@ -40,6 +43,7 @@ static bool fake_probe(void *context)
     if (fake->hardware_calls) return fake->hardware_probe_ok;
     if (fake->soft_calls) return fake->soft_probe_ok;
     if (fake->local_recovery && fake->recover_calls) return fake->local_probe_ok;
+    if (fake->ready_during_probe && fake->probe_calls > 1U) return fake->ready_recovery_ok;
     return fake->initial_probe_ok;
 }
 
@@ -75,12 +79,20 @@ static bool fake_hardware_reset(void *context)
     return fake->hardware_ok;
 }
 
+static bool fake_ready_observed(void *context)
+{
+    fake_t *fake = context;
+    ++fake->ready_check_calls;
+    return fake->ready_during_probe;
+}
+
 static const at_module_reset_ops_t OPS = {
     .probe = fake_probe,
     .request_soft_reset = fake_soft_reset,
     .wait_ready = fake_wait_ready,
     .recover_transport = fake_recover,
     .hardware_reset = fake_hardware_reset,
+    .ready_observed = fake_ready_observed,
 };
 
 static fake_t initial_fake(void)
@@ -95,6 +107,7 @@ static fake_t initial_fake(void)
         .recover_ok = true,
         .hardware_recover_ok = true,
         .hardware_ok = true,
+        .ready_recovery_ok = true,
     };
 }
 
@@ -108,7 +121,7 @@ static void startup_prefers_soft_reset(void)
     fake_t fake = initial_fake();
     at_module_reset_result_t result;
     assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &fake, 5000U, &result));
-    EXPECT_EVENTS(fake, 'p', 's', 'w', 'r', 'p');
+    EXPECT_EVENTS(fake, 'p', 's', 'r', 'w', 'r', 'p');
     assert(fake.hardware_calls == 0U);
     assert(result.software_reset_requested && !result.hardware_reset_attempted);
 }
@@ -119,9 +132,39 @@ static void startup_probe_failure_uses_hardware_fallback(void)
     fake.initial_probe_ok = false;
     at_module_reset_result_t result;
     assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &fake, 5000U, &result));
-    EXPECT_EVENTS(fake, 'p', 'h', 'r', 'p');
+    EXPECT_EVENTS(fake, 'p', 'h', 'r', 'w', 'r', 'p');
     assert(fake.soft_calls == 0U && fake.hardware_calls == 1U);
     assert(!result.software_reset_requested && result.hardware_reset_attempted);
+}
+
+static void startup_ready_during_probe_recovers_without_reset(void)
+{
+    fake_t fake = initial_fake();
+    fake.ready_during_probe = true;
+    at_module_reset_result_t result;
+    assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &fake, 5000U, &result));
+    EXPECT_EVENTS(fake, 'p');
+    assert(fake.ready_check_calls == 1U);
+    assert(fake.soft_calls == 0U && fake.hardware_calls == 0U);
+    assert(!result.software_reset_requested && !result.hardware_reset_attempted);
+
+    fake = initial_fake();
+    fake.initial_probe_ok = false;
+    fake.ready_during_probe = true;
+    assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &fake, 5000U, &result));
+    EXPECT_EVENTS(fake, 'p', 'r', 'p');
+    assert(fake.ready_check_calls == 1U);
+    assert(fake.soft_calls == 0U && fake.hardware_calls == 0U);
+    assert(!result.software_reset_requested && !result.hardware_reset_attempted);
+
+    fake = initial_fake();
+    fake.initial_probe_ok = false;
+    fake.ready_during_probe = true;
+    fake.recover_ok = false;
+    assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &fake, 5000U, &result));
+    EXPECT_EVENTS(fake, 'p', 'r', 'h', 'r', 'w', 'r', 'p');
+    assert(fake.ready_check_calls == 1U);
+    assert(fake.hardware_calls == 1U && result.hardware_reset_attempted);
 }
 
 static void soft_reset_failures_fall_back_once(void)
@@ -130,25 +173,25 @@ static void soft_reset_failures_fall_back_once(void)
     no_command.soft_ok = false;
     at_module_reset_result_t result;
     assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &no_command, 5000U, &result));
-    EXPECT_EVENTS(no_command, 'p', 's', 'h', 'r', 'p');
+    EXPECT_EVENTS(no_command, 'p', 's', 'h', 'r', 'w', 'r', 'p');
     assert(no_command.hardware_calls == 1U);
 
     fake_t no_ready = initial_fake();
     no_ready.ready_ok = false;
-    assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &no_ready, 5000U, &result));
-    EXPECT_EVENTS(no_ready, 'p', 's', 'w', 'h', 'r', 'p');
+    assert(!at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &no_ready, 5000U, &result));
+    EXPECT_EVENTS(no_ready, 'p', 's', 'r', 'w', 'h', 'r', 'w');
     assert(no_ready.hardware_calls == 1U);
 
     fake_t recover_failure = initial_fake();
     recover_failure.recover_ok = false;
     assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &recover_failure, 5000U, &result));
-    EXPECT_EVENTS(recover_failure, 'p', 's', 'w', 'r', 'h', 'r', 'p');
+    EXPECT_EVENTS(recover_failure, 'p', 's', 'r', 'h', 'r', 'w', 'r', 'p');
     assert(recover_failure.hardware_calls == 1U);
 
     fake_t verify_failure = initial_fake();
     verify_failure.soft_probe_ok = false;
     assert(at_module_reset_run(AT_MODULE_RESET_STARTUP, &OPS, &verify_failure, 5000U, &result));
-    EXPECT_EVENTS(verify_failure, 'p', 's', 'w', 'r', 'p', 'h', 'r', 'p');
+    EXPECT_EVENTS(verify_failure, 'p', 's', 'r', 'w', 'r', 'p', 'h', 'r', 'w', 'r', 'p');
     assert(verify_failure.hardware_calls == 1U);
 }
 
@@ -165,7 +208,7 @@ static void recovery_tries_transport_before_reset(void)
     fallback.local_recovery = true;
     fallback.local_probe_ok = false;
     assert(at_module_reset_run(AT_MODULE_RESET_RECOVERY, &OPS, &fallback, 5000U, &result));
-    EXPECT_EVENTS(fallback, 'r', 'p', 's', 'w', 'r', 'p');
+    EXPECT_EVENTS(fallback, 'r', 'p', 's', 'r', 'w', 'r', 'p');
     assert(fallback.soft_calls == 1U && fallback.hardware_calls == 0U);
 }
 
@@ -174,7 +217,7 @@ static void soft_first_does_not_probe_before_reset(void)
     fake_t fake = initial_fake();
     at_module_reset_result_t result;
     assert(at_module_reset_run(AT_MODULE_RESET_SOFT_FIRST, &OPS, &fake, 5000U, &result));
-    EXPECT_EVENTS(fake, 's', 'w', 'r', 'p');
+    EXPECT_EVENTS(fake, 's', 'r', 'w', 'r', 'p');
     assert(fake.soft_calls == 1U && fake.hardware_calls == 0U);
 }
 
@@ -199,6 +242,7 @@ int main(void)
 {
     startup_prefers_soft_reset();
     startup_probe_failure_uses_hardware_fallback();
+    startup_ready_during_probe_recovers_without_reset();
     soft_reset_failures_fall_back_once();
     recovery_tries_transport_before_reset();
     soft_first_does_not_probe_before_reset();

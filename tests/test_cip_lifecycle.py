@@ -98,7 +98,7 @@ def main() -> int:
         failures.append("H77 recovery does not prefer soft reset before hardware reset")
     if "request = !s_module_reset_active;" not in device:
         failures.append("READY/fault notifications can recursively trigger module reset")
-    if "hardware_reset_path(ops, context, result)" not in reset_sequence:
+    if "hardware_reset_path(ops, context, ready_timeout_ms, result)" not in reset_sequence:
         failures.append("module reset has no hardware fallback path")
     if "for (" in reset_sequence:
         failures.append("module reset orchestration reintroduced an implicit retry loop")

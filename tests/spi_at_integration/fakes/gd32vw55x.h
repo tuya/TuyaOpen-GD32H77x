@@ -19,11 +19,15 @@ typedef struct {
 #define GPIO_PIN_2 (1U << 2)
 #define GPIO_PIN_3 (1U << 3)
 #define GPIO_PIN_4 (1U << 4)
+#define GPIO_PIN_5 (1U << 5)
+#define GPIO_AF_2 2U
+#define GPIO_AF_4 4U
 #define GPIO_AF_5 5U
 #define GPIO_MODE_INPUT 0U
 #define GPIO_MODE_OUTPUT 1U
 #define GPIO_MODE_AF 2U
 #define GPIO_PUPD_PULLDOWN 1U
+#define GPIO_PUPD_PULLUP 2U
 #define GPIO_PUPD_NONE 0U
 #define GPIO_OTYPE_PP 0U
 #define GPIO_OSPEED_25MHZ 25U
@@ -39,6 +43,8 @@ typedef struct {
 #define SPI_DMA_TRANSMIT 2U
 #define SPI_FLAG_TRANS 1U
 #define SPI_FLAG_TBE 2U
+#define SPI_FLAG_RBNE 4U
+#define SPI_FLAG_RXORERR 8U
 #define SPI_TRANSMODE_FULLDUPLEX 1U
 #define SPI_SLAVE 0U
 #define SPI_FRAMESIZE_8BIT 8U
@@ -46,6 +52,7 @@ typedef struct {
 #define SPI_PSC_4 4U
 #define SPI_ENDIAN_MSB 0U
 #define SPI_NSS_SOFT 0U
+#define SPI_NSS_HARD 1U
 #define DMA_PERIPH_WIDTH_8BIT 8U
 #define DMA_PRIORITY_HIGH 1U
 #define DMA_PERIPH_INCREASE_DISABLE 0U
