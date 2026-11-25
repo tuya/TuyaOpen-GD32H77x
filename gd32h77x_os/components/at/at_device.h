@@ -48,6 +48,9 @@ at_status_t at_device_subscribe(at_device_event_handler_t handler, void *context
 at_status_t at_device_init(void);
 /* Pulse the board-defined AT NRST line. */
 void at_device_reset(void);
+/* Board-specific override for an explicit ISP sequence. This bypasses the
+ * shared-reset guard and must only be called after the BOOT strap is asserted. */
+void at_device_force_reset(void);
 void at_device_enter_isp_mode(void);
 void at_device_exit_isp_mode(void);
 /* Reset the module and asynchronously recover the H77 transport/parser. */

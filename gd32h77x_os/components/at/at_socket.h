@@ -13,7 +13,8 @@
 #include <stdint.h>
 
 #define AT_SOCKET_FD_BASE 3
-#define AT_SOCKET_FD_LIMIT 10
+#define AT_SOCKET_LOGICAL_COUNT 8
+#define AT_SOCKET_FD_LIMIT (AT_SOCKET_FD_BASE + AT_SOCKET_LOGICAL_COUNT)
 #define AT_SOCKET_FD_SET_SIZE ((AT_SOCKET_FD_LIMIT + 8) / 8)
 
 typedef enum {

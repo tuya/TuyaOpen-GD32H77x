@@ -91,6 +91,8 @@ bool at_client_take_command(at_client_t *client, char *destination, size_t capac
 void at_client_line(at_client_t *client, const char *line, size_t length);
 void at_client_prompt(at_client_t *client);
 void at_client_data(at_client_t *client, int remote_fd, const uint8_t *data, size_t length, bool final);
+void at_client_response_data(at_client_t *client, int remote_fd, const uint8_t *data, size_t length,
+                             bool final);
 void at_client_ble_data(at_client_t *client, uint8_t conn_id, const uint8_t *data, size_t length,
                               bool final);
 void at_client_datagram(at_client_t *client, int listener_fd, const char *peer_ipv4,

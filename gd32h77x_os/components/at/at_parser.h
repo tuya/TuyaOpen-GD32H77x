@@ -27,6 +27,9 @@ typedef struct {
      * remote_fd is the descriptor reported by 553, not a TuyaOpen socket handle.
      */
     void (*data)(void *context, int remote_fd, const uint8_t *data, size_t length, bool final);
+    /* Length-delimited response to an explicit AT+CIPRECVDATA request. Unlike
+     * asynchronous +IPD data, this frame owns no extra trailing OK. */
+    void (*response_data)(void *context, int remote_fd, const uint8_t *data, size_t length, bool final);
     /* Fixed GATT data-transfer service used by the AT BLE AT firmware.
      * The payload is length-delimited and must be copied before returning. */
     void (*ble_data)(void *context, uint8_t conn_id, const uint8_t *data, size_t length, bool final);
@@ -54,6 +57,7 @@ typedef struct {
     uint16_t             peer_port;
     bool                 datagram;
     bool                 ble_data;
+    bool                 response_data;
     bool                 separator_space;
     bool                 suppress_next_ok;
     unsigned             state;

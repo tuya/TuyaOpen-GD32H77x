@@ -356,7 +356,9 @@ static void spi_gpio_and_peripheral_init(void)
     config.nss = SPI_NSS_SOFT;
     config.endian = SPI_ENDIAN_MSB;
     config.clock_polarity_phase = SPI_CK_PL_LOW_PH_1EDGE;
-#if ENABLE_GD32H77X_AT_SPI_PSC_64
+#if ENABLE_GD32H77X_AT_SPI_PSC_16
+    config.prescale = SPI_PSC_16;
+#elif ENABLE_GD32H77X_AT_SPI_PSC_64
     config.prescale = SPI_PSC_64;
 #elif ENABLE_GD32H77X_AT_SPI_PSC_128
     config.prescale = SPI_PSC_128;

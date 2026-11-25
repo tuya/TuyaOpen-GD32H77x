@@ -31,6 +31,7 @@
 #define UART_RX_TASK_STACK  512U
 #define UART_RX_TASK_PRIO   (tskIDLE_PRIORITY + 5U)
 #define UART_IRQ_PRIORITY   5U
+#define UART_TX_TIMEOUT_MS  2000U
 
 typedef struct {
     uint32_t port;
@@ -618,8 +619,12 @@ int tkl_uart_write(TUYA_UART_NUM_E port_id, void *buff, uint16_t len)
 
     const uint8_t *bytes = (const uint8_t *)buff;
     uint32_t usart = s_uart_hw[port].usart;
+    TickType_t start = xTaskGetTickCount();
     for (uint16_t sent = 0U; sent < len; ++sent) {
         while (usart_flag_get(usart, USART_FLAG_TBE) == RESET) {
+            if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(UART_TX_TIMEOUT_MS)) {
+                return OPRT_COM_ERROR;
+            }
         }
         usart_data_transmit(usart, bytes[sent]);
     }

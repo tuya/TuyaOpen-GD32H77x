@@ -66,6 +66,7 @@ static bool ipd_header(at_parser_t *parser)
     unsigned    length;
     parser->datagram = false;
     parser->ble_data = false;
+    parser->response_data = false;
     parser->separator_space = true;
     parser->listener_fd = -1;
     parser->peer_ipv4[0] = '\0';
@@ -118,6 +119,28 @@ static bool ble_data_header(at_parser_t *parser)
     parser->used = 0U;
     parser->datagram = false;
     parser->ble_data = true;
+    parser->response_data = false;
+    parser->separator_space = false;
+    parser->state = SEPARATOR;
+    return true;
+}
+
+/* On-demand TCP payload response:
+ * +CIPRECVDATA:<lwip-fd>,<length>:<binary>. */
+static bool cip_recvdata_header(at_parser_t *parser)
+{
+    const char *cursor = parser->line + sizeof("+CIPRECVDATA:") - 1U;
+    unsigned fd;
+    unsigned length;
+    if (!decimal(&cursor, INT_MAX, &fd) || *cursor++ != ',' ||
+        !decimal(&cursor, AT_MAX_PAYLOAD, &length) || *cursor != '\0') return false;
+    parser->remote_fd = (int)fd;
+    parser->remaining = length;
+    parser->frame_length = length;
+    parser->used = 0U;
+    parser->datagram = false;
+    parser->ble_data = false;
+    parser->response_data = true;
     parser->separator_space = false;
     parser->state = SEPARATOR;
     return true;
@@ -246,6 +269,7 @@ void at_parser_drop_frame(at_parser_t *parser)
     parser->used      = 0U;
     parser->ble_data  = false;
     parser->datagram  = false;
+    parser->response_data = false;
     parser->state     = LINE;
 }
 
@@ -255,7 +279,10 @@ void at_parser_feed(at_parser_t *parser, const uint8_t *data, size_t length)
         if (parser->state == PAYLOAD) {
             size_t count = length < parser->remaining ? length : parser->remaining;
             parser->remaining -= count;
-            if (parser->ble_data && parser->callbacks.ble_data) {
+            if (parser->response_data && parser->callbacks.response_data) {
+                parser->callbacks.response_data(parser->context, parser->remote_fd, data, count,
+                                                parser->remaining == 0U);
+            } else if (parser->ble_data && parser->callbacks.ble_data) {
                 parser->callbacks.ble_data(parser->context, (uint8_t)parser->remote_fd, data, count,
                                            parser->remaining == 0U);
             } else if (parser->datagram && parser->callbacks.datagram) {
@@ -286,7 +313,9 @@ void at_parser_feed(at_parser_t *parser, const uint8_t *data, size_t length)
                     ++length;
                 }
             } else {
-                if (parser->ble_data && parser->callbacks.ble_data) {
+                if (parser->response_data && parser->callbacks.response_data) {
+                    parser->callbacks.response_data(parser->context, parser->remote_fd, NULL, 0U, true);
+                } else if (parser->ble_data && parser->callbacks.ble_data) {
                     parser->callbacks.ble_data(parser->context, (uint8_t)parser->remote_fd, NULL, 0U, true);
                 } else if (parser->datagram && parser->callbacks.datagram) {
                     parser->callbacks.datagram(parser->context, parser->listener_fd, parser->peer_ipv4,
@@ -334,6 +363,10 @@ void at_parser_feed(at_parser_t *parser, const uint8_t *data, size_t length)
                    memcmp(parser->line, "+BLEDATA,", sizeof("+BLEDATA,") - 1U) == 0) {
             parser->line[parser->used] = '\0';
             if (!ble_data_header(parser)) fault(parser, AT_BAD_HEADER);
+        } else if (byte == ':' && parser->used >= sizeof("+CIPRECVDATA:") - 1U &&
+                   memcmp(parser->line, "+CIPRECVDATA:", sizeof("+CIPRECVDATA:") - 1U) == 0) {
+            parser->line[parser->used] = '\0';
+            if (!cip_recvdata_header(parser)) fault(parser, AT_BAD_HEADER);
         } else if (byte == ':' && parser->used >= 5 && memcmp(parser->line, "+IPD,", 5) == 0) {
             if (parser->used >= sizeof(parser->line) - 1) {
                 fault(parser, AT_LINE_OVERFLOW);

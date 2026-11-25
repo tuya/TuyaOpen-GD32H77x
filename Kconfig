@@ -145,6 +145,8 @@ choice
     prompt "AT SPI clock prescaler"
     default ENABLE_GD32H77X_AT_SPI_PSC_256
 
+    config ENABLE_GD32H77X_AT_SPI_PSC_16
+        bool "/16 (18.75 MHz on 300 MHz PLL0Q)"
     config ENABLE_GD32H77X_AT_SPI_PSC_64
         bool "/64"
     config ENABLE_GD32H77X_AT_SPI_PSC_128

@@ -215,10 +215,10 @@ bool at_uart_policy_accept_prompt(bool request_active, bool wait_prompt, size_t 
     return request_active && wait_prompt && payload_length && !prompt_seen && !payload_sent;
 }
 
-bool at_uart_policy_request_frame_hold_expired(bool request_active, bool request_started, bool poisoned,
-                                                   bool in_frame, uint32_t waited_ms, uint32_t limit_ms)
+bool at_uart_policy_request_pending_expired(bool request_active, bool request_started, bool poisoned,
+                                                uint32_t waited_ms, uint32_t timeout_ms)
 {
-    return request_active && !request_started && !poisoned && in_frame && waited_ms >= limit_ms;
+    return request_active && !request_started && !poisoned && waited_ms >= timeout_ms;
 }
 
 bool at_uart_policy_payload_result(size_t payload_length, bool prompt_seen, bool payload_sent,

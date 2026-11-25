@@ -14,6 +14,7 @@ typedef struct {
     size_t   received;
     unsigned lines;
     unsigned packets;
+    unsigned response_packets;
     unsigned ble_packets;
     unsigned prompts;
     unsigned faults;
@@ -48,6 +49,18 @@ static void data(void *context, int remote_fd, const uint8_t *bytes, size_t leng
     capture->received += length;
     capture->remote_fd = remote_fd;
     capture->packets += final;
+}
+
+static void response_data(void *context, int remote_fd, const uint8_t *bytes, size_t length, bool final)
+{
+    capture_t *capture = context;
+    assert(capture->received + length <= sizeof(capture->payload));
+    if (length) {
+        memcpy(capture->payload + capture->received, bytes, length);
+    }
+    capture->received += length;
+    capture->remote_fd = remote_fd;
+    capture->response_packets += final;
 }
 
 static void ble_data(void *context, uint8_t conn_id, const uint8_t *bytes, size_t length, bool final)
@@ -102,7 +115,8 @@ static void close_v2_event(void *context, uint32_t con_id, int lwip_fd, uint32_t
     strcpy(c->reason, reason); ++c->closes_v2;
 }
 
-static const at_callbacks_t callbacks = {.line = line, .data = data, .ble_data = ble_data, .prompt = prompt, .fault = fault,
+static const at_callbacks_t callbacks = {.line = line, .data = data, .response_data = response_data,
+                                               .ble_data = ble_data, .prompt = prompt, .fault = fault,
                                                .datagram = datagram, .accept = accept_event,
                                                .accept_v2 = accept_v2_event, .close_v2 = close_v2_event};
 
@@ -361,6 +375,20 @@ static void urc_trailer_ok_is_swallowed_once(void)
     assert(c.lines == 1U && strcmp(c.last_line, "OK") == 0);
 }
 
+static void on_demand_tcp_response_is_binary(void)
+{
+    static const uint8_t stream[] = "\r\n+CIPRECVDATA:42,7: A\0B\r\nC\r\nOK\r\n";
+    capture_t c = {0};
+    at_parser_t p;
+    at_parser_init(&p, &callbacks, &c);
+    at_parser_feed(&p, stream, sizeof(stream) - 1U);
+    static const uint8_t expected[] = {' ', 'A', 0, 'B', '\r', '\n', 'C'};
+    assert(c.faults == 0U);
+    assert(c.response_packets == 1U && c.packets == 0U && c.remote_fd == 42);
+    assert(c.received == sizeof(expected) && memcmp(c.payload, expected, sizeof(expected)) == 0);
+    assert(c.lines == 1U && strcmp(c.last_line, "OK") == 0);
+}
+
 int main(void)
 {
     fragmented_binary();
@@ -378,6 +406,7 @@ int main(void)
     nul_heavy_payload_keeps_full_length();
     control_bytes_split_lines_instead_of_faulting();
     urc_trailer_ok_is_swallowed_once();
+    on_demand_tcp_response_is_binary();
     puts("UART AT parser checks passed");
     return 0;
 }

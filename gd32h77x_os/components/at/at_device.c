@@ -61,12 +61,8 @@ static void request_recovery(void)
     if (s_recovery_signal) (void)xSemaphoreGive(s_recovery_signal);
 }
 
-void at_device_reset(void)
+void at_device_force_reset(void)
 {
-#if defined(ENABLE_GD32H77X_AT_SHARED_RESET) && ENABLE_GD32H77X_AT_SHARED_RESET
-    AT_LOG("hardware reset suppressed: shared host reset");
-    return;
-#endif
     AT_LOG("hardware reset start");
     rcu_periph_clock_enable(AT_RESET_CLOCK);
     gpio_mode_set(AT_RESET_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, AT_RESET_PIN);
@@ -78,6 +74,16 @@ void at_device_reset(void)
     gpio_bit_set(AT_RESET_PORT, AT_RESET_PIN);
     vTaskDelay(pdMS_TO_TICKS(500U));
     AT_LOG("hardware reset complete");
+}
+
+void at_device_reset(void)
+{
+#if defined(ENABLE_GD32H77X_AT_SHARED_RESET) && ENABLE_GD32H77X_AT_SHARED_RESET
+    AT_LOG("hardware reset suppressed: shared host reset");
+    return;
+#else
+    at_device_force_reset();
+#endif
 }
 
 void at_device_enter_isp_mode(void)

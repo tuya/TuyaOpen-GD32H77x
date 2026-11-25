@@ -37,11 +37,6 @@
  * otherwise leave the parser in PAYLOAD forever, blocking every later
  * transaction. Give up when the stream stops feeding the frame. */
 #define AT_FRAME_IDLE_TIMEOUT_MS 500U
-/* The stock +IPD frame ends with a bare OK. If a caller queues an AT
- * command exactly between the payload and that trailer, let RX drain the
- * trailer before starting the command instead of failing a valid request. */
-#define AT_REQUEST_FRAME_HOLD_MS (AT_FRAME_IDLE_TIMEOUT_MS + 100U)
-
 typedef struct {
     char command[AT_COMMAND_SIZE + 1U];
     size_t command_length;
@@ -49,7 +44,10 @@ typedef struct {
     size_t payload_length;
     bool wait_prompt;
     uint32_t timeout_ms;
+    uint32_t submitted_ms;
     uint32_t started_ms;
+    uint32_t prompt_ms;
+    uint32_t payload_sent_ms;
     char reply[AT_SESSION_REPLY_CAPACITY];
     size_t reply_length;
     bool reply_overflow;
@@ -369,6 +367,9 @@ static void client_prompt(void *context)
         return;
     }
     s_transport.request.prompt_seen = true;
+    if (!s_transport.request.prompt_ms) {
+        s_transport.request.prompt_ms = now_ms();
+    }
     if (s_transport.request.payload_length) {
         size_t sent = 0U;
         uint32_t deadline = s_transport.request.started_ms + s_transport.request.timeout_ms;
@@ -383,6 +384,7 @@ static void client_prompt(void *context)
             return;
         }
         s_transport.request.payload_sent = true;
+        s_transport.request.payload_sent_ms = now_ms();
         AT_LOG("AT PAYLOAD TX complete sent=%lu", (unsigned long)sent);
         char preview[161];
         size_t take = s_transport.request.payload_length < sizeof(preview) - 1U
@@ -585,6 +587,25 @@ static void finish_request(at_result_t result)
 {
     if (!s_transport.request_active) {
         return;
+    }
+    const uint32_t finished_ms = now_ms();
+    const uint32_t total_ms = s_transport.request.submitted_ms ?
+                              (uint32_t)(finished_ms - s_transport.request.submitted_ms) : 0U;
+    if (s_transport.request.submitted_ms && total_ms >= 300U) {
+        const uint32_t queue_ms = s_transport.request.started_ms ?
+                                  (uint32_t)(s_transport.request.started_ms - s_transport.request.submitted_ms) : 0U;
+        const uint32_t prompt_ms = s_transport.request.prompt_ms ?
+                                   (uint32_t)(s_transport.request.prompt_ms - s_transport.request.started_ms) : 0U;
+        const uint32_t payload_ms = s_transport.request.payload_sent_ms && s_transport.request.prompt_ms ?
+                                    (uint32_t)(s_transport.request.payload_sent_ms - s_transport.request.prompt_ms) : 0U;
+        const uint32_t response_ms = s_transport.request.payload_sent_ms ?
+                                     (uint32_t)(finished_ms - s_transport.request.payload_sent_ms) :
+                                     (s_transport.request.prompt_ms ?
+                                      (uint32_t)(finished_ms - s_transport.request.prompt_ms) : 0U);
+        AT_SUMMARY("AT timing result=%d queue=%lums cmd_to_prompt=%lums payload=%lums response=%lums total=%lums cmd=%.*s",
+                   (int)result, (unsigned long)queue_ms, (unsigned long)prompt_ms,
+                   (unsigned long)payload_ms, (unsigned long)response_ms, (unsigned long)total_ms,
+                   (int)s_transport.request.command_length, s_transport.request.command);
     }
     s_transport.result = result;
     s_transport.request.event_watermark = s_transport.event_enqueued;
@@ -822,15 +843,19 @@ static void rx_task(void *argument)
         process_poison();
         handle_client_result();
         const uint32_t request_wait_ms = (uint32_t)(now_ms() - s_transport.request.started_ms);
-        if (at_uart_policy_request_frame_hold_expired(
+        if (at_uart_policy_request_pending_expired(
                 s_transport.request_active, s_transport.request_started, s_transport.poisoned,
-                at_parser_in_frame(&s_transport.parser), request_wait_ms,
-                AT_REQUEST_FRAME_HOLD_MS)) {
-            AT_SUMMARY("AT request frame hold expired wait=%lums limit=%lums",
-                          (unsigned long)request_wait_ms,
-                          (unsigned long)AT_REQUEST_FRAME_HOLD_MS);
-            set_poison(ISR_FAULT_NOISE);
-            finish_request(AT_RESULT_PROTOCOL);
+                request_wait_ms, s_transport.request.timeout_ms)) {
+            /* A command can wait behind a continuous +IPD stream. That is a
+             * request-level timeout, not evidence that the AT transport is
+             * corrupt. Keep the parser and transport synchronized so the next
+             * request can run as soon as the current frame completes. */
+            AT_SUMMARY("AT request pending timeout cmd=%.*s wait=%lums limit=%lums in_frame=%d suppress_ipd=%d",
+                          (int)s_transport.request.command_length, s_transport.request.command,
+                          (unsigned long)request_wait_ms, (unsigned long)s_transport.request.timeout_ms,
+                          at_parser_in_frame(&s_transport.parser) ? 1 : 0,
+                          s_transport.client.suppress_ipd_ok ? 1 : 0);
+            finish_request(AT_RESULT_TIMEOUT);
         }
     }
     if (s_transport.request_active) {
@@ -966,6 +991,7 @@ static int32_t submit_locked(const char *command, size_t length, const void *pay
     s_transport.request.timeout_ms = timeout_ms;
     s_transport.request.payload_length = payload_length;
     s_transport.request.negotiate = negotiate;
+    s_transport.request.submitted_ms = now_ms();
     if (capabilities) {
         s_transport.request.capabilities = *capabilities;
     }

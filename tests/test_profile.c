@@ -93,12 +93,11 @@ static void replies_payloads_and_tx_are_bounded(void)
     assert(!at_uart_policy_accept_prompt(true, false, 8U, false, false));
     assert(!at_uart_policy_accept_prompt(true, true, 8U, true, false));
     assert(!at_uart_policy_accept_prompt(true, true, 8U, false, true));
-    assert(!at_uart_policy_request_frame_hold_expired(false, false, false, true, 1000U, 500U));
-    assert(!at_uart_policy_request_frame_hold_expired(true, true, false, true, 1000U, 500U));
-    assert(!at_uart_policy_request_frame_hold_expired(true, false, true, true, 1000U, 500U));
-    assert(!at_uart_policy_request_frame_hold_expired(true, false, false, false, 1000U, 500U));
-    assert(!at_uart_policy_request_frame_hold_expired(true, false, false, true, 499U, 500U));
-    assert(at_uart_policy_request_frame_hold_expired(true, false, false, true, 500U, 500U));
+    assert(!at_uart_policy_request_pending_expired(false, false, false, 1000U, 500U));
+    assert(!at_uart_policy_request_pending_expired(true, true, false, 1000U, 500U));
+    assert(!at_uart_policy_request_pending_expired(true, false, true, 1000U, 500U));
+    assert(!at_uart_policy_request_pending_expired(true, false, false, 499U, 500U));
+    assert(at_uart_policy_request_pending_expired(true, false, false, 500U, 500U));
     assert(at_uart_policy_payload_result(8U, true, true, true, false, true));
     assert(!at_uart_policy_payload_result(8U, true, false, true, false, true));
     assert(!at_uart_policy_payload_result(8U, true, true, false, false, true));

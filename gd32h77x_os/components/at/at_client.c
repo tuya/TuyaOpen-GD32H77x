@@ -19,6 +19,12 @@ static void parser_data(void *context, int remote_fd, const uint8_t *data, size_
     at_client_data(context, remote_fd, data, length, final);
 }
 
+static void parser_response_data(void *context, int remote_fd, const uint8_t *data, size_t length,
+                                 bool final)
+{
+    at_client_response_data(context, remote_fd, data, length, final);
+}
+
 static void parser_ble_data(void *context, uint8_t conn_id, const uint8_t *data, size_t length, bool final)
 {
     at_client_ble_data(context, conn_id, data, length, final);
@@ -71,7 +77,8 @@ static bool line_is_prefixed_ok(const char *line, size_t length)
 
 at_callbacks_t at_client_parser_callbacks(void)
 {
-    const at_callbacks_t callbacks = {.line = parser_line, .data = parser_data, .ble_data = parser_ble_data,
+    const at_callbacks_t callbacks = {.line = parser_line, .data = parser_data,
+                                            .response_data = parser_response_data, .ble_data = parser_ble_data,
                                             .prompt = parser_prompt,
                                             .fault = parser_fault, .datagram = parser_datagram, .accept = parser_accept,
                                             .accept_v2 = parser_accept_v2, .close_v2 = parser_close_v2};
@@ -304,6 +311,21 @@ void at_client_data(at_client_t *client, int remote_fd, const uint8_t *data, siz
         if (client->suppress_ipd_ok < UINT8_MAX) {
             ++client->suppress_ipd_ok;
         }
+    }
+    if (client->events.data) {
+        client->events.data(client->context, remote_fd, data, length, final);
+    }
+}
+
+void at_client_response_data(at_client_t *client, int remote_fd, const uint8_t *data, size_t length,
+                             bool final)
+{
+    if (!client) {
+        return;
+    }
+    if (client->wire_mode == AT_WIRE_PROBE_ONLY) {
+        at_client_fail(client, AT_RESULT_PROTOCOL);
+        return;
     }
     if (client->events.data) {
         client->events.data(client->context, remote_fd, data, length, final);

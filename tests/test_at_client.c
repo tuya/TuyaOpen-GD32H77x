@@ -454,6 +454,27 @@ static void ble_status_urc_does_not_poison_transaction(void)
     take_result(&client, AT_RESULT_ERROR);
 }
 
+static void on_demand_response_data_owns_no_trailer_ok(void)
+{
+    static const uint8_t stream[] = "+CIPRECVDATA:3,4: X\0YZ\r\nOK\r\n";
+    static const char command[] = "AT+CIPRECVDATA=42,64";
+    capture_t capture = {0};
+    const at_client_events_t events = {.line = event_line, .data = event_data};
+    at_client_t client;
+    at_client_init(&client, &events, &capture);
+    assert(at_client_set_wire_mode(&client, AT_WIRE_ATOMIC_IPD_TRAILER));
+    assert(at_client_begin(&client, command, sizeof(command) - 1U, false, 0, 100));
+    at_callbacks_t callbacks = at_client_parser_callbacks();
+    at_parser_t parser;
+    at_parser_init(&parser, &callbacks, &client);
+    at_parser_feed(&parser, stream, sizeof(stream) - 1U);
+    take_result(&client, AT_RESULT_OK);
+    static const uint8_t expected[] = {' ', 'X', 0, 'Y'};
+    assert(capture.length == sizeof(expected));
+    assert(memcmp(capture.payload, expected, sizeof(expected)) == 0);
+    assert(client.suppress_ipd_ok == 0U);
+}
+
 static void bounded_and_probe_only(void)
 {
     at_client_t client;
@@ -500,6 +521,7 @@ int main(void)
     accept_close_v2_are_out_of_band();
     ble_lines_and_ready_fail_closed();
     ble_status_urc_does_not_poison_transaction();
+    on_demand_response_data_owns_no_trailer_ok();
     bounded_and_probe_only();
     prefixed_ok_completes_cipstart();
     puts("UART AT client checks passed");

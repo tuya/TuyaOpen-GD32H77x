@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 _Static_assert(_Generic(&at_socket_send,
@@ -26,6 +27,8 @@ typedef struct { unsigned count; bool mutex; } sem_t;
 static sem_t semaphores[2];
 static unsigned sem_index;
 static unsigned now_ms;
+static size_t fake_allocations;
+static size_t fake_allocated_bytes;
 SemaphoreHandle_t xSemaphoreCreateMutex(void) { sem_t *s = &semaphores[sem_index++]; s->mutex = true; return s; }
 SemaphoreHandle_t xSemaphoreCreateCounting(unsigned int max, unsigned int initial)
 { (void)max; sem_t *s = &semaphores[sem_index++]; s->count = initial; return s; }
@@ -33,6 +36,24 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t handle, TickType_t timeout)
 { sem_t *s = handle; if (s->mutex) return pdTRUE; if (s->count) { --s->count; return pdTRUE; } now_ms += timeout; return pdFALSE; }
 BaseType_t xSemaphoreGive(SemaphoreHandle_t handle)
 { sem_t *s = handle; if (s->mutex) return pdTRUE; ++s->count; return pdTRUE; }
+void *pvPortMalloc(size_t size)
+{
+    size_t *allocation = malloc(sizeof(*allocation) + size);
+    if (!allocation) return NULL;
+    *allocation = size;
+    ++fake_allocations;
+    fake_allocated_bytes += size;
+    return allocation + 1;
+}
+void vPortFree(void *pointer)
+{
+    if (!pointer) return;
+    size_t *allocation = (size_t *)pointer - 1;
+    assert(fake_allocations > 0U && fake_allocated_bytes >= *allocation);
+    --fake_allocations;
+    fake_allocated_bytes -= *allocation;
+    free(allocation);
+}
 
 static at_device_event_handler_t event_handler;
 static char last_command[320];
@@ -52,6 +73,7 @@ static bool remote_retired;
 static int remote_id, remote_fd;
 static uint32_t remote_gen;
 static bool inject_early_data;
+static bool inject_on_demand_rx;
 static bool inject_early_udp_chunks;
 static bool inject_early_accept;
 static bool inject_early_udp_listener_dgram;
@@ -184,6 +206,18 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
         else strcpy(reply, "OK\r\n");
         reply_set(request, reply); return AT_STATUS_OK;
     }
+    if (!strncmp(last_command, "AT+CIPRECVDATA=", 15)) {
+        int fd = -1; unsigned requested = 0U;
+        assert(sscanf(last_command, "AT+CIPRECVDATA=%d,%u", &fd, &requested) == 2);
+        assert(inject_on_demand_rx && fd == remote_fd && requested > 0U);
+        static const uint8_t payload[] = "on-demand-rx";
+        const at_device_event_t event = {.kind = AT_DEVICE_EVENT_DATA,
+            .value.data = {fd, payload, sizeof(payload) - 1U, true}};
+        inject_on_demand_rx = false;
+        event_handler(NULL, &event);
+        reply_set(request, "OK\r\n");
+        return AT_STATUS_OK;
+    }
     if (!strncmp(last_command, "AT+CIPSEND=", 11)) {
         ++send_count;
         reply_set(request, "SEND OK\r\nOK\r\n"); return AT_STATUS_OK;
@@ -312,6 +346,19 @@ int main(void)
     uint8_t received[32] = {0};
     assert(at_socket_recv(tcp, received, sizeof(received)) == 5 && !memcmp(received, "early", 5));
     assert(at_socket_recv(tcp, NULL, 0U) == 0);
+    static const char rx_ready[] = "+TY553XRXREADY:42";
+    const at_device_event_t ready_event = {.kind = AT_DEVICE_EVENT_LINE,
+        .value.line = {rx_ready, sizeof(rx_ready) - 1U}};
+    event_handler(NULL, &ready_event);
+    at_socket_fd_set_t read_set = {0};
+    read_set.bits[tcp / 8U] = (uint8_t)(1U << (tcp % 8U));
+    assert(at_socket_select(tcp + 1, &read_set, NULL, NULL, 0U) == 1);
+    assert(read_set.bits[tcp / 8U] & (uint8_t)(1U << (tcp % 8U)));
+    inject_on_demand_rx = true;
+    memset(received, 0, sizeof(received));
+    assert(at_socket_recv(tcp, received, sizeof(received)) == 12);
+    assert(!memcmp(received, "on-demand-rx", 12));
+    assert(!strncmp(last_command, "AT+CIPRECVDATA=42,", 18));
     uint8_t large_ipd[2920]; memset(large_ipd, 0x5a, sizeof(large_ipd));
     const at_device_event_t large_event = {.kind = AT_DEVICE_EVENT_DATA,
         .value.data = {42, large_ipd, sizeof(large_ipd), true}};
@@ -335,7 +382,7 @@ int main(void)
     }
     uint8_t large_tx[3000]; memset(large_tx, 0xa5, sizeof(large_tx)); unsigned before_large_send = send_count;
     assert(at_socket_send(tcp, large_tx, sizeof(large_tx)) == (int)sizeof(large_tx));
-    assert(send_count == before_large_send + 2U && last_payload_len == 952U);
+    assert(send_count == before_large_send + 3U && last_payload_len == 952U);
     assert(at_socket_getpeername(tcp, &(uint32_t){0}, &(uint16_t){0}) == AT_STATUS_OK);
 
     /* A second outbound socket must coexist with the first one. */
@@ -344,6 +391,20 @@ int main(void)
     assert(at_socket_connect(tcp2, UINT32_C(0xCB007108), 80) == AT_SOCKET_ERRNO_NONE);
     assert(at_socket_send(tcp2, tx, sizeof(tx) - 1U) == (int)(sizeof(tx) - 1U));
     assert(strcmp(last_command, "AT+CIPSEND=1,10") == 0);
+    static const uint8_t socket0_rx[] = "socket-0";
+    static const uint8_t socket1_rx[] = "socket-1";
+    const at_device_event_t socket0_event = {.kind = AT_DEVICE_EVENT_DATA,
+        .value.data = {42, socket0_rx, sizeof(socket0_rx) - 1U, true}};
+    const at_device_event_t socket1_event = {.kind = AT_DEVICE_EVENT_DATA,
+        .value.data = {43, socket1_rx, sizeof(socket1_rx) - 1U, true}};
+    event_handler(NULL, &socket0_event);
+    event_handler(NULL, &socket1_event);
+    memset(received, 0, sizeof(received));
+    assert(at_socket_recv(tcp, received, sizeof(received)) == (int)(sizeof(socket0_rx) - 1U));
+    assert(!memcmp(received, socket0_rx, sizeof(socket0_rx) - 1U));
+    memset(received, 0, sizeof(received));
+    assert(at_socket_recv(tcp2, received, sizeof(received)) == (int)(sizeof(socket1_rx) - 1U));
+    assert(!memcmp(received, socket1_rx, sizeof(socket1_rx) - 1U));
     assert(at_socket_close(tcp2) == AT_SOCKET_ERRNO_NONE);
     assert(strcmp(last_command, "AT+CIPCLOSE=1") == 0 || strcmp(last_command, "AT+CIPSTATE?") == 0);
 
@@ -355,6 +416,9 @@ int main(void)
     assert(at_socket_bind(tcp_listener, 0, 7001) == AT_SOCKET_ERRNO_NONE);
     inject_early_accept = true;
     assert(at_socket_listen(tcp_listener, 2) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_recv(tcp_listener, received, sizeof(received)) == AT_SOCKET_ERRNO_INVALID);
+    assert(at_socket_recvfrom(tcp_listener, received, sizeof(received), NULL, NULL) ==
+           AT_SOCKET_ERRNO_INVALID);
     int monitor = at_socket_create(AT_SOCKET_TYPE_STREAM);
     assert(at_socket_bind(monitor, 0, 5055) == AT_SOCKET_ERRNO_NONE);
     assert(at_socket_listen(monitor, 5) == AT_SOCKET_ERRNO_NONE);
@@ -574,6 +638,15 @@ int main(void)
     fail_state_query = false; remote_active = false;
     assert(at_socket_close(uncertain) == AT_SOCKET_ERRNO_NONE);
     assert(at_socket_close(blocked_reuse) == AT_SOCKET_ERRNO_NONE);
+    int sockets[AT_SOCKET_LOGICAL_COUNT];
+    for (unsigned i = 0U; i < AT_SOCKET_LOGICAL_COUNT; ++i) {
+        sockets[i] = at_socket_create(AT_SOCKET_TYPE_STREAM);
+        assert(sockets[i] == (int)AT_SOCKET_FD_BASE + (int)i);
+    }
+    assert(at_socket_create(AT_SOCKET_TYPE_STREAM) == -1);
+    for (unsigned i = 0U; i < AT_SOCKET_LOGICAL_COUNT; ++i)
+        assert(at_socket_close(sockets[i]) == AT_SOCKET_ERRNO_NONE);
+    assert(fake_allocations == 0U && fake_allocated_bytes == 0U);
     puts("AT fake AT socket checks passed");
     return 0;
 }

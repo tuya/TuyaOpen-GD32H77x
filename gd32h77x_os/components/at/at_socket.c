@@ -15,11 +15,17 @@
 
 #include <stdio.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define SOCKET_FD_BASE AT_SOCKET_FD_BASE
 #define SOCKET_COUNT AT_SOCKET_FD_LIMIT
 #define RX_RING_SIZE 8192U
+#define RX_DYNAMIC_LIMIT 12288U
+#define STREAM_RX_FETCH_SIZE 2048U
+#define STREAM_TX_CHUNK_SIZE 1024U
+#define STREAM_TX_GAP_MS 20U
+#define SEND_FAIL_RETRY_COUNT 4U
 #define UDP_QUEUE_DEPTH 2U
 #define ACCEPT_QUEUE_DEPTH 4U
 #define UDP_MAX_DATAGRAM 2920U
@@ -48,6 +54,27 @@ static void at_socket_sleep(uint32_t milliseconds)
 
 typedef enum { SLOT_FREE, SLOT_CREATED, SLOT_CONNECTING, SLOT_CONNECTED, SLOT_CLOSING, SLOT_LISTENER,
                SLOT_STARTING_LISTENER, SLOT_NO_REMOTE, SLOT_QUARANTINE, SLOT_FAILED, SLOT_EOF } slot_state_t;
+
+typedef struct rx_packet {
+    struct rx_packet *next;
+    uint32_t addr;
+    uint16_t port;
+    uint16_t length;
+    uint16_t offset;
+    bool final;
+} rx_packet_t;
+
+typedef struct {
+    rx_packet_t *head;
+    rx_packet_t *tail;
+    size_t size;
+    size_t build_length;
+    rx_packet_t *build_head;
+    rx_packet_t *build_prev;
+    uint8_t completed_datagrams;
+    bool build_dropped;
+} socket_rx_queue_t;
+
 typedef struct {
     slot_state_t state;
     at_socket_type_t type;
@@ -66,27 +93,21 @@ typedef struct {
     at_socket_tcp_options_t tcp_options;
     int recv_timeout;
     int send_timeout;
-    uint8_t stream[RX_RING_SIZE];
-    size_t stream_head;
-    size_t stream_size;
     uint32_t rx_events;
     uint32_t rx_bytes;
-    uint8_t udp[UDP_QUEUE_DEPTH][UDP_MAX_DATAGRAM];
-    size_t udp_len[UDP_QUEUE_DEPTH];
-    uint32_t udp_addr[UDP_QUEUE_DEPTH];
-    uint16_t udp_port[UDP_QUEUE_DEPTH];
-    uint8_t udp_head;
-    uint8_t udp_count;
-    uint8_t udp_build[UDP_MAX_DATAGRAM];
-    size_t udp_build_length;
-    uint32_t udp_build_addr;
-    uint16_t udp_build_port;
+    uint32_t rx_ready_events;
+    uint32_t rx_fetches;
+    bool rx_ready;
+    bool rx_fetching;
+    socket_rx_queue_t rx;
     int accepted[ACCEPT_QUEUE_DEPTH];
     uint32_t accepted_addr[ACCEPT_QUEUE_DEPTH];
     uint16_t accepted_port[ACCEPT_QUEUE_DEPTH];
     uint8_t accepted_head;
     uint8_t accepted_count;
 } socket_slot_t;
+
+typedef char socket_slot_size_check[(sizeof(socket_slot_t) <= 1024U) ? 1 : -1];
 
 typedef struct {
     slot_state_t state;
@@ -114,10 +135,8 @@ typedef struct {
 typedef struct {
     bool used;
     int raw_fd;
-    size_t length;
     uint8_t datagram_count;
-    size_t datagram_lengths[PENDING_FINAL_COUNT];
-    uint8_t bytes[RX_RING_SIZE];
+    socket_rx_queue_t rx;
 } pending_raw_t;
 typedef struct {
     bool used;
@@ -132,8 +151,7 @@ typedef struct {
     int listener_fd;
     uint32_t peer_addr;
     uint16_t peer_port;
-    size_t length;
-    uint8_t bytes[UDP_MAX_DATAGRAM];
+    socket_rx_queue_t rx;
 } pending_datagram_t;
 
 typedef struct {
@@ -145,6 +163,7 @@ typedef struct {
 } dns_cache_entry_t;
 
 static socket_slot_t s_slots[SOCKET_COUNT];
+static size_t s_rx_dynamic_bytes;
 static pending_raw_t s_pending_raw[PENDING_RAW_COUNT];
 static pending_accept_t s_pending_accepts[ACCEPT_QUEUE_DEPTH];
 static pending_datagram_t s_pending_datagrams[PENDING_UDP_COUNT];
@@ -195,6 +214,217 @@ static bool state_lock(void)
 }
 static void state_unlock(void) { (void)xSemaphoreGive(s_state_mutex); }
 static void wake_waiters(void) { if (s_ready) (void)xSemaphoreGive(s_ready); }
+
+static void rx_packet_free_locked(rx_packet_t *packet)
+{
+    if (!packet) return;
+    size_t allocation = sizeof(*packet) + packet->length;
+    s_rx_dynamic_bytes = allocation <= s_rx_dynamic_bytes ? s_rx_dynamic_bytes - allocation : 0U;
+    vPortFree(packet);
+}
+
+static rx_packet_t *rx_packet_alloc_locked(const uint8_t *data, size_t length,
+                                            uint32_t addr, uint16_t port, bool final)
+{
+    if (length > UINT16_MAX || (!data && length)) return NULL;
+    size_t allocation = sizeof(rx_packet_t) + length;
+    if (s_rx_dynamic_bytes > RX_DYNAMIC_LIMIT) return NULL;
+    if (allocation > RX_DYNAMIC_LIMIT - s_rx_dynamic_bytes) return NULL;
+    rx_packet_t *packet = pvPortMalloc(allocation);
+    if (!packet) return NULL;
+    memset(packet, 0, sizeof(*packet));
+    packet->addr = addr;
+    packet->port = port;
+    packet->length = (uint16_t)length;
+    packet->final = final;
+    if (length) memcpy(packet + 1, data, length);
+    s_rx_dynamic_bytes += allocation;
+    return packet;
+}
+
+static void rx_queue_clear_locked(socket_rx_queue_t *queue)
+{
+    rx_packet_t *packet = queue->head;
+    while (packet) {
+        rx_packet_t *next = packet->next;
+        rx_packet_free_locked(packet);
+        packet = next;
+    }
+    memset(queue, 0, sizeof(*queue));
+}
+
+static void rx_queue_append_packet_locked(socket_rx_queue_t *queue, rx_packet_t *packet)
+{
+    if (!packet) return;
+    if (queue->tail) queue->tail->next = packet;
+    else queue->head = packet;
+    queue->tail = packet;
+    queue->size += packet->length;
+}
+
+static bool rx_queue_append_locked(socket_rx_queue_t *queue, const uint8_t *data, size_t length,
+                                   uint32_t addr, uint16_t port, bool final)
+{
+    rx_packet_t *packet = rx_packet_alloc_locked(data, length, addr, port, final);
+    if (!packet) return false;
+    rx_queue_append_packet_locked(queue, packet);
+    return true;
+}
+
+static void rx_queue_splice_locked(socket_rx_queue_t *dst, socket_rx_queue_t *src)
+{
+    if (!src->head) return;
+    if (dst->tail) dst->tail->next = src->head;
+    else dst->head = src->head;
+    dst->tail = src->tail;
+    dst->size += src->size;
+    src->head = NULL;
+    src->tail = NULL;
+    src->size = 0U;
+}
+
+static size_t rx_queue_read_locked(socket_rx_queue_t *queue, void *buffer, size_t length)
+{
+    size_t copied = 0U;
+    uint8_t *dst = buffer;
+    while (copied < length && queue->head) {
+        rx_packet_t *packet = queue->head;
+        size_t available = packet->length - packet->offset;
+        size_t take = available < length - copied ? available : length - copied;
+        if (take) {
+            memcpy(dst + copied, (const uint8_t *)(packet + 1) + packet->offset, take);
+            packet->offset += (uint16_t)take;
+            queue->size -= take;
+            copied += take;
+        }
+        if (packet->offset == packet->length) {
+            queue->head = packet->next;
+            if (!queue->head) queue->tail = NULL;
+            rx_packet_free_locked(packet);
+        }
+    }
+    return copied;
+}
+
+static void rx_queue_discard_locked(socket_rx_queue_t *queue, size_t length)
+{
+    while (length && queue->head) {
+        rx_packet_t *packet = queue->head;
+        size_t available = packet->length - packet->offset;
+        size_t take = available < length ? available : length;
+        packet->offset += (uint16_t)take;
+        queue->size -= take;
+        length -= take;
+        if (packet->offset == packet->length) {
+            queue->head = packet->next;
+            if (!queue->head) queue->tail = NULL;
+            rx_packet_free_locked(packet);
+        }
+    }
+}
+
+static void rx_datagram_drop_build_locked(socket_rx_queue_t *queue)
+{
+    if (!queue->build_head) return;
+    rx_packet_t *packet = queue->build_head;
+    if (queue->build_prev) queue->build_prev->next = NULL;
+    else queue->head = NULL;
+    queue->tail = queue->build_prev;
+    while (packet) {
+        rx_packet_t *next = packet->next;
+        queue->size -= packet->length - packet->offset;
+        rx_packet_free_locked(packet);
+        packet = next;
+    }
+    queue->build_head = NULL;
+    queue->build_prev = NULL;
+    queue->build_length = 0U;
+}
+
+static bool rx_datagram_append_locked(socket_rx_queue_t *queue, const uint8_t *data, size_t length,
+                                      uint32_t addr, uint16_t port, bool final)
+{
+    if (queue->build_dropped) {
+        if (final) queue->build_dropped = false;
+        return true;
+    }
+    if (length > UDP_MAX_DATAGRAM || length > UDP_MAX_DATAGRAM - queue->build_length) {
+        rx_datagram_drop_build_locked(queue);
+        queue->build_dropped = !final;
+        return true;
+    }
+    rx_packet_t *packet = rx_packet_alloc_locked(data, length, addr, port, final);
+    if (!packet) {
+        rx_datagram_drop_build_locked(queue);
+        queue->build_dropped = !final;
+        return false;
+    }
+    if (!queue->build_head) {
+        queue->build_head = packet;
+        queue->build_prev = queue->tail;
+    }
+    queue->build_length += length;
+    rx_queue_append_packet_locked(queue, packet);
+    if (final) {
+        ++queue->completed_datagrams;
+        queue->build_head = NULL;
+        queue->build_prev = NULL;
+        queue->build_length = 0U;
+    }
+    return true;
+}
+
+static size_t rx_datagram_length_locked(const socket_rx_queue_t *queue)
+{
+    size_t total = 0U;
+    for (const rx_packet_t *packet = queue->head; packet; packet = packet->next) {
+        total += packet->length - packet->offset;
+        if (packet->final) return total;
+    }
+    return 0U;
+}
+
+static size_t rx_datagram_read_locked(socket_rx_queue_t *queue, void *buffer, size_t length,
+                                      uint32_t *addr, uint16_t *port)
+{
+    if (!queue->completed_datagrams || !queue->head) return 0U;
+    size_t total = rx_datagram_length_locked(queue);
+    if (addr) *addr = queue->head->addr;
+    if (port) *port = queue->head->port;
+    size_t take = total < length ? total : length;
+    if (take) (void)rx_queue_read_locked(queue, buffer, take);
+    rx_queue_discard_locked(queue, total - take);
+    if (!take) {
+        while (queue->head) {
+            rx_packet_t *packet = queue->head;
+            bool final = packet->final;
+            queue->head = packet->next;
+            if (!queue->head) queue->tail = NULL;
+            rx_packet_free_locked(packet);
+            if (final) break;
+        }
+    }
+    --queue->completed_datagrams;
+    return take;
+}
+
+static void socket_slot_clear_locked(socket_slot_t *slot)
+{
+    rx_queue_clear_locked(&slot->rx);
+    memset(slot, 0, sizeof(*slot));
+}
+
+static void pending_raw_clear_locked(pending_raw_t *pending)
+{
+    rx_queue_clear_locked(&pending->rx);
+    memset(pending, 0, sizeof(*pending));
+}
+
+static void pending_datagram_clear_locked(pending_datagram_t *pending)
+{
+    rx_queue_clear_locked(&pending->rx);
+    memset(pending, 0, sizeof(*pending));
+}
 
 static at_socket_errno_t fail_with(int error)
 {
@@ -324,6 +554,28 @@ static bool parse_ipv4(const char *text, uint32_t *address)
     return true;
 }
 
+static bool parse_rx_ready(const char *line, size_t length, int *remote_fd)
+{
+    static const char prefix[] = AT_WIRE_RX_READY_PREFIX;
+    const size_t prefix_length = sizeof(prefix) - 1U;
+    char value[24];
+    char *end = NULL;
+    if (!line || !remote_fd || length <= prefix_length ||
+        memcmp(line, prefix, prefix_length) != 0 ||
+        length - prefix_length >= sizeof(value)) {
+        return false;
+    }
+    size_t value_length = length - prefix_length;
+    memcpy(value, line + prefix_length, value_length);
+    value[value_length] = '\0';
+    long parsed = strtol(value, &end, 10);
+    if (!end || *end != '\0' || parsed < 0 || parsed > INT_MAX) {
+        return false;
+    }
+    *remote_fd = (int)parsed;
+    return true;
+}
+
 static int find_logical(int fd)
 {
     return fd >= (int)SOCKET_FD_BASE && (unsigned)fd < SOCKET_COUNT && s_slots[fd].state != SLOT_FREE ? fd : -1;
@@ -335,7 +587,7 @@ static int reserve_slot(at_socket_type_t type)
     for (unsigned i = SOCKET_FD_BASE; i < SOCKET_COUNT; ++i) {
         if (s_slots[i].state == SLOT_FREE) {
             uint32_t generation = s_slots[i].generation + 1U;
-            memset(&s_slots[i], 0, sizeof(s_slots[i]));
+            socket_slot_clear_locked(&s_slots[i]);
             s_slots[i].generation = generation;
             s_slots[i].state = SLOT_CREATED;
             s_slots[i].type = type;
@@ -541,7 +793,8 @@ static int get_slot(int fd, socket_meta_t *copy)
                                 .tcp_options_configured = slot->tcp_options_configured,
                                 .tcp_options = slot->tcp_options,
                                 .recv_timeout = slot->recv_timeout,
-                                .send_timeout = slot->send_timeout, .stream_size = slot->stream_size,
+                                .send_timeout = slot->send_timeout,
+                                .stream_size = slot->type == AT_SOCKET_TYPE_STREAM ? slot->rx.size : 0U,
                                 .rx_events = slot->rx_events, .rx_bytes = slot->rx_bytes};
     }
     state_unlock();
@@ -555,7 +808,11 @@ static pending_raw_t *pending_raw_find_or_alloc_locked(int raw_fd)
         if (s_pending_raw[i].used && s_pending_raw[i].raw_fd == raw_fd) return &s_pending_raw[i];
         if (!s_pending_raw[i].used && !free_entry) free_entry = &s_pending_raw[i];
     }
-    if (free_entry) { free_entry->used = true; free_entry->raw_fd = raw_fd; }
+    if (free_entry) {
+        memset(free_entry, 0, sizeof(*free_entry));
+        free_entry->used = true;
+        free_entry->raw_fd = raw_fd;
+    }
     return free_entry;
 }
 
@@ -563,59 +820,29 @@ static bool pending_raw_append_locked(int raw_fd, const uint8_t *bytes, size_t l
 {
     if (length > RX_RING_SIZE || (!bytes && length)) return false;
     pending_raw_t *entry = pending_raw_find_or_alloc_locked(raw_fd);
-    if (!entry || length > RX_RING_SIZE - entry->length ||
+    if (!entry || length > RX_RING_SIZE - entry->rx.size ||
         (datagram_final && entry->datagram_count >= PENDING_FINAL_COUNT)) return false;
-    memcpy(entry->bytes + entry->length, bytes, length);
-    entry->length += length;
-    if (datagram_final) {
-        entry->datagram_lengths[entry->datagram_count++] = entry->length;
+    if (!rx_queue_append_locked(&entry->rx, bytes, length, 0U, 0U, datagram_final)) {
+        pending_raw_clear_locked(entry);
+        return false;
     }
+    if (datagram_final) ++entry->datagram_count;
     return true;
 }
 
-static bool udp_enqueue_locked(socket_slot_t *slot, const uint8_t *data, size_t length,
-                               uint32_t addr, uint16_t port)
-{
-    if (slot->udp_count >= UDP_QUEUE_DEPTH || length > UDP_MAX_DATAGRAM) return false;
-    unsigned at = (slot->udp_head + slot->udp_count) % UDP_QUEUE_DEPTH;
-    memcpy(slot->udp[at], data, length); slot->udp_len[at] = length;
-    slot->udp_addr[at] = addr; slot->udp_port[at] = port; ++slot->udp_count;
-    return true;
-}
-
-static void udp_consume_locked(socket_slot_t *slot, const uint8_t *data, size_t length,
+static bool udp_consume_locked(socket_slot_t *slot, const uint8_t *data, size_t length,
                                uint32_t addr, uint16_t port, bool final)
 {
     /* UDP is lossy by contract. The old code failed the whole slot with
      * ENOBUFS when the 2-entry queue overflowed, which made the network manager tear down
      * its UDP service socket on every discovery burst. Drop the offending
      * datagram (or the oldest queued one) and keep the socket alive. */
-    if (slot->udp_build_length == UDP_MAX_DATAGRAM) {
-        if (final) slot->udp_build_length = 0U;
-        return;
+    if (!rx_datagram_append_locked(&slot->rx, data, length, addr, port, final)) return false;
+    while (slot->rx.completed_datagrams > UDP_QUEUE_DEPTH) {
+        AT_LOG("UDP queue full, dropped oldest datagram");
+        (void)rx_datagram_read_locked(&slot->rx, NULL, 0U, NULL, NULL);
     }
-    if (length > UDP_MAX_DATAGRAM - slot->udp_build_length) {
-        AT_LOG("UDP datagram dropped (len=%lu build=%lu)", (unsigned long)length,
-                  (unsigned long)slot->udp_build_length);
-        slot->udp_build_length = final ? 0U : UDP_MAX_DATAGRAM;
-        return;
-    }
-    if (!slot->udp_build_length) {
-        slot->udp_build_addr = addr;
-        slot->udp_build_port = port;
-    }
-    if (length) memcpy(slot->udp_build + slot->udp_build_length, data, length);
-    slot->udp_build_length += length;
-    if (final) {
-        if (slot->udp_count >= UDP_QUEUE_DEPTH) {
-            slot->udp_head = (uint8_t)((slot->udp_head + 1U) % UDP_QUEUE_DEPTH);
-            --slot->udp_count;
-            AT_LOG("UDP queue full, dropped oldest datagram");
-        }
-        (void)udp_enqueue_locked(slot, slot->udp_build, slot->udp_build_length,
-                                 slot->udp_build_addr, slot->udp_build_port);
-        slot->udp_build_length = 0U;
-    }
+    return true;
 }
 
 static bool pending_datagram_add_locked(int listener_fd, uint32_t peer_addr, uint16_t peer_port,
@@ -641,10 +868,11 @@ static bool pending_datagram_add_locked(int listener_fd, uint32_t peer_addr, uin
         entry->peer_addr = peer_addr;
         entry->peer_port = peer_port;
     }
-    if (length > sizeof(entry->bytes) - entry->length) return false;
-    if (length) memcpy(entry->bytes + entry->length, data, length);
-    entry->length += length;
-    if (final) entry->complete = true;
+    if (!rx_datagram_append_locked(&entry->rx, data, length, peer_addr, peer_port, final)) {
+        pending_datagram_clear_locked(entry);
+        return false;
+    }
+    entry->complete = final;
     return true;
 }
 
@@ -653,22 +881,20 @@ static void replay_pending_datagrams_locked(socket_slot_t *slot, int listener_fd
     for (unsigned i = 0; i < PENDING_UDP_COUNT; ++i) {
         pending_datagram_t *pending = &s_pending_datagrams[i];
         if (!pending->used || (pending->listener_fd != listener_fd && pending->listener_fd >= 0)) continue;
-        if (pending->complete) {
-            if (!udp_enqueue_locked(slot, pending->bytes, pending->length,
-                                    pending->peer_addr, pending->peer_port)) {
-                slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-            }
-        } else if (slot->udp_build_length) {
-            slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-        } else if (pending->length > sizeof(slot->udp_build)) {
+        if (slot->rx.build_length) {
             slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
         } else {
-            if (pending->length) memcpy(slot->udp_build, pending->bytes, pending->length);
-            slot->udp_build_length = pending->length;
-            slot->udp_build_addr = pending->peer_addr;
-            slot->udp_build_port = pending->peer_port;
+            if (!pending->complete) {
+                slot->rx.build_head = pending->rx.head;
+                slot->rx.build_prev = slot->rx.tail;
+                slot->rx.build_length = pending->rx.size;
+            }
+            rx_queue_splice_locked(&slot->rx, &pending->rx);
+            if (pending->complete) ++slot->rx.completed_datagrams;
+            while (slot->rx.completed_datagrams > UDP_QUEUE_DEPTH)
+                (void)rx_datagram_read_locked(&slot->rx, NULL, 0U, NULL, NULL);
         }
-        memset(pending, 0, sizeof(*pending));
+        pending_datagram_clear_locked(pending);
     }
 }
 
@@ -676,8 +902,9 @@ static void discard_pending_datagrams_locked(int listener_fd)
 {
     for (unsigned i = 0; i < PENDING_UDP_COUNT; ++i) {
         pending_datagram_t *pending = &s_pending_datagrams[i];
-        if (pending->used && (pending->listener_fd == listener_fd || pending->listener_fd < 0))
-            memset(pending, 0, sizeof(*pending));
+        if (pending->used && (pending->listener_fd == listener_fd || pending->listener_fd < 0)) {
+            pending_datagram_clear_locked(pending);
+        }
     }
 }
 
@@ -687,7 +914,7 @@ static at_socket_errno_t release_listener_slot(int idx, const socket_meta_t *slo
     if (s_slots[idx].generation == slot->generation) {
         discard_pending_datagrams_locked(slot->lwip_fd);
         uint32_t gen = slot->generation + 1U;
-        memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+        socket_slot_clear_locked(&s_slots[idx]);
         s_slots[idx].generation = gen;
     }
     state_unlock();
@@ -711,7 +938,7 @@ static bool accept_v2_locked(const pending_accept_t *pending)
         if (s_slots[i].state == SLOT_FREE) { child = (int)i; break; }
     if (child < 0) { listener->state = SLOT_FAILED; return false; }
     socket_slot_t *accepted = &s_slots[child]; uint32_t gen = accepted->generation + 1U;
-    memset(accepted, 0, sizeof(*accepted)); accepted->generation = gen; accepted->state = SLOT_CONNECTED;
+    socket_slot_clear_locked(accepted); accepted->generation = gen; accepted->state = SLOT_CONNECTED;
     accepted->type = AT_SOCKET_TYPE_STREAM; accepted->remote_id = (int)pending->con_id;
     accepted->remote_generation = pending->generation; accepted->lwip_fd = pending->lwip_fd;
     accepted->recv_timeout = -1; accepted->send_timeout = (int)RPC_TIMEOUT_MS;
@@ -722,9 +949,13 @@ static bool accept_v2_locked(const pending_accept_t *pending)
     for (unsigned p = 0; p < PENDING_RAW_COUNT; ++p) {
         pending_raw_t *raw = &s_pending_raw[p];
         if (!raw->used || raw->raw_fd != accepted->lwip_fd) continue;
-        if (raw->length > RX_RING_SIZE - accepted->stream_size) { accepted->state = SLOT_FAILED; break; }
-        memcpy(accepted->stream, raw->bytes, raw->length); accepted->stream_size = raw->length;
-        memset(raw, 0, sizeof(*raw));
+        if (raw->rx.size > RX_RING_SIZE - accepted->rx.size) {
+            accepted->state = SLOT_FAILED;
+            pending_raw_clear_locked(raw);
+            break;
+        }
+        rx_queue_splice_locked(&accepted->rx, &raw->rx);
+        pending_raw_clear_locked(raw);
     }
     return true;
 }
@@ -858,45 +1089,48 @@ at_socket_errno_t at_socket_connect(int fd, uint32_t addr, uint16_t port)
         if (!pending->used || pending->raw_fd != raw) continue;
         socket_slot_t *connected = &s_slots[idx];
         if (connected->type == AT_SOCKET_TYPE_DATAGRAM) {
-            if (pending->datagram_count > UDP_QUEUE_DEPTH) {
-                connected->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-                state_unlock(); return AT_SOCKET_ERRNO_NO_BUFFER;
-            }
-            size_t offset = 0U;
-            for (unsigned d = 0; d < pending->datagram_count; ++d) {
-                size_t end = pending->datagram_lengths[d];
-                if (end < offset || end > pending->length ||
-                    !udp_enqueue_locked(connected, pending->bytes + offset, end - offset,
-                                        connected->peer_addr, connected->peer_port)) {
-                    connected->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-                    state_unlock(); return AT_SOCKET_ERRNO_NO_BUFFER;
+            rx_packet_t *build_head = NULL;
+            size_t build_length = 0U;
+            uint8_t completed = 0U;
+            for (rx_packet_t *packet = pending->rx.head; packet; packet = packet->next) {
+                if (!build_head) build_head = packet;
+                build_length += packet->length;
+                if (build_length > UDP_MAX_DATAGRAM) {
+                    connected->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_MESSAGE_TOO_LARGE;
+                    pending_raw_clear_locked(pending);
+                    state_unlock(); return AT_SOCKET_ERRNO_MESSAGE_TOO_LARGE;
                 }
-                offset = end;
+                packet->addr = connected->peer_addr;
+                packet->port = connected->peer_port;
+                if (packet->final) {
+                    if (completed == UINT8_MAX) break;
+                    ++completed;
+                    build_head = NULL;
+                    build_length = 0U;
+                }
             }
-            size_t remainder = pending->length - offset;
-            if (remainder > UDP_MAX_DATAGRAM) {
+            if (completed > UDP_QUEUE_DEPTH || connected->rx.build_length) {
                 connected->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
+                pending_raw_clear_locked(pending);
                 state_unlock(); return AT_SOCKET_ERRNO_NO_BUFFER;
             }
-            if (remainder) {
-                memcpy(connected->udp_build, pending->bytes + offset, remainder);
-                connected->udp_build_length = remainder;
-                connected->udp_build_addr = connected->peer_addr;
-                connected->udp_build_port = connected->peer_port;
-            }
+            connected->rx.build_head = build_head;
+            connected->rx.build_prev = build_head ? connected->rx.tail : NULL;
+            connected->rx.build_length = build_length;
+            connected->rx.completed_datagrams = completed;
+            rx_queue_splice_locked(&connected->rx, &pending->rx);
         } else {
-            if (pending->length > RX_RING_SIZE - connected->stream_size) {
+            if (pending->rx.size > RX_RING_SIZE - connected->rx.size) {
                 connected->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
+                pending_raw_clear_locked(pending);
                 state_unlock(); return AT_SOCKET_ERRNO_NO_BUFFER;
             }
-            size_t tail = (connected->stream_head + connected->stream_size) % RX_RING_SIZE;
-            for (size_t j = 0; j < pending->length; ++j)
-                connected->stream[(tail + j) % RX_RING_SIZE] = pending->bytes[j];
-            connected->stream_size += pending->length;
+            size_t pending_size = pending->rx.size;
+            rx_queue_splice_locked(&connected->rx, &pending->rx);
             connected->rx_events += pending->datagram_count ? pending->datagram_count : 1U;
-            connected->rx_bytes += (uint32_t)pending->length;
+            connected->rx_bytes += (uint32_t)pending_size;
         }
-        memset(pending, 0, sizeof(*pending));
+        pending_raw_clear_locked(pending);
     }
     state_unlock();
     wake_waiters();
@@ -925,12 +1159,10 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
     socket_meta_t slot;
     int idx = get_slot(fd, &slot);
     if (idx < 0) {
-        AT_SUMMARY("socket send invalid fd=%d states=[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
-                   fd, (int)s_slots[0].state, (int)s_slots[1].state, (int)s_slots[2].state,
-                   (int)s_slots[3].state, (int)s_slots[4].state, (int)s_slots[5].state,
-                   (int)s_slots[6].state, (int)s_slots[7].state, (int)s_slots[8].state,
-                   (int)s_slots[9].state, (int)s_slots[10].state, (int)s_slots[11].state,
-                   (int)s_slots[12].state, (int)s_slots[13].state, (int)s_slots[14].state);
+        unsigned active = 0U;
+        for (unsigned i = 0U; i < SOCKET_COUNT; ++i)
+            if (s_slots[i].state != SLOT_FREE) ++active;
+        AT_SUMMARY("socket send invalid fd=%d active=%u", fd, active);
         return fail_with(AT_SOCKET_ERRNO_BAD_FD);
     }
     if (!buf) {
@@ -939,14 +1171,16 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
     }
     if (length == 0U) return AT_SOCKET_ERRNO_NONE;
     if (slot.type == AT_SOCKET_TYPE_DATAGRAM && length > s_max_send) return fail_with(AT_SOCKET_ERRNO_MESSAGE_TOO_LARGE);
-    if (slot.type == AT_SOCKET_TYPE_STREAM && length > s_max_send) {
+    uint32_t stream_chunk_size = s_max_send < STREAM_TX_CHUNK_SIZE ? s_max_send : STREAM_TX_CHUNK_SIZE;
+    if (slot.type == AT_SOCKET_TYPE_STREAM && length > stream_chunk_size) {
         uint32_t sent = 0U;
         while (sent < length) {
             uint32_t chunk = length - sent;
-            if (chunk > s_max_send) chunk = s_max_send;
+            if (chunk > stream_chunk_size) chunk = stream_chunk_size;
             int result = send_common(fd, (const uint8_t *)buf + sent, chunk, false, 0U, 0U);
             if (result <= 0) return sent ? (int)sent : result;
             sent += (uint32_t)result;
+            if (sent < length) at_socket_sleep(STREAM_TX_GAP_MS);
         }
         return (int)sent;
     }
@@ -997,7 +1231,7 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
     }
     uint32_t send_start = at_socket_now_ms();
     int32_t status = AT_STATUS_OK;
-    bool retried_send_fail = false;
+    uint8_t send_fail_retries = 0U;
     bool reopened_listener = false;
     for (;;) {
         reply_length = 0U;
@@ -1042,16 +1276,18 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
                 continue;
             }
         }
-        if (!send_failed || retried_send_fail) {
+        if (!send_failed || send_fail_retries >= SEND_FAIL_RETRY_COUNT) {
             break;
         }
         /* The module's local socket queue rejected the payload before any TCP
          * byte was sent (SEND FAIL). Give the Wi-Fi manager task time to drain
          * and resend the same payload once. */
-        retried_send_fail = true;
-        AT_SUMMARY("socket send SEND FAIL, retrying fd=%d remote=%d len=%u", fd, slot.remote_id,
-                      (unsigned)length);
-        at_socket_sleep(200U);
+        ++send_fail_retries;
+        uint32_t delay_ms = 250U << (send_fail_retries - 1U);
+        AT_SUMMARY("socket send SEND FAIL, retry=%u/%u delay=%lums fd=%d remote=%d len=%u",
+                      (unsigned)send_fail_retries, (unsigned)SEND_FAIL_RETRY_COUNT,
+                      (unsigned long)delay_ms, fd, slot.remote_id, (unsigned)length);
+        at_socket_sleep(delay_ms);
     }
     uint32_t send_elapsed = at_socket_now_ms() - send_start;
     if (send_elapsed >= 500U) {
@@ -1090,14 +1326,14 @@ at_socket_errno_t at_socket_close(int fd)
     if (idx < 0) return fail_with(AT_SOCKET_ERRNO_BAD_FD);
     if (slot.state == SLOT_CREATED) {
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
-        memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+        socket_slot_clear_locked(&s_slots[idx]);
         state_unlock();
         return AT_SOCKET_ERRNO_NONE;
     }
     if (slot.state == SLOT_NO_REMOTE) {
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
         if (s_slots[idx].generation == slot.generation && s_slots[idx].state == SLOT_NO_REMOTE) {
-            uint32_t gen = slot.generation + 1U; memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+            uint32_t gen = slot.generation + 1U; socket_slot_clear_locked(&s_slots[idx]);
             s_slots[idx].generation = gen;
         }
         state_unlock(); return AT_SOCKET_ERRNO_NONE;
@@ -1108,7 +1344,7 @@ at_socket_errno_t at_socket_close(int fd)
         if (remote.state == REMOTE_STATE_ABSENT) {
             if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
             if (s_slots[idx].generation == slot.generation && s_slots[idx].state == SLOT_QUARANTINE) {
-                uint32_t gen = slot.generation + 1U; memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+                uint32_t gen = slot.generation + 1U; socket_slot_clear_locked(&s_slots[idx]);
                 s_slots[idx].generation = gen;
             }
             state_unlock(); return AT_SOCKET_ERRNO_NONE;
@@ -1121,7 +1357,7 @@ at_socket_errno_t at_socket_close(int fd)
                 return fail_with(AT_SOCKET_ERRNO_CONNECTION_RESET);
             if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
             if (s_slots[idx].generation == slot.generation && s_slots[idx].state == SLOT_QUARANTINE) {
-                uint32_t gen = slot.generation + 1U; memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+                uint32_t gen = slot.generation + 1U; socket_slot_clear_locked(&s_slots[idx]);
                 s_slots[idx].generation = gen;
             }
             state_unlock(); return AT_SOCKET_ERRNO_NONE;
@@ -1206,7 +1442,9 @@ at_socket_errno_t at_socket_close(int fd)
         if (run_at(ack, NULL, 0, false, NULL, 0, NULL, NULL) != AT_STATUS_OK) return fail_with(AT_SOCKET_ERRNO_CONNECTION_RESET);
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
         if (s_slots[idx].generation == slot.generation && s_slots[idx].state == SLOT_EOF) {
-            uint32_t gen = slot.generation + 1U; memset(&s_slots[idx], 0, sizeof(s_slots[idx])); s_slots[idx].generation = gen;
+            uint32_t gen = slot.generation + 1U;
+            socket_slot_clear_locked(&s_slots[idx]);
+            s_slots[idx].generation = gen;
         }
         state_unlock();
         return AT_SOCKET_ERRNO_NONE;
@@ -1249,7 +1487,7 @@ at_socket_errno_t at_socket_close(int fd)
             if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
             if (s_slots[idx].generation == generation && s_slots[idx].state == SLOT_EOF) {
                 uint32_t gen = generation + 1U;
-                memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+                socket_slot_clear_locked(&s_slots[idx]);
                 s_slots[idx].generation = gen;
             }
             state_unlock();
@@ -1263,7 +1501,7 @@ at_socket_errno_t at_socket_close(int fd)
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
         if (s_slots[idx].generation == generation) {
             uint32_t gen = generation + 1U;
-            memset(&s_slots[idx], 0, sizeof(s_slots[idx]));
+            socket_slot_clear_locked(&s_slots[idx]);
             s_slots[idx].generation = gen;
         }
         state_unlock();
@@ -1287,7 +1525,27 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
     (void)context;
     if (!event || !state_lock()) return;
     bool wake = false;
-    if (event->kind == AT_DEVICE_EVENT_DATA) {
+    if (event->kind == AT_DEVICE_EVENT_LINE) {
+        int raw = -1;
+        if (parse_rx_ready(event->value.line.text, event->value.line.length, &raw)) {
+            for (unsigned i = 0; i < SOCKET_COUNT; ++i) {
+                socket_slot_t *slot = &s_slots[i];
+                if (slot->state == SLOT_CONNECTED && slot->type == AT_SOCKET_TYPE_STREAM &&
+                    slot->lwip_fd == raw) {
+                    if (!slot->rx_ready) {
+                        ++slot->rx_ready_events;
+                        if (slot->rx_ready_events == 1U) {
+                            AT_SUMMARY("socket on-demand ready fd=%d raw=%d", (int)i, raw);
+                        }
+                    }
+                    slot->rx_ready = true;
+                    wake = true;
+                    AT_LOG("socket rx ready fd=%d raw=%d", (int)i, raw);
+                    break;
+                }
+            }
+        }
+    } else if (event->kind == AT_DEVICE_EVENT_DATA) {
         int raw = event->value.data.remote_fd;
         int slot_idx = -1;
         for (unsigned i = 0; i < SOCKET_COUNT; ++i)
@@ -1300,29 +1558,25 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
                 slot->rx_bytes += (uint32_t)len;
             }
             if (slot->type == AT_SOCKET_TYPE_DATAGRAM) {
-                if (len > UDP_MAX_DATAGRAM - slot->udp_build_length) {
+                if (!udp_consume_locked(slot, event->value.data.data, len, slot->peer_addr,
+                                        slot->peer_port, event->value.data.final)) {
                     slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-                } else {
-                    memcpy(slot->udp_build + slot->udp_build_length, event->value.data.data, len);
-                    slot->udp_build_length += len;
-                    if (event->value.data.final) {
-                        if (!udp_enqueue_locked(slot, slot->udp_build, slot->udp_build_length,
-                                                slot->peer_addr, slot->peer_port)) {
-                            slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
-                        } else slot->udp_build_length = 0U;
-                    }
                 }
-            } else if (len > RX_RING_SIZE - slot->stream_size) {
-                AT_LOG("socket rx overflow fd=%d raw=%d buffered=%lu incoming=%lu capacity=%u",
-                          (int)(slot - s_slots), raw, (unsigned long)slot->stream_size,
+            } else if (len > RX_RING_SIZE - slot->rx.size) {
+                AT_SUMMARY("socket rx overflow fd=%d raw=%d buffered=%lu incoming=%lu capacity=%u",
+                          (int)(slot - s_slots), raw, (unsigned long)slot->rx.size,
                           (unsigned long)len, (unsigned)RX_RING_SIZE);
                 slot->state = SLOT_FAILED;
                 s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
             } else {
-                const uint8_t *src = event->value.data.data;
-                size_t tail = (slot->stream_head + slot->stream_size) % RX_RING_SIZE;
-                for (size_t j = 0; j < len; ++j) slot->stream[(tail + j) % RX_RING_SIZE] = src[j];
-                slot->stream_size += len;
+                if (!rx_queue_append_locked(&slot->rx, event->value.data.data, len, 0U, 0U,
+                                            event->value.data.final)) {
+                    AT_SUMMARY("socket rx allocation failed fd=%d raw=%d buffered=%lu in_use=%lu limit=%u",
+                              (int)(slot - s_slots), raw, (unsigned long)slot->rx.size,
+                              (unsigned long)s_rx_dynamic_bytes, (unsigned)RX_DYNAMIC_LIMIT);
+                    slot->state = SLOT_FAILED;
+                    s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
+                }
             }
             wake = true;
         } else {
@@ -1357,8 +1611,11 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
             socket_slot_t *slot = &s_slots[i];
             if (slot->state != SLOT_LISTENER || slot->type != AT_SOCKET_TYPE_DATAGRAM) continue;
             if (listener_fd >= 0 && slot->lwip_fd != listener_fd) continue;
-            udp_consume_locked(slot, event->value.datagram.data, event->value.datagram.length,
-                               peer_addr, event->value.datagram.peer_port, event->value.datagram.final);
+            if (!udp_consume_locked(slot, event->value.datagram.data, event->value.datagram.length,
+                                    peer_addr, event->value.datagram.peer_port,
+                                    event->value.datagram.final)) {
+                slot->state = SLOT_FAILED; s_last_errno = AT_SOCKET_ERRNO_NO_BUFFER;
+            }
             routed = true; wake = true; break;
         }
         if (!routed) {
@@ -1392,7 +1649,7 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
                 if (child >= 0) {
                     socket_slot_t *accepted = &s_slots[child];
                     uint32_t gen = accepted->generation + 1U;
-                    memset(accepted, 0, sizeof(*accepted));
+                    socket_slot_clear_locked(accepted);
                     accepted->generation = gen; accepted->state = SLOT_CONNECTED; accepted->type = AT_SOCKET_TYPE_STREAM;
                     accepted->remote_id = event->value.accept.client_fd; accepted->lwip_fd = event->value.accept.client_fd;
                     (void)parse_ipv4(event->value.accept.peer_ipv4, &accepted->peer_addr);
@@ -1426,6 +1683,8 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
                 /* CLOSE is ordered after every old IPD. Keep the Tuya fd and
                  * buffered bytes, but immediately remove the raw-fd route. */
                 slot->state = SLOT_EOF; slot->lwip_fd = -1;
+                slot->rx_ready = false;
+                slot->rx_fetching = false;
                 /* Preserve the exact value required by the release ACK. */
                 slot->lwip_fd = rawfd; slot->remote_generation = generation;
                 wake = true; break;
@@ -1446,12 +1705,14 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
         AT_SUMMARY("socket reset invalidates descriptors=%u", invalidated);
         for (unsigned i = 0; i < SOCKET_COUNT; ++i) {
             uint32_t generation = s_slots[i].generation + 1U;
-            memset(&s_slots[i], 0, sizeof(s_slots[i]));
+            socket_slot_clear_locked(&s_slots[i]);
             s_slots[i].generation = generation;
         }
-        memset(s_pending_raw, 0, sizeof(s_pending_raw));
+        for (unsigned i = 0; i < PENDING_RAW_COUNT; ++i)
+            pending_raw_clear_locked(&s_pending_raw[i]);
         memset(s_pending_accepts, 0, sizeof(s_pending_accepts));
-        memset(s_pending_datagrams, 0, sizeof(s_pending_datagrams));
+        for (unsigned i = 0; i < PENDING_UDP_COUNT; ++i)
+            pending_datagram_clear_locked(&s_pending_datagrams[i]);
         s_initialized = false;
         s_initializing = false;
         s_last_errno = AT_SOCKET_ERRNO_NETWORK_RESET;
@@ -1464,6 +1725,12 @@ void at_socket_on_device_event(void *context, const at_device_event_t *event)
 static bool fd_requested(const at_socket_fd_set_t *set, unsigned fd)
 { return set && (set->bits[fd / 8U] & (uint8_t)(1U << (fd % 8U))) != 0U; }
 
+static bool socket_has_readable_data(const socket_slot_t *slot)
+{
+    if (slot->type == AT_SOCKET_TYPE_STREAM) return slot->rx.size != 0U || slot->rx_ready;
+    return slot->rx.completed_datagrams != 0U;
+}
+
 static void log_select_timeout(const at_socket_fd_set_t *read_set, unsigned bound, uint32_t timeout)
 {
     (void)timeout;
@@ -1475,7 +1742,8 @@ static void log_select_timeout(const at_socket_fd_set_t *read_set, unsigned boun
         if (!fd_requested(read_set, i) || slot->state == SLOT_FREE) continue;
         AT_LOG("socket select timeout fd=%u timeout=%lums state=%d raw=%d buffered=%lu rx_events=%lu rx_bytes=%lu pending_raw=%u",
                   i, (unsigned long)timeout, (int)slot->state, slot->remote_id,
-                  (unsigned long)slot->stream_size, (unsigned long)slot->rx_events,
+                  (unsigned long)(slot->type == AT_SOCKET_TYPE_STREAM ? slot->rx.size : 0U),
+                  (unsigned long)slot->rx_events,
                   (unsigned long)slot->rx_bytes, pending);
     }
 }
@@ -1508,7 +1776,8 @@ int at_socket_select(int maxfd, at_socket_fd_set_t *r, at_socket_fd_set_t *w, at
         if (!state_lock()) return -1;
         for (unsigned i = 0; i < bound; ++i) {
             socket_slot_t *slot = &s_slots[i]; if (slot->state == SLOT_FREE) continue;
-            bool readable = slot->stream_size || slot->udp_count || slot->accepted_count || slot->state == SLOT_FAILED || slot->state == SLOT_EOF;
+            bool readable = socket_has_readable_data(slot) || slot->accepted_count ||
+                            slot->state == SLOT_FAILED || slot->state == SLOT_EOF;
             bool writable = slot->state == SLOT_CONNECTED || slot->state == SLOT_LISTENER;
             bool exceptional = slot->state == SLOT_FAILED;
             if ((fd_requested(&want_r, i) && readable) || (fd_requested(&want_w, i) && writable) ||
@@ -1661,29 +1930,83 @@ int at_socket_recv(int fd, void *buf, uint32_t len)
     socket_meta_t slot; int idx = get_slot(fd, &slot); if (idx < 0) return fail_with(AT_SOCKET_ERRNO_BAD_FD);
     if (!len) return 0;
     if (!buf) return fail_with(AT_SOCKET_ERRNO_INVALID);
-    if (slot.type == AT_SOCKET_TYPE_DATAGRAM || slot.state == SLOT_LISTENER) return at_socket_recvfrom(fd, buf, len, NULL, NULL);
+    if (slot.type == AT_SOCKET_TYPE_DATAGRAM) return at_socket_recvfrom(fd, buf, len, NULL, NULL);
+    if (slot.state == SLOT_LISTENER) return fail_with(AT_SOCKET_ERRNO_INVALID);
     uint32_t start = at_socket_now_ms();
     for (;;) {
+        bool fetch = false;
+        int fetch_raw = -1;
+        uint32_t fetch_length = 0U;
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
         socket_slot_t *current = &s_slots[idx];
-        if (current->stream_size) {
-            size_t take = current->stream_size < len ? current->stream_size : len;
-            size_t first = RX_RING_SIZE - current->stream_head; if (first > take) first = take;
-            memcpy(buf, current->stream + current->stream_head, first);
-            if (take > first) memcpy((uint8_t *)buf + first, current->stream, take - first);
-            current->stream_head = (current->stream_head + take) % RX_RING_SIZE; current->stream_size -= take;
+        if (current->rx.size) {
+            size_t take = current->rx.size < len ? current->rx.size : len;
+            take = rx_queue_read_locked(&current->rx, buf, take);
+            size_t buffered = current->rx.size;
             state_unlock();
             uint32_t recv_elapsed = at_socket_now_ms() - start;
             if (recv_elapsed >= 500U) {
                 AT_SUMMARY("slow recv fd=%d raw=%d got=%lu elapsed=%lums buffered=%lu", fd,
                               slot.remote_id, (unsigned long)take, (unsigned long)recv_elapsed,
-                              (unsigned long)current->stream_size);
+                              (unsigned long)buffered);
             }
             log_rx_preview(fd, buf, take);
             return (int)take;
         }
+        if (current->state == SLOT_CONNECTED && current->rx_ready && !current->rx_fetching) {
+            current->rx_ready = false;
+            current->rx_fetching = true;
+            fetch = true;
+            fetch_raw = current->lwip_fd;
+            /* TLS first asks for a 5-byte record header. Pull a full bounded
+             * chunk so that header and body reads share one VW553 round trip. */
+            fetch_length = STREAM_RX_FETCH_SIZE;
+        }
         slot_state_t state = current->state; bool nonblock = current->nonblock; int timeout = current->recv_timeout;
         state_unlock();
+        if (fetch) {
+            char command[48];
+            const int command_length = snprintf(command, sizeof(command), AT_WIRE_RECVDATA_FMT,
+                                                fetch_raw, (unsigned)fetch_length);
+            uint32_t watermark = 0U;
+            at_status_t status = AT_STATUS_IO_ERROR;
+            if (command_length > 0 && (size_t)command_length < sizeof(command)) {
+                status = run_at_with_timeout(command, NULL, 0U, false, NULL, 0U, NULL,
+                                             &watermark, RPC_TIMEOUT_MS);
+            }
+            if (status == AT_STATUS_OK && watermark) {
+                status = at_device_wait_events(watermark, RPC_TIMEOUT_MS);
+            }
+            if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
+            current = &s_slots[idx];
+            current->rx_fetching = false;
+            bool first_fetch = false;
+            if (status == AT_STATUS_OK) {
+                ++current->rx_fetches;
+                first_fetch = current->rx_fetches == 1U;
+            }
+            if (status != AT_STATUS_OK && current->state == SLOT_CONNECTED) {
+                /* The module clears its own ready latch while servicing the
+                 * request. The next select pass will notify us again if the
+                 * TCP receive queue is still non-empty. */
+                current->rx_ready = false;
+            }
+            state_unlock();
+            if (status == AT_STATUS_OK) {
+                if (first_fetch) {
+                    AT_SUMMARY("socket on-demand fetch fd=%d raw=%d request=%u", fd, fetch_raw,
+                               (unsigned)fetch_length);
+                }
+                AT_LOG("socket recv fetched fd=%d raw=%d request=%u", fd, fetch_raw,
+                          (unsigned)fetch_length);
+                continue;
+            }
+            AT_LOG("socket recv fetch failed fd=%d raw=%d request=%u status=%ld", fd, fetch_raw,
+                      (unsigned)fetch_length, (long)status);
+            if (nonblock) return fail_with(AT_SOCKET_ERRNO_AGAIN);
+            (void)xSemaphoreTake(s_ready, pdMS_TO_TICKS(10U));
+            continue;
+        }
         if (!nonblock && timeout < 0) {
             /* Never block forever: the TLS read after a lost ServerHello used
              * to freeze the whole activation flow until the App tore the
@@ -1718,26 +2041,16 @@ int at_socket_recv_nd_size(int fd, void *buf, uint32_t size, uint32_t needed)
 int at_socket_recvfrom(int fd, void *buf, uint32_t len, uint32_t *addr, uint16_t *port)
 {
     if (!buf && len) return fail_with(AT_SOCKET_ERRNO_INVALID);
-    int idx = get_slot(fd, NULL); if (idx < 0) return fail_with(AT_SOCKET_ERRNO_BAD_FD);
+    socket_meta_t meta; int idx = get_slot(fd, &meta);
+    if (idx < 0) return fail_with(AT_SOCKET_ERRNO_BAD_FD);
+    if (meta.type != AT_SOCKET_TYPE_DATAGRAM) return fail_with(AT_SOCKET_ERRNO_INVALID);
     if (!len) return 0;
     uint32_t start = at_socket_now_ms();
     for (;;) {
         if (!state_lock()) return fail_with(AT_SOCKET_ERRNO_BUSY);
         socket_slot_t *slot = &s_slots[idx];
-        if (slot->udp_count) {
-            unsigned at = slot->udp_head; size_t n = slot->udp_len[at] < len ? slot->udp_len[at] : len;
-            memcpy(buf, slot->udp[at], n); if (addr) *addr = slot->udp_addr[at]; if (port) *port = slot->udp_port[at];
-            slot->udp_head = (uint8_t)((slot->udp_head + 1U) % UDP_QUEUE_DEPTH); --slot->udp_count;
-            state_unlock(); return (int)n;
-        }
-        if (slot->type == AT_SOCKET_TYPE_DATAGRAM && slot->state == SLOT_CONNECTED && slot->stream_size) {
-            size_t n = slot->stream_size < len ? slot->stream_size : len;
-            size_t first = RX_RING_SIZE - slot->stream_head; if (first > n) first = n;
-            memcpy(buf, slot->stream + slot->stream_head, first);
-            if (n > first) memcpy((uint8_t *)buf + first, slot->stream, n - first);
-            slot->stream_head = (slot->stream_head + n) % RX_RING_SIZE; slot->stream_size -= n;
-            if (addr) *addr = slot->peer_addr;
-            if (port) *port = slot->peer_port;
+        if (slot->rx.completed_datagrams) {
+            size_t n = rx_datagram_read_locked(&slot->rx, buf, len, addr, port);
             state_unlock(); return (int)n;
         }
         bool nonblock = slot->nonblock; int timeout = slot->recv_timeout; slot_state_t state = slot->state;
