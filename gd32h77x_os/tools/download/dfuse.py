@@ -26,6 +26,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import struct
+import sys
 import time
 from typing import Callable, List, Optional, Tuple
 
@@ -451,22 +452,40 @@ class _UsbDeviceDescriptor(ctypes.Structure):
     ]
 
 
+def _libusb_library():
+    """Resolve the SDK's bundled DLL on Windows, system libusb elsewhere."""
+    if sys.platform == "win32":
+        try:
+            import libusb_package
+        except ImportError as exc:
+            raise DfuError("Windows DFU requires libusb-package in the SDK Python environment; "
+                           "run tos.py build to prepare platform dependencies") from exc
+        library = libusb_package.get_library_path()
+        if not library:
+            raise DfuError("libusb-package contains no DLL for this Python architecture; "
+                           "install a matching binary wheel")
+        return str(library)
+    return ctypes.util.find_library("usb-1.0") or "libusb-1.0.so.0"
+
+
 class Libusb:
     """Minimal ctypes binding for libusb-1.0."""
 
     def __init__(self):
-        library = ctypes.util.find_library("usb-1.0") or "libusb-1.0.so.0"
+        library = _libusb_library()
         try:
             self._lib = ctypes.CDLL(library)
         except OSError as exc:  # pragma: no cover - depends on host libraries
             raise DfuError(
-                "libusb-1.0 is required for the GD32H77X DFU backend: {}".format(exc))
+                "Cannot load libusb-1.0 for the GD32H77X DFU backend "
+                "({}-bit Python, library {}): {}".format(
+                    ctypes.sizeof(ctypes.c_void_p) * 8, library, exc))
         self._declare()
         self._ctx = ctypes.c_void_p()
         if self._lib.libusb_init(ctypes.byref(self._ctx)) != 0:
-            raise DfuError(
-                "libusb_init failed; check that /dev/bus/usb exists and is accessible "
-                "(udev rules or root are usually needed)")
+            hint = ("check the bundled libusb DLL and Windows USB support" if sys.platform == "win32"
+                    else "check /dev/bus/usb access and udev permissions")
+            raise DfuError("libusb_init failed; " + hint)
         self._closed = False
 
     def _declare(self):
@@ -484,6 +503,8 @@ class Libusb:
         lib.libusb_open.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
         lib.libusb_open.restype = ctypes.c_int
         lib.libusb_close.argtypes = [ctypes.c_void_p]
+        lib.libusb_get_device.argtypes = [ctypes.c_void_p]
+        lib.libusb_get_device.restype = ctypes.c_void_p
         lib.libusb_get_bus_number.argtypes = [ctypes.c_void_p]
         lib.libusb_get_bus_number.restype = ctypes.c_uint8
         lib.libusb_get_port_numbers.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8),
@@ -510,6 +531,18 @@ class Libusb:
         message = self._lib.libusb_strerror(code)
         return message.decode("utf-8", "replace") if message else "libusb error {}".format(code)
 
+    def device_present(self, handle) -> bool:
+        """Check connection without opening other devices or trusting an I/O code."""
+        target = self._lib.libusb_get_device(handle)
+        pointer = ctypes.POINTER(ctypes.c_void_p)()
+        count = self._lib.libusb_get_device_list(self._ctx, ctypes.byref(pointer))
+        if count < 0:
+            return True  # An enumeration failure must not turn I/O errors into success.
+        try:
+            return any(pointer[index] == target for index in range(count))
+        finally:
+            self._lib.libusb_free_device_list(pointer, 1)
+
     def devices(self, vendor: int, product: int) -> List["UsbDevice"]:
         pointer = ctypes.POINTER(ctypes.c_void_p)()
         count = self._lib.libusb_get_device_list(self._ctx, ctypes.byref(pointer))
@@ -533,7 +566,9 @@ class Libusb:
         handle = ctypes.c_void_p()
         result = self._lib.libusb_open(device, ctypes.byref(handle))
         if result != 0:
-            raise DfuError("cannot open DFU device: {}".format(self.error(result)))
+            hint = ("; check that the GD32-USB_DFU device is bound to WinUSB "
+                    "and close other USB tools" if sys.platform == "win32" else "")
+            raise DfuError("cannot open DFU device: {}{}".format(self.error(result), hint))
         ports = (ctypes.c_uint8 * 8)()
         depth = self._lib.libusb_get_port_numbers(device, ports, 8)
         bus = self._lib.libusb_get_bus_number(device)
@@ -654,6 +689,11 @@ class UsbDevice:
         if result == -9:
             raise DfuStalled("USB control in failed: endpoint stalled")
         if result == -1:
+            # WinUSB can report I/O rather than NO_DEVICE after ROM leave.
+            # Only classify this as disconnect when a fresh enumeration proves
+            # the original libusb device is gone; a live device's error stays fatal.
+            if sys.platform == "win32" and not self._lib.device_present(self._handle):
+                raise DfuDisconnected("USB device disconnected (confirmed after WinUSB I/O error)")
             raise DfuTransferError("USB control in failed: Input/Output Error")
         if result < 0:
             raise DfuError("USB control in failed: {}".format(self._lib.error(result)))

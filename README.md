@@ -94,7 +94,116 @@ tos.py config set BOARD_CHOICE_GD32H77X=y BOARD_CHOICE_GD32H779V_START=y
 tos.py build
 ```
 
-已通过构建验证的工具链是 GNU Arm Embedded 10.3-2021.10，编译器版本 10.3.1；准备脚本检查该版本。未设置 `GD32H77X_TOOLCHAIN` 且 `PATH` 中没有 `arm-none-eabi-gcc` 时，`platform_prepare.py` 和 `toolchain_file.cmake` 会自动探测 `/opt/gcc-arm-none-eabi-*`。CPU/ABI 参数统一为 `-mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=softfp`。原厂工程记录的 GCC 15.2.1 尚未验证。
+已通过构建验证的工具链是 GNU Arm Embedded 10.3-2021.10，编译器版本 10.3.1；准备脚本检查版本、发行版和配套工具完整性。CPU/ABI 参数统一为 `-mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=softfp`。原厂工程记录的 GCC 15.2.1 尚未验证。
+
+### 按宿主自动准备 ARM GCC
+
+`tos.py build` 调用 `platform_prepare.py` 时，会自动识别宿主系统和 CPU 架构。
+支持 Windows x86/x64、Linux x86_64/aarch64、macOS Intel，均使用
+`toolchain-manifest.json` 固定的 10.3-2021.10 发行包。Windows 使用原生 ZIP
+工具链，不需要 Bash、WSL 或 Keil。该版本没有在清单中配置 Windows ARM64、
+macOS Apple Silicon 的原生包；这些宿主不会自动下载其他架构的包。
+
+发现顺序如下：
+
+- 显式 `GD32H77X_TOOLCHAIN`（安装根目录）优先；路径无效或版本错误时直接报错。
+- Windows 优先使用 SDK 管理的本宿主缓存，再检查 PATH。
+- Linux/macOS 优先检查 PATH；Linux 继续检查 `/opt/gcc-arm-none-eabi-*`，再使用本宿主缓存。
+- 找不到工具链时，自动下载当前宿主对应的发行包；PATH 中存在但版本不匹配的工具链会报错，需移除冲突或显式指定路径。
+
+安装目录为 `.tools/arm-none-eabi-gcc/10.3-2021.10/<host>/`，压缩包缓存为
+`.tools/archives/arm-none-eabi-gcc/10.3-2021.10/<host>/`。下载和缓存复用均检查
+大小与 SHA256，再安全解压、检查工具并发布安装目录；并发准备使用进程锁。
+Windows 使用带 `.installing` 标记的文件复制发布，避免已运行 EXE 所在目录
+被系统目录监视器占用而无法重命名；标记存在时 CMake 拒绝使用该安装。
+摘要及地址取自主仓已有 T5AI 同版本下载规则。`OPEN_COUNTRY_CODE=China` 时优先
+国内镜像，其余情况优先 Arm 地址；失败时尝试另一镜像，不重新联网判断地区。
+已完成的工具链可离线复用，损坏的 SDK 管理安装会在准备阶段重建。
+
+也可在已初始化 SDK 的环境中单独准备或仅检查工具链：
+
+```powershell
+# 仅准备 GCC，不安装 SWD 依赖，也不编译或访问设备
+& $env:OPEN_SDK_PYTHON "$env:OPEN_SDK_ROOT/platform/GD32H77X/toolchain_prepare.py"
+
+# 只发现并检查，不下载；CMake 使用同一入口
+& $env:OPEN_SDK_PYTHON "$env:OPEN_SDK_ROOT/platform/GD32H77X/toolchain_prepare.py" --resolve
+```
+
+Linux/macOS 可使用 `"$OPEN_SDK_PYTHON" "$OPEN_SDK_ROOT/platform/GD32H77X/toolchain_prepare.py"`。
+输出为选中工具链的绝对 bin 路径。CMake 不负责下载，也不依赖准备子进程向父进程导出环境。
+平台准备脚本优先通过 SDK 的 `OPEN_SDK_UV` 安装固定版本 SWD 依赖，明确指定 SDK
+Python，不要求 uv 创建的虚拟环境包含 pip。依赖已满足时直接复用。
+
+### Windows 原生编译验证
+
+2026-11-26 已在 `D:\TuyaOpen` 使用 Windows 原生 Python/CMake/Ninja 和自动准备的
+GNU Arm Embedded 10.3-2021.10，完成 `apps/tuya.ai/your_desk_buddy` 的完整编译、
+链接、静态镜像校验和 QIO 打包；板型为 `GD32H779I_DESK_BUDDY`，芯片为
+`GD32H779IW`。本次验证不使用 Keil、WSL 或 Docker，也未访问烧录设备。
+
+```powershell
+Set-Location D:\TuyaOpen
+. .\export.ps1
+tos.py check
+Set-Location apps\tuya.ai\your_desk_buddy
+tos.py config choice -c GD32H779I_DESK_BUDDY.config
+tos.py build
+```
+
+交付包位于 `dist/your_desk_buddy_1.0.0/your_desk_buddy_QIO_1.0.0.bin`，ELF、MAP、
+布局报告位于同目录的 `debug/`。验证镜像的 CNVM 为 72,520 字节，ECNVM code 为
+412,468 字节；沿用芯片默认分区与原有双区域打包格式。构建仍有已有的驱动/通用
+接口编译警告。Windows 含空格/中文仓库路径的完整构建及 Linux/macOS 实际回归
+仍需验收；Windows DFU、应用启动与日志验证结果见下文。
+
+### Windows DFU 驱动与首次实板记录
+
+DFU transport 在 Windows 通过 SDK 环境内 `libusb-package` 的绝对路径加载
+`libusb-1.0.dll`；Linux 继续使用系统 libusb。动态库位数必须与 Python 一致。
+用户态 DLL 与设备驱动是两层依赖：H779 ROM DFU 的 `USB\VID_28E9&PID_0189`
+还需绑定 WinUSB。设备管理器错误码 28 表示尚未安装驱动。
+
+首次可按 [Zadig 官方说明](https://github.com/pbatard/libwdi/wiki/Zadig) 完成绑定：
+确认设备是 `GD32-USB_DFU`、USB ID 为 `28E9:0189`，选择 WinUSB 后安装。
+该步骤需要用户处理 Windows 管理员提示；不要替换 CH9114F 日志串口的驱动。
+之后普通 SDK 会话即可使用 `tos.py flash`，多设备时用 `-p` 指定本机枚举出的
+USB 路径，不能将 Linux 或其他电脑的 USB 路径直接照抄。
+
+2026-11-26 在 Windows/WinUSB 上通过 `tos.py flash -p 1-3.2` 对
+`GD32H779I_DESK_BUDDY` 完成双区域写入与逐字节回读：先写 ECNVM
+`0x08200000` 的 101 个 4 KiB 页（413,696 字节，含填充），再写 CNVM
+`0x08000000` 的 2 个 64 KiB 扇区（131,072 字节，含填充）。
+记录位于应用 `.build/windows-flash.log`；本次未写 KV。
+
+首次请求 DfuSe leave 后设备已从 Windows DFU 列表消失，但 WinUSB 的
+GETSTATUS 返回 I/O 错误，CLI 因而报失败。transport 现增加设备存在性复核：
+只有重新枚举确认原设备已断开，才将 Windows I/O 错误转换为断开；设备仍在或
+枚举失败时仍保留错误，不能把持续错误当成启动成功。该修复已有模型测试。
+同日再次实板执行 `tos.py flash -p 1-3.2`，双区域回读通过，最终输出
+`Platform flash success.`，进程退出码为 0，Windows DFU 设备随之消失；
+记录位于应用 `.build/windows-flash-autostart.log`，退出结果位于
+`.build/windows-flash-autostart-result.json`。本次只有一根 USB 线，未同步采集
+自动启动日志；用户随后确认未手动复位、未重新上电，屏幕已自动显示自测首页。
+因此本次同时确认了命令成功退出和板上自动进入应用。
+
+同日通过 CH9114 第二路（USB `MI_02`，本机为 `COM31`）以 115200 8N1
+采集手动复位后的完整启动日志，确认运行 `your_desk_buddy 1.0.0`、
+`GD32H779IW/GD32H779I_DESK_BUDDY`、FreeRTOS V11.2.0 和 600 MHz CPU。
+PSRAM indirect/mapped 自检均 PASS，日志到达 `lv_vendor_start complete`，
+并出现 QSPI 显示刷新。原始日志位于应用 `.build/windows-startup-COM31.log`，
+去除 ANSI 颜色后的记录为 `.build/windows-startup-COM31.clean.log`。
+
+本次也实际打开并正常退出了原生 `tos.py monitor`：
+
+```powershell
+tos.py monitor -p COM31 -b 115200 -l .build/windows-tos-monitor.log
+# Ctrl+] 退出；COM 号按当前电脑枚举结果替换
+```
+
+本次硬件未连接 CST816X，启动日志中的 `send addr fail` 和
+`create touchpad node failed` 符合该硬件状态，不作为触摸驱动故障结论。
+本次已验证应用启动、PSRAM 自检与显示任务启动，未验证触摸或全部外设自测。
 
 FreeRTOS 使用原厂归档内的 `GCC/ARM_CM7/r0p1` port。该 port 包含早期内核修订的勘误处理，FreeRTOS 随包说明允许用于全部 M7 修订；首次运行日志打印 CPUID，供实板核对。任务优先级 0 保留给 idle，TKL 优先级映射为 FreeRTOS 优先级加 1；栈及水位值按 TKL 要求使用字节。有限等待向上换算 tick，`UINT32_MAX` 表示永久等待。
 

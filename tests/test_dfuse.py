@@ -2,7 +2,9 @@
 """Host tests for DfuSe using a protocol- and flash-aware ROM model."""
 
 import importlib.util
+import ctypes
 import struct
+import types
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -148,6 +150,70 @@ class DfuSeFlashModel:
                 return bytes(self.memory[offset:offset + length - 1])
             return bytes(self.memory[offset:offset + length])
         raise AssertionError("unexpected control-in request {}".format(request))
+
+
+class TestLibraryDiscovery(unittest.TestCase):
+    def test_windows_uses_bundled_absolute_path(self):
+        package = types.SimpleNamespace(get_library_path=lambda: Path("C:/SDK/libusb-1.0.dll"))
+        with mock.patch.object(dfuse.sys, "platform", "win32"), mock.patch.dict(
+                "sys.modules", {"libusb_package": package}):
+            self.assertEqual(dfuse._libusb_library(), str(Path("C:/SDK/libusb-1.0.dll")))
+
+    def test_windows_missing_package_is_actionable(self):
+        with mock.patch.object(dfuse.sys, "platform", "win32"), mock.patch.dict(
+                "sys.modules", {"libusb_package": None}):
+            with self.assertRaisesRegex(dfuse.DfuError, "SDK Python"):
+                dfuse._libusb_library()
+
+    def test_windows_empty_package_is_rejected(self):
+        package = types.SimpleNamespace(get_library_path=lambda: None)
+        with mock.patch.object(dfuse.sys, "platform", "win32"), mock.patch.dict(
+                "sys.modules", {"libusb_package": package}):
+            with self.assertRaisesRegex(dfuse.DfuError, "binary wheel"):
+                dfuse._libusb_library()
+
+    def test_linux_preserves_system_library_discovery(self):
+        with mock.patch.object(dfuse.sys, "platform", "linux"), mock.patch.object(
+                dfuse.ctypes.util, "find_library", return_value="libusb-1.0.so.0"):
+            self.assertEqual(dfuse._libusb_library(), "libusb-1.0.so.0")
+
+
+class TestWindowsDisconnect(unittest.TestCase):
+    def test_io_error_only_becomes_disconnect_when_device_is_gone(self):
+        for present, expected in ((True, dfuse.DfuTransferError), (False, dfuse.DfuDisconnected)):
+            with self.subTest(present=present), mock.patch.object(dfuse.sys, "platform", "win32"):
+                library = mock.Mock()
+                library._lib.libusb_control_transfer.return_value = -1
+                library.device_present.return_value = present
+                device = dfuse.UsbDevice(library, ctypes.c_void_p(1), "1-3.2", "", 1)
+                with self.assertRaises(expected):
+                    device.control_in(0xA1, dfuse.DFU_GETSTATUS, 0, 0, 6, 1000)
+
+    def test_linux_io_error_remains_transfer_error(self):
+        library = mock.Mock()
+        library._lib.libusb_control_transfer.return_value = -1
+        device = dfuse.UsbDevice(library, ctypes.c_void_p(1), "1-3.2", "", 1)
+        with mock.patch.object(dfuse.sys, "platform", "linux"):
+            with self.assertRaises(dfuse.DfuTransferError):
+                device.control_in(0xA1, dfuse.DFU_GETSTATUS, 0, 0, 6, 1000)
+        library.device_present.assert_not_called()
+
+    def test_presence_uses_device_identity_and_fails_conservatively(self):
+        devices = (ctypes.c_void_p * 2)(11, 22)
+        for target, count, expected in ((22, 2, True), (33, 2, False), (22, -1, True)):
+            with self.subTest(target=target, count=count):
+                def get_list(context, output):
+                    address = ctypes.cast(output, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
+                    address[0] = ctypes.cast(devices, ctypes.POINTER(ctypes.c_void_p))
+                    return count
+                library = object.__new__(dfuse.Libusb)
+                library._ctx = ctypes.c_void_p()
+                library._lib = mock.Mock()
+                library._lib.libusb_get_device.return_value = target
+                library._lib.libusb_get_device_list.side_effect = get_list
+                self.assertEqual(library.device_present(ctypes.c_void_p(1)), expected)
+                if count >= 0:
+                    library._lib.libusb_free_device_list.assert_called_once()
 
 
 class TestErasePlan(unittest.TestCase):

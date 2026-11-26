@@ -7,6 +7,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
+import zipfile
+
+from toolchain_prepare import ensure_compiler
 
 
 PLATFORM_ROOT = Path(__file__).resolve().parent
@@ -17,18 +21,8 @@ SWD_REQUIREMENTS = PLATFORM_ROOT / "requirements-swd.txt"
 
 
 def _find_compiler():
-    """Locate a GNU Arm Embedded compiler: env override, PATH, then /opt."""
-    override = os.environ.get("GD32H77X_TOOLCHAIN", "").strip()
-    if override:
-        return Path(override) / "bin/arm-none-eabi-gcc"
-    found = shutil.which("arm-none-eabi-gcc")
-    if found:
-        return Path(found)
-    for base in sorted(Path("/opt").glob("gcc-arm-none-eabi-*")):
-        candidate = base / "bin/arm-none-eabi-gcc"
-        if candidate.is_file():
-            return candidate
-    return None
+    """Prepare the host GCC or reuse an existing matching toolchain."""
+    return ensure_compiler()
 
 
 def _sha256(path: Path) -> str:
@@ -61,11 +55,18 @@ def _ensure_pyocd() -> str:
         version = ""
     if version == "0.46.0":
         return version
-    pip = os.environ.get("OPEN_SDK_PIP", "").strip()
-    command = ([pip] if pip and Path(pip).is_file()
-               else [sys.executable, "-m", "pip"])
-    command.extend(["install", "--disable-pip-version-check",
-                    "-r", str(SWD_REQUIREMENTS)])
+    uv = os.environ.get("OPEN_SDK_UV", "").strip() or shutil.which("uv")
+    if uv:
+        command = [uv, "pip", "install", "--python", sys.executable,
+                   "-r", str(SWD_REQUIREMENTS)]
+        if os.environ.get("OPEN_COUNTRY_CODE", "").strip() == "China":
+            command.extend(["--default-index", "https://mirrors.aliyun.com/pypi/simple/"])
+    else:
+        pip = os.environ.get("OPEN_SDK_PIP", "").strip()
+        command = ([pip] if pip and Path(pip).is_file()
+                   else [sys.executable, "-m", "pip"])
+        command.extend(["install", "--disable-pip-version-check",
+                        "-r", str(SWD_REQUIREMENTS)])
     try:
         subprocess.run(command, check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
@@ -80,7 +81,10 @@ def _ensure_pyocd() -> str:
 
 
 def main():
-    compiler = _find_compiler()
+    try:
+        compiler = _find_compiler()
+    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+        sys.exit(f"GD32H77X toolchain preparation failed: {exc}")
     if not compiler or not Path(compiler).is_file():
         sys.exit("Set GD32H77X_TOOLCHAIN to a GNU Arm Embedded installation, or add its bin to PATH")
     version = subprocess.check_output([str(compiler), "-dumpfullversion"], text=True).strip()

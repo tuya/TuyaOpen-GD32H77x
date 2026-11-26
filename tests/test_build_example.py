@@ -34,7 +34,7 @@ class BuildExampleTests(unittest.TestCase):
             context = (parameters / "gd32h77x_project.cmake").read_text()
             self.assertIn('GD32H77X_PROJECT_DIR', context)
             self.assertIn('GD32H77X_PROJECT_CONFIG', context)
-            self.assertIn(str(project_config), context)
+            self.assertIn(project_config.as_posix(), context)
             self.assertIn('/headers/one', context)
             self.assertIn('/headers/two', context)
             self.assertIn('/prebuilt/libtuyaapp.a', context)
