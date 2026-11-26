@@ -34,19 +34,19 @@ static void aps6404_gpio_ospim_init(uint32_t ospi_periph)
     aps6404_pin_init(APS6404_IO3_PORT, APS6404_IO3_PIN, APS6404_IO3_AF, GPIO_PUPD_NONE);
 
     /* route SCK, CSN and IO[3:0] of the selected OSPI to OSPIM port0 */
-    ospim_port_sck_config(OSPIM_PORT0, OSPIM_PORT_SCK_ENABLE);
-    ospim_port_csn_config(OSPIM_PORT0, OSPIM_PORT_CSN_ENABLE);
-    ospim_port_io3_0_config(OSPIM_PORT0, OSPIM_IO_LOW_ENABLE);
+    psram_vendor_ospim_port_sck_config(OSPIM_PORT0, OSPIM_PORT_SCK_ENABLE);
+    psram_vendor_ospim_port_csn_config(OSPIM_PORT0, OSPIM_PORT_CSN_ENABLE);
+    psram_vendor_ospim_port_io3_0_config(OSPIM_PORT0, OSPIM_IO_LOW_ENABLE);
     if(OSPI0 == ospi_periph) {
         rcu_periph_clock_enable(RCU_OSPI0);
-        ospim_port_sck_source_select(OSPIM_PORT0, OSPIM_SCK_SOURCE_OSPI0_SCK);
-        ospim_port_csn_source_select(OSPIM_PORT0, OSPIM_CSN_SOURCE_OSPI0_CSN);
-        ospim_port_io3_0_source_select(OSPIM_PORT0, OSPIM_SRCPLIO_OSPI0_IO_LOW);
+        psram_vendor_ospim_port_sck_source_select(OSPIM_PORT0, OSPIM_SCK_SOURCE_OSPI0_SCK);
+        psram_vendor_ospim_port_csn_source_select(OSPIM_PORT0, OSPIM_CSN_SOURCE_OSPI0_CSN);
+        psram_vendor_ospim_port_io3_0_source_select(OSPIM_PORT0, OSPIM_SRCPLIO_OSPI0_IO_LOW);
     } else {
         rcu_periph_clock_enable(RCU_OSPI1);
-        ospim_port_sck_source_select(OSPIM_PORT0, OSPIM_SCK_SOURCE_OSPI1_SCK);
-        ospim_port_csn_source_select(OSPIM_PORT0, OSPIM_CSN_SOURCE_OSPI1_CSN);
-        ospim_port_io3_0_source_select(OSPIM_PORT0, OSPIM_SRCPLIO_OSPI1_IO_LOW);
+        psram_vendor_ospim_port_sck_source_select(OSPIM_PORT0, OSPIM_SCK_SOURCE_OSPI1_SCK);
+        psram_vendor_ospim_port_csn_source_select(OSPIM_PORT0, OSPIM_CSN_SOURCE_OSPI1_CSN);
+        psram_vendor_ospim_port_io3_0_source_select(OSPIM_PORT0, OSPIM_SRCPLIO_OSPI1_IO_LOW);
     }
 }
 
@@ -84,8 +84,8 @@ static void aps6404_ospi_setup(aps6404_dev_struct *dev, uint32_t max_hz, Control
     }
     dev->sck_hz = dev->ospi_clk_hz / div;
 
-    ospi_disable(dev->ospi_periph);
-    ospi_struct_init(&dev->ospi);
+    psram_vendor_ospi_disable(dev->ospi_periph);
+    psram_vendor_ospi_struct_init(&dev->ospi);
     dev->ospi.prescaler        = div - 1U;
     /* data is launched on the falling edge and tACLK is up to 5.5ns, sample half a cycle later */
     dev->ospi.sample_shift     = OSPI_SAMPLE_SHIFTING_HALF_CYCLE;
@@ -95,13 +95,13 @@ static void aps6404_ospi_setup(aps6404_dev_struct *dev, uint32_t max_hz, Control
     dev->ospi.memory_type      = OSPI_STANDARD_MODE;
     dev->ospi.delay_hold_cycle = OSPI_DELAY_HOLD_NONE;
     dev->ospi.refrate          = (ENABLE == refresh) ? (aps6404_tcem_cycles(dev) / 2U) : 0U;
-    ospi_init(dev->ospi_periph, &dev->ospi);
-    ospi_enable(dev->ospi_periph);
+    psram_vendor_ospi_init(dev->ospi_periph, &dev->ospi);
+    psram_vendor_ospi_enable(dev->ospi_periph);
 }
 
-static void aps6404_cmd_base(ospi_regular_cmd_struct *cmd, uint32_t op_type, uint32_t ins_mode, uint8_t instruction)
+static void aps6404_cmd_base(psram_vendor_ospi_regular_cmd_struct *cmd, uint32_t op_type, uint32_t ins_mode, uint8_t instruction)
 {
-    memset(cmd, 0, sizeof(ospi_regular_cmd_struct));
+    memset(cmd, 0, sizeof(psram_vendor_ospi_regular_cmd_struct));
     cmd->operation_type       = op_type;
     cmd->instruction          = instruction;
     cmd->ins_mode             = ins_mode;
@@ -127,10 +127,10 @@ static uint32_t aps6404_ins_mode(const aps6404_dev_struct *dev)
 /* command without address and data */
 static void aps6404_simple_cmd(aps6404_dev_struct *dev, uint8_t instruction, uint32_t ins_mode)
 {
-    ospi_regular_cmd_struct cmd;
+    psram_vendor_ospi_regular_cmd_struct cmd;
 
     aps6404_cmd_base(&cmd, OSPI_OPTYPE_COMMON_CFG, ins_mode, instruction);
-    ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+    psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
 }
 
 /*!
@@ -155,7 +155,7 @@ void aps6404_reset(aps6404_dev_struct *dev)
 */
 ErrStatus aps6404_read_id(aps6404_dev_struct *dev, aps6404_id_struct *id)
 {
-    ospi_regular_cmd_struct cmd;
+    psram_vendor_ospi_regular_cmd_struct cmd;
     uint8_t buf[APS6404_ID_SIZE];
 
     if((NULL == dev) || (NULL == id) || (APS6404_MODE_SPI != dev->mode)) {
@@ -167,8 +167,8 @@ ErrStatus aps6404_read_id(aps6404_dev_struct *dev, aps6404_id_struct *id)
     cmd.address   = 0U;
     cmd.data_mode = OSPI_DATA_1_LINE;
     cmd.nbdata    = APS6404_ID_SIZE;
-    ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
-    ospi_receive(dev->ospi_periph, &dev->ospi, buf);
+    psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+    psram_vendor_ospi_receive(dev->ospi_periph, &dev->ospi, buf);
 
     id->mf_id = buf[0];
     id->kgd   = buf[1];
@@ -213,7 +213,7 @@ ErrStatus aps6404_init(aps6404_dev_struct *dev, uint32_t ospi_periph, uint32_t o
     dev->ospi_clk_hz = ospi_clk_hz;
     dev->mode        = APS6404_MODE_SPI;
 
-    ospi_deinit(ospi_periph);
+    psram_vendor_ospi_deinit(ospi_periph);
     aps6404_gpio_ospim_init(ospi_periph);
 
     /* Read ID is limited to 33MHz, so reset and ID check run at a low SCK */
@@ -263,7 +263,7 @@ static uint32_t aps6404_next_len(const aps6404_dev_struct *dev, uint32_t addr, u
 */
 ErrStatus aps6404_write(aps6404_dev_struct *dev, uint32_t addr, const uint8_t *pdata, uint32_t size)
 {
-    ospi_regular_cmd_struct cmd;
+    psram_vendor_ospi_regular_cmd_struct cmd;
     uint32_t len;
 
     if((ERROR == aps6404_check_range(dev, addr, size)) || ((0U != size) && (NULL == pdata)) || (0U == aps6404_chunk_limit(dev))) {
@@ -278,8 +278,8 @@ ErrStatus aps6404_write(aps6404_dev_struct *dev, uint32_t addr, const uint8_t *p
         cmd.address   = addr;
         cmd.data_mode = OSPI_DATA_4_LINES;
         cmd.nbdata    = len;
-        ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
-        ospi_transmit(dev->ospi_periph, (uint8_t *)pdata);
+        psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+        psram_vendor_ospi_transmit(dev->ospi_periph, (uint8_t *)pdata);
 
         addr  += len;
         pdata += len;
@@ -293,7 +293,7 @@ ErrStatus aps6404_write(aps6404_dev_struct *dev, uint32_t addr, const uint8_t *p
 */
 ErrStatus aps6404_read(aps6404_dev_struct *dev, uint32_t addr, uint8_t *pdata, uint32_t size)
 {
-    ospi_regular_cmd_struct cmd;
+    psram_vendor_ospi_regular_cmd_struct cmd;
     uint32_t len;
 
     if((ERROR == aps6404_check_range(dev, addr, size)) || ((0U != size) && (NULL == pdata)) || (0U == aps6404_chunk_limit(dev))) {
@@ -309,8 +309,8 @@ ErrStatus aps6404_read(aps6404_dev_struct *dev, uint32_t addr, uint8_t *pdata, u
         cmd.dummy_cycles = OSPI_DUMYC_CYCLES_6;
         cmd.data_mode    = OSPI_DATA_4_LINES;
         cmd.nbdata       = len;
-        ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
-        ospi_receive(dev->ospi_periph, &dev->ospi, pdata);
+        psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+        psram_vendor_ospi_receive(dev->ospi_periph, &dev->ospi, pdata);
 
         addr  += len;
         pdata += len;
@@ -327,8 +327,8 @@ ErrStatus aps6404_read(aps6404_dev_struct *dev, uint32_t addr, uint8_t *pdata, u
 */
 ErrStatus aps6404_memory_map_enable(aps6404_dev_struct *dev)
 {
-    ospi_regular_cmd_struct cmd;
-    ospi_memorymapped_struct mmap_cfg = {0};
+    psram_vendor_ospi_regular_cmd_struct cmd;
+    psram_vendor_ospi_memorymapped_struct mmap_cfg = {0};
 
     if((NULL == dev) || (0U == aps6404_chunk_limit(dev))) {
         return ERROR;
@@ -339,24 +339,32 @@ ErrStatus aps6404_memory_map_enable(aps6404_dev_struct *dev)
     cmd.addr_mode    = OSPI_ADDRESS_4_LINES;
     cmd.dummy_cycles = OSPI_DUMYC_CYCLES_6;
     cmd.data_mode    = OSPI_DATA_4_LINES;
-    ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+    psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
 
     /* write: 0x38, quad address, quad data */
     aps6404_cmd_base(&cmd, OSPI_OPTYPE_WRITE_CFG, aps6404_ins_mode(dev), APS6404_CMD_QUAD_WRITE);
     cmd.addr_mode = OSPI_ADDRESS_4_LINES;
     cmd.data_mode = OSPI_DATA_4_LINES;
-    ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
+    psram_vendor_ospi_command_config(dev->ospi_periph, &dev->ospi, &cmd);
 
-    while(RESET != ospi_flag_get(dev->ospi_periph, OSPI_FLAG_BUSY)) {
+    while(RESET != psram_vendor_ospi_flag_get(dev->ospi_periph, OSPI_FLAG_BUSY)) {
     }
 
-    /* enabled here instead of in ospi_memorymapped_mode() which overwrites OSPI_CTL when the timeout is requested */
-    ospi_timeout_cycle_config(dev->ospi_periph, APS6404_MMAP_TIMEOUT);
-    ospi_timeout_enable(dev->ospi_periph);
+    /* enabled here instead of in psram_vendor_ospi_memorymapped_mode() which overwrites OSPI_CTL when the timeout is requested */
+    psram_vendor_ospi_timeout_cycle_config(dev->ospi_periph, APS6404_MMAP_TIMEOUT);
+    psram_vendor_ospi_timeout_enable(dev->ospi_periph);
 
     mmap_cfg.timeout_activation = OSPI_TIMEOUT_COUNT_DISABLE;
     mmap_cfg.timeout_period     = 0U;
-    ospi_memorymapped_mode(dev->ospi_periph, &mmap_cfg);
+    psram_vendor_ospi_memorymapped_mode(dev->ospi_periph, &mmap_cfg);
+    if(OSPI0 == dev->ospi_periph) {
+        NVIC_SetPriority(OSPI0_IRQn, 0U);
+        NVIC_ClearPendingIRQ(OSPI0_IRQn);
+        NVIC_EnableIRQ(OSPI0_IRQn);
+    }
+    psram_vendor_ospi_interrupt_enable(dev->ospi_periph, OSPI_INT_TMOUT);
+    __DSB();
+    __ISB();
     return SUCCESS;
 }
 
@@ -367,9 +375,14 @@ void aps6404_memory_map_disable(aps6404_dev_struct *dev)
 {
     /* let the posted memory mapped writes reach the OSPI before the mode is left */
     __DSB();
-    ospi_transmission_abort(dev->ospi_periph);
-    ospi_timeout_disable(dev->ospi_periph);
-    /* ospi_transmission_abort() only aborts a busy transfer, force the indirect mode */
+    psram_vendor_ospi_interrupt_disable(dev->ospi_periph, OSPI_INT_TMOUT);
+    if(OSPI0 == dev->ospi_periph) {
+        NVIC_DisableIRQ(OSPI0_IRQn);
+        NVIC_ClearPendingIRQ(OSPI0_IRQn);
+    }
+    psram_vendor_ospi_transmission_abort(dev->ospi_periph);
+    psram_vendor_ospi_timeout_disable(dev->ospi_periph);
+    /* psram_vendor_ospi_transmission_abort() only aborts a busy transfer, force the indirect mode */
     OSPI_CTL(dev->ospi_periph) &= ~OSPI_CTL_FMOD;
 }
 

@@ -16,8 +16,7 @@ extern "C" {
 
 #include "tuya_cloud_types.h"
 
-#if (defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)) || \
-    (defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1))
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
 #define TUYA_RINGBUF_PSRAM_ENABLED 1
 #else
 #define TUYA_RINGBUF_PSRAM_ENABLED 0
@@ -28,12 +27,21 @@ typedef void *TUYA_RINGBUFF_T;
 typedef enum {
     OVERFLOW_STOP_TYPE = 0, ///< unread buff area will not be overwritten when writing overflow
     OVERFLOW_COVERAGE_TYPE, ///< unread buff area will be overwritten when writing overflow
-    OVERFLOW_PSRAM_STOP_TYPE, ///< unread buff area is stored in PSRAM
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    OVERFLOW_PSRAM_STOP_TYPE, ///< unread buff area is stored in mapped PSRAM
     OVERFLOW_PSRAM_COVERAGE_TYPE, ///< PSRAM overwrite variant (not implemented)
+#else
+    OVERFLOW_PSRAM_STOP_TYPE = OVERFLOW_STOP_TYPE, ///< PSRAM variant (maps to normal for non-MCU platforms)
+    OVERFLOW_PSRAM_COVERAGE_TYPE = OVERFLOW_COVERAGE_TYPE, ///< PSRAM variant (maps to normal for non-MCU platforms)
+#endif
 } RINGBUFF_TYPE_E;
 
 /**
  * @brief ringbuff create
+ *
+ * PSRAM rings keep metadata in internal RAM and allocate payload with
+ * tkl_system_psram_malloc(). Payload movement is performed with 4-byte
+ * aligned mapped accesses; callers must serialize concurrent operations.
  *
  * @param[in]   len:      ringbuff length
  * @param[in]   type:     ringbuff type

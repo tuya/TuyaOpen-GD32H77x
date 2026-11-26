@@ -23,8 +23,8 @@
 #define APS6404L_H
 
 #include "gd32h77x.h"
-#include "gd32h77x_ospi.h"
-#include "gd32h77x_ospim.h"
+#include "gd32h77x_vendor_ospi.h"
+#include "gd32h77x_vendor_ospim.h"
 
 /* ---------------------------------------------------------------- */
 /* pin configuration (change AF value here if the board is re-routed) */
@@ -100,7 +100,7 @@ typedef struct {
     uint32_t               ospi_clk_hz;             /* OSPI kernel clock */
     uint32_t               sck_hz;                  /* actual SCK frequency */
     aps6404_mode_enum      mode;                    /* current PSRAM interface mode */
-    ospi_parameter_struct  ospi;                    /* OSPI parameters used by the driver */
+    psram_vendor_ospi_parameter_struct  ospi;                    /* OSPI parameters used by the driver */
 } aps6404_dev_struct;
 
 /* initialize GPIO/OSPIM/OSPI, reset PSRAM, check ID and switch to the requested mode.

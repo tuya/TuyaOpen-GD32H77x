@@ -41,6 +41,13 @@
 #endif
 #include <limits.h>
 
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+static bool __tkl_psram_overlaps(const void *ptr, size_t size);
+static bool __tkl_psram_range(const void *ptr, size_t size);
+static void *__tkl_psram_memcpy(void *dst, const void *src, size_t size);
+static void *__tkl_psram_memset(void *dst, int value, size_t size);
+#endif
+
 /* Keep the payload aligned for the Cortex-M7 double-precision ABI. */
 typedef union {
     size_t   size;
@@ -103,11 +110,27 @@ void tkl_system_free(void *ptr)
 *
 * @return the memory address malloced
 */
-void *tkl_system_memset(void* src, int ch, const size_t n)
+void *tkl_system_memset(void *dst, int ch, size_t n)
 {
     // --- BEGIN: user implements ---
 
-    return memset(src, ch, n);
+    if (n == 0U) {
+        return dst;
+    }
+    if (dst == NULL) {
+        return NULL;
+    }
+
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+    if (__tkl_psram_overlaps(dst, n)) {
+        if (!__tkl_psram_range(dst, n)) {
+            return NULL;
+        }
+        return __tkl_psram_memset(dst, ch, n);
+    }
+#endif
+
+    return memset(dst, ch, n);
     // --- END: user implements ---
 }
 
@@ -120,11 +143,30 @@ void *tkl_system_memset(void* src, int ch, const size_t n)
 *
 * @return the memory address malloced
 */
-void *tkl_system_memcpy(void* src, const void* dst, const size_t n)
+void *tkl_system_memcpy(void *dst, const void *src, size_t n)
 {
     // --- BEGIN: user implements ---
 
-    return memcpy(src, dst, n);
+    if (n == 0U) {
+        return dst;
+    }
+    if (dst == NULL || src == NULL) {
+        return NULL;
+    }
+
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+    bool dst_psram = __tkl_psram_overlaps(dst, n);
+    bool src_psram = __tkl_psram_overlaps(src, n);
+    if (dst_psram || src_psram) {
+        if ((dst_psram && !__tkl_psram_range(dst, n)) ||
+            (src_psram && !__tkl_psram_range(src, n))) {
+            return NULL;
+        }
+        return __tkl_psram_memcpy(dst, src, n);
+    }
+#endif
+
+    return memcpy(dst, src, n);
     // --- END: user implements ---
 }
 
@@ -145,7 +187,7 @@ void *tkl_system_calloc(size_t nitems, size_t size)
     }
     void *pointer = tkl_system_malloc(nitems * size);
     if (pointer) {
-        memset(pointer, 0, nitems * size);
+        (void)tkl_system_memset(pointer, 0, nitems * size);
     }
     return pointer;
     // --- END: user implements ---
@@ -175,7 +217,8 @@ void *tkl_system_realloc(void *ptr, size_t size)
     if (!replacement) {
         return NULL;
     }
-    memcpy(replacement, ptr, header->size < size ? header->size : size);
+    (void)tkl_system_memcpy(replacement, ptr,
+                             header->size < size ? header->size : size);
     tkl_system_free(ptr);
     return replacement;
     // --- END: user implements ---
@@ -237,6 +280,8 @@ static bool s_psram_initialized;
 
 #if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
 #define TKL_PSRAM_MAX_BLOCKS 128U
+#define TKL_PSRAM_CROSSCHECK_OFFSET 0x1000U
+#define TKL_PSRAM_CROSSCHECK_SIZE   4096U
 
 typedef struct {
     gd32h77x_psram_pool_handle_t handle;
@@ -248,6 +293,10 @@ static tkl_psram_block_t s_psram_blocks[TKL_PSRAM_MAX_BLOCKS];
 static SemaphoreHandle_t s_psram_block_lock;
 static aps6404_dev_struct s_vendor_psram;
 static bool s_vendor_psram_ready;
+static uint8_t s_psram_crosscheck_tx[TKL_PSRAM_CROSSCHECK_SIZE]
+    __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
+static uint8_t s_psram_crosscheck_rx[TKL_PSRAM_CROSSCHECK_SIZE]
+    __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
 
 static bool __tkl_psram_lock(void)
 {
@@ -258,6 +307,23 @@ static bool __tkl_psram_lock(void)
 static void __tkl_psram_unlock(void)
 {
     (void)xSemaphoreGive(s_psram_block_lock);
+}
+
+static bool __tkl_psram_overlaps(const void *ptr, size_t size)
+{
+    if (ptr == NULL || size == 0U) {
+        return false;
+    }
+
+    uintptr_t start = (uintptr_t)ptr;
+    uintptr_t base = GD32H77X_PSRAM_MAPPED_BASE +
+                     GD32H77X_PSRAM_HEAP_OFFSET_BYTES;
+    uintptr_t end = base + GD32H77X_PSRAM_HEAP_SIZE_BYTES;
+
+    if (size > UINTPTR_MAX - start) {
+        return true;
+    }
+    return start < end && start + size > base;
 }
 
 static bool __tkl_psram_range(const void *ptr, size_t size)
@@ -281,18 +347,142 @@ static bool __tkl_psram_is_addr(const void *ptr)
     return address >= base && address < base + GD32H77X_PSRAM_HEAP_SIZE_BYTES;
 }
 
-static void __tkl_psram_copy_block(void *dst, const void *src)
+static bool __tkl_psram_wait_idle(void)
 {
-    volatile uint32_t *out = (volatile uint32_t *)dst;
-    const volatile uint32_t *in = (const volatile uint32_t *)src;
+    for (uint32_t count = 0U; count < 2000000U; ++count) {
+        uint32_t status = OSPI_STAT(OSPI0);
+        if ((status & OSPI_FLAG_TERR) != 0U) {
+            return false;
+        }
+        if ((status & OSPI_FLAG_BUSY) == 0U) {
+            return true;
+        }
+    }
+    return false;
+}
 
-    configASSERT(((uintptr_t)dst & (TKL_PSRAM_ALIGNMENT - 1U)) == 0U);
-    configASSERT(((uintptr_t)src & (TKL_PSRAM_ALIGNMENT - 1U)) == 0U);
-    for (uint32_t index = 0U; index < TKL_PSRAM_ALIGNMENT / sizeof(uint32_t);
-         ++index) {
-        out[index] = in[index];
+static bool __tkl_psram_load_word(const uint8_t *address, uint32_t *value)
+{
+    if (!__tkl_psram_wait_idle()) {
+        return false;
+    }
+    *value = *(volatile uint32_t *)address;
+    __DSB();
+    return true;
+}
+
+static bool __tkl_psram_store_word(uint8_t *address, uint32_t value)
+{
+    for (uint32_t attempt = 0U; attempt < 4U; ++attempt) {
+        if (!__tkl_psram_wait_idle()) {
+            continue;
+        }
+        *(volatile uint32_t *)address = value;
+        __DSB();
+        if (!__tkl_psram_wait_idle()) {
+            continue;
+        }
+        if (*(volatile uint32_t *)address == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void __tkl_psram_fill_pattern(uint8_t *buffer, uint32_t size,
+                                     uint8_t seed)
+{
+    for (uint32_t index = 0U; index < size; ++index) {
+        buffer[index] = (uint8_t)(index * 13U + (index >> 8U) * 7U + seed);
+    }
+}
+
+/* Same sequence as the vendor main.c PSRAM test, at a non-heap scratch area. */
+static OPERATE_RET __tkl_vendor_mapping_crosscheck(void)
+{
+    volatile uint8_t *mapped = (volatile uint8_t *)(uintptr_t)
+        (GD32H77X_PSRAM_MAPPED_BASE + TKL_PSRAM_CROSSCHECK_OFFSET);
+    uint32_t *tx_words = (uint32_t *)s_psram_crosscheck_tx;
+
+    __tkl_psram_fill_pattern(s_psram_crosscheck_tx,
+                             TKL_PSRAM_CROSSCHECK_SIZE, 0x11U);
+    if (aps6404_write(&s_vendor_psram, TKL_PSRAM_CROSSCHECK_OFFSET,
+                      s_psram_crosscheck_tx,
+                      TKL_PSRAM_CROSSCHECK_SIZE) != SUCCESS) {
+        tkl_log_output("[PSRAM-X] indirect write FAIL\r\n");
+        return OPRT_COM_ERROR;
+    }
+    if (aps6404_memory_map_enable(&s_vendor_psram) != SUCCESS) {
+        tkl_log_output("[PSRAM-X] first map enable FAIL\r\n");
+        return OPRT_COM_ERROR;
+    }
+    SCB_InvalidateDCache_by_Addr((volatile void *)mapped,
+                                 (int32_t)TKL_PSRAM_CROSSCHECK_SIZE);
+    for (uint32_t index = 0U; index < TKL_PSRAM_CROSSCHECK_SIZE; ++index) {
+        if (mapped[index] != s_psram_crosscheck_tx[index]) {
+            tkl_log_output("[PSRAM-X] indirect-write -> mapped-byte-read FAIL "
+                           "index=%u expected=%02x got=%02x\r\n",
+                           (unsigned)index, s_psram_crosscheck_tx[index],
+                           mapped[index]);
+            aps6404_memory_map_disable(&s_vendor_psram);
+            return OPRT_COM_ERROR;
+        }
+    }
+
+    __tkl_psram_fill_pattern(s_psram_crosscheck_tx,
+                             TKL_PSRAM_CROSSCHECK_SIZE, 0x77U);
+    for (uint32_t index = 0U;
+         index < TKL_PSRAM_CROSSCHECK_SIZE / sizeof(uint32_t); ++index) {
+        ((volatile uint32_t *)mapped)[index] = tx_words[index];
     }
     __DSB();
+    SCB_CleanDCache_by_Addr((volatile void *)mapped,
+                            (int32_t)TKL_PSRAM_CROSSCHECK_SIZE);
+    aps6404_memory_map_disable(&s_vendor_psram);
+    memset(s_psram_crosscheck_rx, 0, sizeof(s_psram_crosscheck_rx));
+    if (aps6404_read(&s_vendor_psram, TKL_PSRAM_CROSSCHECK_OFFSET,
+                     s_psram_crosscheck_rx,
+                     TKL_PSRAM_CROSSCHECK_SIZE) != SUCCESS) {
+        tkl_log_output("[PSRAM-X] mapped-write indirect read FAIL\r\n");
+        return OPRT_COM_ERROR;
+    }
+    if (memcmp(s_psram_crosscheck_tx, s_psram_crosscheck_rx,
+               TKL_PSRAM_CROSSCHECK_SIZE) != 0) {
+        tkl_log_output("[PSRAM-X] mapped-write -> indirect-read FAIL\r\n");
+        return OPRT_COM_ERROR;
+    }
+
+    __tkl_psram_fill_pattern(s_psram_crosscheck_tx,
+                             TKL_PSRAM_CROSSCHECK_SIZE, 0x33U);
+    if (aps6404_memory_map_enable(&s_vendor_psram) != SUCCESS) {
+        tkl_log_output("[PSRAM-X] second map enable FAIL\r\n");
+        return OPRT_COM_ERROR;
+    }
+    for (uint32_t index = 0U;
+         index < TKL_PSRAM_CROSSCHECK_SIZE / sizeof(uint32_t); ++index) {
+        ((volatile uint32_t *)mapped)[index] = tx_words[index];
+    }
+    __DSB();
+    for (uint32_t index = 0U;
+         index < TKL_PSRAM_CROSSCHECK_SIZE / sizeof(uint32_t); ++index) {
+        if (((volatile uint32_t *)mapped)[index] != tx_words[index]) {
+            tkl_log_output("[PSRAM-X] mapped word read FAIL word=%u\r\n",
+                           (unsigned)index);
+            aps6404_memory_map_disable(&s_vendor_psram);
+            return OPRT_COM_ERROR;
+        }
+    }
+    for (uint32_t index = 0U; index < TKL_PSRAM_CROSSCHECK_SIZE; ++index) {
+        if (mapped[index] != s_psram_crosscheck_tx[index]) {
+            tkl_log_output("[PSRAM-X] mapped byte read FAIL index=%u\r\n",
+                           (unsigned)index);
+            aps6404_memory_map_disable(&s_vendor_psram);
+            return OPRT_COM_ERROR;
+        }
+    }
+    aps6404_memory_map_disable(&s_vendor_psram);
+    tkl_log_output("[PSRAM-X] vendor-style mapped test PASS\r\n");
+    return OPRT_OK;
 }
 
 static OPERATE_RET __tkl_vendor_psram_init(void)
@@ -318,6 +508,22 @@ static OPERATE_RET __tkl_vendor_psram_init(void)
     if (aps6404_init(&s_vendor_psram, OSPI0, ospi_clk_hz,
                      APS6404_MODE_SPI) != SUCCESS) {
         tkl_log_output("[PSRAM] vendor init failed\r\n");
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+    /* Match the reference main(): verify indirect transfers before mapping. */
+    tkl_log_output("[PSRAM] vendor indirect selftest begin\r\n");
+    if (aps6404_selftest(&s_vendor_psram) != SUCCESS) {
+        tkl_log_output("[PSRAM] vendor indirect selftest FAILED\r\n");
+        vSemaphoreDelete(s_psram_block_lock);
+        s_psram_block_lock = NULL;
+        return OPRT_COM_ERROR;
+    }
+    tkl_log_output("[PSRAM] vendor indirect selftest PASS sck=%u\r\n",
+                   (unsigned)s_vendor_psram.sck_hz);
+    if (__tkl_vendor_mapping_crosscheck() != OPRT_OK) {
+        tkl_log_output("[PSRAM] mapped crosscheck FAILED; block allocator disabled\r\n");
         vSemaphoreDelete(s_psram_block_lock);
         s_psram_block_lock = NULL;
         return OPRT_COM_ERROR;
@@ -682,6 +888,26 @@ void tkl_system_psram_free(void *ptr)
     __tkl_psram_unlock();
 }
 
+static void *__tkl_psram_memcpy(void *dst, const void *src, size_t size)
+{
+    if (!s_psram_initialized || !__tkl_psram_lock()) {
+        return NULL;
+    }
+    void *result = gd32h77x_psram_memcpy(dst, src, size);
+    __tkl_psram_unlock();
+    return result;
+}
+
+static void *__tkl_psram_memset(void *dst, int value, size_t size)
+{
+    if (!s_psram_initialized || !__tkl_psram_lock()) {
+        return NULL;
+    }
+    void *result = gd32h77x_psram_memset(dst, value, size);
+    __tkl_psram_unlock();
+    return result;
+}
+
 void *gd32h77x_psram_memcpy(void *dst, const void *src, size_t size)
 {
     if (size == 0U) {
@@ -700,65 +926,60 @@ void *gd32h77x_psram_memcpy(void *dst, const void *src, size_t size)
         (src_psram && !__tkl_psram_range(src, size))) {
         return NULL;
     }
-
-    /* Vendor-proven fast path: contiguous block-aligned PSRAM ranges are
-     * transferred as one 32-bit word stream with a single final barrier. */
-    if ((size % TKL_PSRAM_ALIGNMENT) == 0U &&
-        (!dst_psram ||
-         (((uintptr_t)dst % TKL_PSRAM_ALIGNMENT) == 0U)) &&
-        (!src_psram ||
-         (((uintptr_t)src % TKL_PSRAM_ALIGNMENT) == 0U)) &&
-        (((uintptr_t)dst % sizeof(uint32_t)) == 0U) &&
-        (((uintptr_t)src % sizeof(uint32_t)) == 0U)) {
-        volatile uint32_t *out32 = (volatile uint32_t *)dst;
-        const uint32_t *in32 = (const uint32_t *)src;
-        for (size_t index = 0U; index < size / sizeof(uint32_t); ++index) {
-            out32[index] = in32[index];
-        }
-        __DSB();
-        return dst;
+    if (!__tkl_psram_wait_idle()) {
+        return NULL;
     }
 
+    /* The caller serializes mapped operations. Poll once per copy, then use
+     * ordered 32-bit transactions with a DSB after each write. */
     uint8_t *out = dst;
     const uint8_t *in = src;
     while (size > 0U) {
-        uintptr_t dst_block = (uintptr_t)out & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
-        uintptr_t src_block = (uintptr_t)in & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+        uintptr_t dst_block = (uintptr_t)out & ~(uintptr_t)(sizeof(uint32_t) - 1U);
+        uintptr_t src_block = (uintptr_t)in & ~(uintptr_t)(sizeof(uint32_t) - 1U);
         size_t dst_offset = (uintptr_t)out - dst_block;
         size_t src_offset = (uintptr_t)in - src_block;
-        size_t chunk = TKL_PSRAM_ALIGNMENT - dst_offset;
-        if (chunk > TKL_PSRAM_ALIGNMENT - src_offset) {
-            chunk = TKL_PSRAM_ALIGNMENT - src_offset;
+        size_t chunk = sizeof(uint32_t) - dst_offset;
+        if (chunk > sizeof(uint32_t) - src_offset) {
+            chunk = sizeof(uint32_t) - src_offset;
         }
         if (chunk > size) {
             chunk = size;
         }
 
-        uint8_t src_buf[TKL_PSRAM_ALIGNMENT]
-            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
-        uint8_t dst_buf[TKL_PSRAM_ALIGNMENT]
-            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
-        if (src_psram) {
-            __tkl_psram_copy_block(src_buf, (const void *)src_block);
+        if (dst_psram) {
+            uint32_t dst_word;
+            if (!__tkl_psram_load_word((const uint8_t *)dst_block, &dst_word)) {
+                return NULL;
+            }
+            if (src_psram) {
+                uint32_t src_word;
+                if (!__tkl_psram_load_word((const uint8_t *)src_block, &src_word)) {
+                    return NULL;
+                }
+                memcpy((uint8_t *)&dst_word + dst_offset,
+                       (const uint8_t *)&src_word + src_offset, chunk);
+            } else {
+                memcpy((uint8_t *)&dst_word + dst_offset, in, chunk);
+            }
+            if (!__tkl_psram_store_word((uint8_t *)dst_block, dst_word)) {
+                return NULL;
+            }
         } else {
-            memcpy(src_buf + src_offset, in, chunk);
-        }
-
-        if (dst_psram && dst_offset == 0U && src_offset == 0U &&
-            chunk == TKL_PSRAM_ALIGNMENT) {
-            __tkl_psram_copy_block((void *)dst_block,
-                                   src_psram ? (const void *)src_block : in);
-        } else if (dst_psram) {
-            __tkl_psram_copy_block(dst_buf, (void *)dst_block);
-            memcpy(dst_buf + dst_offset, src_buf + src_offset, chunk);
-            __tkl_psram_copy_block((void *)dst_block, dst_buf);
-        } else {
-            memcpy(out, src_buf + src_offset, chunk);
+            uint32_t src_word;
+            if (!__tkl_psram_load_word((const uint8_t *)src_block, &src_word)) {
+                return NULL;
+            }
+            memcpy(out, (const uint8_t *)&src_word + src_offset, chunk);
         }
 
         out += chunk;
         in += chunk;
         size -= chunk;
+    }
+    __DSB();
+    if (!__tkl_psram_wait_idle()) {
+        return NULL;
     }
     return dst;
 }
@@ -777,24 +998,34 @@ void *gd32h77x_psram_memset(void *dst, int value, size_t size)
     if (!__tkl_psram_range(dst, size)) {
         return NULL;
     }
+    if (!__tkl_psram_wait_idle()) {
+        return NULL;
+    }
 
     uint8_t *out = dst;
     while (size > 0U) {
-        uintptr_t block = (uintptr_t)out & ~(uintptr_t)(TKL_PSRAM_ALIGNMENT - 1U);
+        uintptr_t block = (uintptr_t)out & ~(uintptr_t)(sizeof(uint32_t) - 1U);
         size_t offset = (uintptr_t)out - block;
-        size_t chunk = TKL_PSRAM_ALIGNMENT - offset;
+        size_t chunk = sizeof(uint32_t) - offset;
         if (chunk > size) {
             chunk = size;
         }
 
-        uint8_t buffer[TKL_PSRAM_ALIGNMENT]
-            __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
-        __tkl_psram_copy_block(buffer, (void *)block);
-        memset(buffer + offset, value, chunk);
-        __tkl_psram_copy_block((void *)block, buffer);
+        uint32_t word;
+        if (!__tkl_psram_load_word((const uint8_t *)block, &word)) {
+            return NULL;
+        }
+        memset((uint8_t *)&word + offset, value, chunk);
+        if (!__tkl_psram_store_word((uint8_t *)block, word)) {
+            return NULL;
+        }
 
         out += chunk;
         size -= chunk;
+    }
+    __DSB();
+    if (!__tkl_psram_wait_idle()) {
+        return NULL;
     }
     return dst;
 }

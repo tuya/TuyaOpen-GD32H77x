@@ -9,6 +9,8 @@ set(GD32H77X_DRIVER_SRCS
     gd32h77x_psram_cache.c
     gd32h77x_psram_ring.c
     vendor/aps6404l.c
+    vendor/gd32h77x_vendor_ospi.c
+    vendor/gd32h77x_vendor_ospim.c
     vendor/systick.c
     gd32h77x_flash_route.c
     gd32h77x_entropy.c

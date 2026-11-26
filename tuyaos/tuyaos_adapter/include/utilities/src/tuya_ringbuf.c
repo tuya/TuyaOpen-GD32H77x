@@ -1,7 +1,5 @@
 #include "tkl_memory.h"
-#include "tkl_output.h"
 #include "tuya_ringbuf.h"
-#include "gd32h77x_psram_mem.h"
 #include <string.h>
 
 #define RINGBUFF_FREE   tkl_system_free
@@ -18,9 +16,11 @@ typedef struct {
     uint32_t in;          ///< position of input
     uint32_t out;         ///< position of output
     uint32_t len;         ///< length of buff data
-    bool psram;           ///< data area is mapped PSRAM
+    bool psram;           ///< payload is in mapped PSRAM
     uint8_t *buff;        ///< ring buff
 } __RINGBUFF_T;
+
+#define RINGBUFF_PSRAM_ALIGNMENT 4U
 
 static void __ringbuff_init(__RINGBUFF_T *ringbuff, uint32_t len)
 {
@@ -29,69 +29,71 @@ static void __ringbuff_init(__RINGBUFF_T *ringbuff, uint32_t len)
     ringbuff->len = len;
 }
 
-static void *__ringbuff_copy(__RINGBUFF_T *ringbuff, void *dst,
-                             const void *src, uint32_t len)
+#if TUYA_RINGBUF_PSRAM_ENABLED
+static bool __ringbuff_copy_to_psram(__RINGBUFF_T *ringbuff, uint8_t *dst,
+                                     const void *src, uint32_t len)
 {
-#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
     if (ringbuff->psram) {
-        return gd32h77x_psram_memcpy(dst, src, len);
+        return tkl_system_memcpy(dst, src, len) != NULL;
     }
-#endif
-    return memcpy(dst, src, len);
+    memcpy(dst, src, len);
+    return true;
 }
+
+static bool __ringbuff_copy_from_psram(__RINGBUFF_T *ringbuff, void *dst,
+                                       const uint8_t *src, uint32_t len)
+{
+    if (ringbuff->psram) {
+        return tkl_system_memcpy(dst, src, len) != NULL;
+    }
+    memcpy(dst, src, len);
+    return true;
+}
+#endif
 
 OPERATE_RET tuya_ring_buff_create(uint32_t len, RINGBUFF_TYPE_E type, TUYA_RINGBUFF_T *ringbuff)
 {
     __RINGBUFF_T *rbuff = NULL;
     __RINGBUFF_T **out_ring_buff = (__RINGBUFF_T **)ringbuff;
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    bool psram = type == OVERFLOW_PSRAM_STOP_TYPE;
+#else
+    bool psram = false;
+#endif
 
     if (type == OVERFLOW_COVERAGE_TYPE ||
         type == OVERFLOW_PSRAM_COVERAGE_TYPE) {
         return OPRT_NOT_SUPPORTED;
     }
 
-    if (ringbuff == NULL || len == 0) {
+    if (ringbuff == NULL || len == 0 ||
+        (type != OVERFLOW_STOP_TYPE && type != OVERFLOW_PSRAM_STOP_TYPE)) {
         return OPRT_INVALID_PARM;
     }
 
-#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
-    bool psram = type == OVERFLOW_PSRAM_STOP_TYPE;
-#else
-    bool psram = false;
-    if (type == OVERFLOW_PSRAM_STOP_TYPE) {
-        return OPRT_NOT_SUPPORTED;
-    }
-#endif
-
-    rbuff = (__RINGBUFF_T *)RINGBUFF_MALLOC(sizeof(*rbuff));
-    if (rbuff == NULL) {
-        tkl_log_output("[PSRAM-RING] metadata alloc failed len=%u\r\n",
-                       (unsigned)len);
-        return OPRT_MALLOC_FAILED;
-    }
-    memset(rbuff, 0, sizeof(*rbuff));
-#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+#if TUYA_RINGBUF_PSRAM_ENABLED
     if (psram) {
+        rbuff = (__RINGBUFF_T *)RINGBUFF_MALLOC(sizeof(*rbuff));
+        if (rbuff == NULL) {
+            return OPRT_MALLOC_FAILED;
+        }
         rbuff->buff = tkl_system_psram_malloc(len);
-        if (rbuff->buff == NULL) {
-            tkl_log_output("[PSRAM-RING] psram alloc failed len=%u free=%d; "
-                           "fallback SRAM\r\n",
-                           (unsigned)len, tkl_system_psram_get_free_heap_size());
-            /* Keep audio paths usable when the external PSRAM heap is not
-             * available: preserve the same buffer size and fall back to SRAM. */
-            rbuff->buff = RINGBUFF_MALLOC(len);
-            psram = false;
+        if (rbuff->buff == NULL ||
+            ((uintptr_t)rbuff->buff & (RINGBUFF_PSRAM_ALIGNMENT - 1U)) != 0U) {
+            if (rbuff->buff != NULL) {
+                tkl_system_psram_free(rbuff->buff);
+            }
+            RINGBUFF_FREE(rbuff);
+            return OPRT_MALLOC_FAILED;
         }
     } else
 #endif
     {
-        rbuff->buff = RINGBUFF_MALLOC(len);
-    }
-    if (rbuff->buff == NULL) {
-        tkl_log_output("[PSRAM-RING] data alloc failed len=%u\r\n",
-                       (unsigned)len);
-        RINGBUFF_FREE(rbuff);
-        return OPRT_MALLOC_FAILED;
+        rbuff = (__RINGBUFF_T *)RINGBUFF_MALLOC(sizeof(*rbuff) + len);
+        if (rbuff == NULL) {
+            return OPRT_MALLOC_FAILED;
+        }
+        rbuff->buff = (uint8_t *)(rbuff + 1);
     }
     rbuff->type = type;
     rbuff->psram = psram;
@@ -108,13 +110,11 @@ OPERATE_RET tuya_ring_buff_free(TUYA_RINGBUFF_T ringbuff)
     if (rbuff == NULL) {
         return OPRT_INVALID_PARM;
     }
+#if TUYA_RINGBUF_PSRAM_ENABLED
     if (rbuff->psram) {
-#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
         tkl_system_psram_free(rbuff->buff);
-#endif
-    } else {
-        RINGBUFF_FREE(rbuff->buff);
     }
+#endif
     RINGBUFF_FREE(rbuff);
 
     return OPRT_OK;
@@ -193,15 +193,34 @@ uint32_t tuya_ring_buff_write(TUYA_RINGBUFF_T ringbuff, const void *data, uint32
         return 0;
     }
 
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    uint32_t old_in = rbuff->in;
+#endif
+
     // write data to remaining buff
     tmp_len = GET_MIN(rbuff->len - rbuff->in, len);
-    __ringbuff_copy(rbuff, &rbuff->buff[rbuff->in], pdata, tmp_len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    if (!__ringbuff_copy_to_psram(rbuff, &rbuff->buff[rbuff->in],
+                                  pdata, tmp_len)) {
+        return 0;
+    }
+#else
+    memcpy(&rbuff->buff[rbuff->in], pdata, tmp_len);
+#endif
     rbuff->in += tmp_len;
     len -= tmp_len;
 
     // write remaining data to beginning of buffer
     if (len > 0) {
-        __ringbuff_copy(rbuff, rbuff->buff, &pdata[tmp_len], len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+        if (!__ringbuff_copy_to_psram(rbuff, rbuff->buff,
+                                      &pdata[tmp_len], len)) {
+            rbuff->in = old_in;
+            return 0;
+        }
+#else
+        memcpy(rbuff->buff, &pdata[tmp_len], len);
+#endif
         rbuff->in = len;
     }
 
@@ -230,15 +249,34 @@ uint32_t tuya_ring_buff_read(TUYA_RINGBUFF_T ringbuff, void *data, uint32_t len)
         return 0;
     }
 
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    uint32_t old_out = rbuff->out;
+#endif
+
     // read data from linear part of buffer
     tmp_len = GET_MIN(rbuff->len - rbuff->out, len);
-    __ringbuff_copy(rbuff, pdata, &rbuff->buff[rbuff->out], tmp_len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    if (!__ringbuff_copy_from_psram(rbuff, pdata,
+                                    &rbuff->buff[rbuff->out], tmp_len)) {
+        return 0;
+    }
+#else
+    memcpy(pdata, &rbuff->buff[rbuff->out], tmp_len);
+#endif
     rbuff->out += tmp_len;
     len -= tmp_len;
 
     // read data from beginning of buffer (overflow part)
     if (len > 0) {
-        __ringbuff_copy(rbuff, &pdata[tmp_len], rbuff->buff, len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+        if (!__ringbuff_copy_from_psram(rbuff, &pdata[tmp_len],
+                                        rbuff->buff, len)) {
+            rbuff->out = old_out;
+            return 0;
+        }
+#else
+        memcpy(&pdata[tmp_len], rbuff->buff, len);
+#endif
         rbuff->out = len;
     }
 
@@ -305,11 +343,25 @@ uint32_t tuya_ring_buff_peek(TUYA_RINGBUFF_T ringbuff, void *data, uint32_t len)
     }
 
     tmp_len = GET_MIN(rbuff->len - out, len);
-    __ringbuff_copy(rbuff, pdata, &rbuff->buff[out], tmp_len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+    if (!__ringbuff_copy_from_psram(rbuff, pdata,
+                                    &rbuff->buff[out], tmp_len)) {
+        return 0;
+    }
+#else
+    memcpy(pdata, &rbuff->buff[out], tmp_len);
+#endif
     len -= tmp_len;
 
     if (len > 0) {
-        __ringbuff_copy(rbuff, &pdata[tmp_len], rbuff->buff, len);
+#if TUYA_RINGBUF_PSRAM_ENABLED
+        if (!__ringbuff_copy_from_psram(rbuff, &pdata[tmp_len],
+                                        rbuff->buff, len)) {
+            return 0;
+        }
+#else
+        memcpy(&pdata[tmp_len], rbuff->buff, len);
+#endif
     }
 
     return tmp_len + len;
