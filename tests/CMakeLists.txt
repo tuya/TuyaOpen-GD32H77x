@@ -120,6 +120,21 @@ add_executable(test_module_reset test_module_reset.c
 target_include_directories(test_module_reset PRIVATE ${GD32H77X_AT_ROOT})
 add_test(NAME at_module_reset_sequence COMMAND test_module_reset)
 
+add_executable(test_display_fb_mem test_display_fb_mem.c
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/peripherals/display/tdl_display/src/tdl_display_fb_mem.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/peripherals/display/tdl_display/src/tdl_display_draw.c")
+target_include_directories(test_display_fb_mem PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    "${GD32H77X_TEST_CONFIG_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/peripherals/display/tdl_display/include"
+    ../tuyaos/tuyaos_adapter/include/system
+    ../tuyaos/tuyaos_adapter/include/utilities/include
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/common/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/tal_system/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/tal_image/include")
+target_compile_definitions(test_display_fb_mem PRIVATE ENABLE_PSRAM=1)
+add_test(NAME display_fb_mem_routing COMMAND test_display_fb_mem)
+
 add_executable(test_tkl_network_basics test_tkl_network_basics.c
     ../tuyaos/tuyaos_adapter/src/system/tkl_network.c)
 target_include_directories(test_tkl_network_basics PRIVATE
@@ -299,7 +314,7 @@ add_test(NAME gd32h77x_entropy_state COMMAND test_entropy)
 add_test(NAME gd32h77x_tkl_random_adapter
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_tkl_random_source.py")
 
-set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_socket test_profile test_module_reset test_tkl_network_basics test_storage_bounds test_flash_info_partial
+set(GD32H77X_HOST_TESTS test_at_parser test_at_client test_socket test_profile test_module_reset test_display_fb_mem test_tkl_network_basics test_storage_bounds test_flash_info_partial
     test_flash_routing test_flash_layout_generated test_ecnvm_flash_layout test_nor_protocol test_entropy test_http_response_content_length)
 if(TARGET test_vw553_tcp_options)
     list(APPEND GD32H77X_HOST_TESTS test_vw553_tcp_options test_vw553_tcp_option_masks)
@@ -331,6 +346,8 @@ add_test(NAME gd32h77x_layout_csv_format
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_format_layout_csv.py")
 add_test(NAME gd32h77x_rtos_heap
     COMMAND "${GD32H77X_TEST_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/test_rtos_heap.py")
+add_test(NAME gd32h77x_tkl_memory_routing
+    COMMAND "${GD32H77X_TEST_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/test_tkl_memory_routing.py")
 find_program(GD32H77X_TEST_ARM_GCC arm-none-eabi-gcc
     HINTS /opt/gcc-arm-none-eabi-10.3-2021.10/bin)
 if(GD32H77X_TEST_ARM_GCC)

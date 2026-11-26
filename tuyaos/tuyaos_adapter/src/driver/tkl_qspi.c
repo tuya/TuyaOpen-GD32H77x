@@ -2,10 +2,9 @@
  * @file tkl_qspi.c
  * @brief GD32H77X QSPI TKL backend built on the SPI3 quad-wire engine.
  *
- * QSPI resources are table-driven.  Default SCK/IO0-IO3/NSS pins are applied by
- * tkl_qspi_init().  Applications may override them through tkl_pinmux before
- * init.  CS is driven by hardware NSS; software CS, when needed, is owned by
- * the application/board layer.
+ * QSPI resources are table-driven. Default SCK/IO0-IO3 pins are applied by
+ * tkl_qspi_init(). Applications may override them, including optional hardware
+ * NSS, through tkl_pinmux before init. CS is normally owned by the board layer.
  */
 
 #include "tkl_qspi.h"
@@ -33,6 +32,7 @@ typedef struct {
 } QSPI_HW_T;
 
 typedef struct {
+    bool enabled;
     uint32_t port;
     uint32_t pin;
     uint32_t af;
@@ -48,7 +48,7 @@ typedef struct {
 } QSPI_PIN_CFG_T;
 
 #define QSPI_PIN(port_name, pin_num, af_val) \
-    {port_name, GPIO_PIN_##pin_num, af_val}
+    {.enabled = true, .port = port_name, .pin = GPIO_PIN_##pin_num, .af = af_val}
 
 typedef struct {
     TUYA_QSPI_WIRE_MODE_E lines;
@@ -60,7 +60,7 @@ typedef struct {
 static const QSPI_HW_T s_qspi_hw[TUYA_QSPI_NUM_MAX] = {
     {
         SPI3,
-        IDX_SPI3, RCU_SPISRC_PLL0Q, RCU_SPI3, true,
+        IDX_SPI3, RCU_SPISRC_APB2, RCU_SPI3, true,
     },
     {0},
 };
@@ -71,7 +71,8 @@ static QSPI_PIN_CFG_T s_qspi_pins[TUYA_QSPI_NUM_MAX] = {
         .io1 = QSPI_PIN(GPIOE, 13, 5), /* PE13 / TUYA_GPIO_NUM_77 / AF5 */
         .io2 = QSPI_PIN(GPIOE, 9, 5),  /* PE9  / TUYA_GPIO_NUM_73 / AF5 */
         .io3 = QSPI_PIN(GPIOE, 10, 5), /* PE10 / TUYA_GPIO_NUM_74 / AF5 */
-        .nss = QSPI_PIN(GPIOE, 11, 5), /* PE11 / TUYA_GPIO_NUM_75 / AF5 */
+        /* No default NSS: the board layer owns the device chip-select pin. This
+         * is required on boards where PE11 is already used by another bus. */
     },
 };
 static QSPI_STATE_T s_qspi[TUYA_QSPI_NUM_MAX];
@@ -102,6 +103,7 @@ void __tkl_qspi_set_pin(TUYA_QSPI_NUM_E port, TUYA_PIN_FUNC_E func,
         case 5U: pin_cfg = &s_qspi_pins[port].nss; break;
         default: return;
     }
+    pin_cfg->enabled = true;
     pin_cfg->port = gpio_port;
     pin_cfg->pin = gpio_pin;
     pin_cfg->af = af;
@@ -125,6 +127,7 @@ static uint32_t __qspi_gpio_rcu(uint32_t port)
 
 static void __qspi_apply_one_pin(const QSPI_PIN_T *pin)
 {
+    if (!pin->enabled) return;
     uint32_t rcu = __qspi_gpio_rcu(pin->port);
     if (rcu == 0U) return;
     rcu_periph_clock_enable(rcu);
@@ -136,12 +139,12 @@ static void __qspi_apply_one_pin(const QSPI_PIN_T *pin)
 
 static void __qspi_init_gpio(TUYA_QSPI_NUM_E port)
 {
-    __qspi_apply_one_pin(&s_qspi_pins[port].nss);
     __qspi_apply_one_pin(&s_qspi_pins[port].sck);
     __qspi_apply_one_pin(&s_qspi_pins[port].io0);
     __qspi_apply_one_pin(&s_qspi_pins[port].io1);
     __qspi_apply_one_pin(&s_qspi_pins[port].io2);
     __qspi_apply_one_pin(&s_qspi_pins[port].io3);
+    __qspi_apply_one_pin(&s_qspi_pins[port].nss);
 }
 
 static OPERATE_RET __qspi_wait_flag(const QSPI_HW_T *hw, uint32_t flag)
@@ -186,13 +189,12 @@ static OPERATE_RET __qspi_master_suspend(const QSPI_HW_T *hw)
     return OPRT_OK;
 }
 
-/* Quad mode does not support the two- and four-divider prescalers. */
 static uint32_t __qspi_prescaler(uint32_t base_freq, uint32_t target_freq)
 {
-    static const uint32_t divs[] = {8U, 16U, 32U, 64U, 128U, 256U};
+    static const uint32_t divs[] = {2U, 4U, 8U, 16U, 32U, 64U, 128U, 256U};
     static const uint32_t psc[] = {
-        SPI_PSC_8, SPI_PSC_16, SPI_PSC_32,
-        SPI_PSC_64, SPI_PSC_128, SPI_PSC_256,
+        SPI_PSC_2, SPI_PSC_4, SPI_PSC_8, SPI_PSC_16,
+        SPI_PSC_32, SPI_PSC_64, SPI_PSC_128, SPI_PSC_256,
     };
 
     if (target_freq == 0U) {
@@ -347,6 +349,11 @@ static OPERATE_RET __qspi_dma_config_channel(gd32h77x_dma_handle_t *handle,
                                              uint32_t direction,
                                              uint32_t frames)
 {
+    uint32_t memory_burst = DMA_MEMORY_BURST_SINGLE;
+    if (width == DMA_PERIPH_WIDTH_32BIT && direction == DMA_MEMORY_TO_PERIPH &&
+        frames >= 8U && (memory_addr & 31U) == 0U) {
+        memory_burst = DMA_MEMORY_BURST_8_BEAT;
+    }
     GD32H77X_DMA_SINGLE_CFG_T cfg = {
         .periph_addr = periph_addr,
         .memory_addr = memory_addr,
@@ -355,6 +362,8 @@ static OPERATE_RET __qspi_dma_config_channel(gd32h77x_dma_handle_t *handle,
         .direction = direction,
         .frames = frames,
         .priority = DMA_PRIORITY_HIGH,
+        .memory_burst = memory_burst,
+        .periph_burst = DMA_PERIPH_BURST_SINGLE,
     };
 
     return __qspi_dma_status(gd32h77x_dma_single_config(handle, &cfg));
@@ -663,6 +672,7 @@ OPERATE_RET tkl_qspi_init(TUYA_QSPI_NUM_E port,
     const QSPI_HW_T *hw;
     spi_parameter_struct spi_cfg;
     uint32_t mode;
+    bool hardware_nss;
     OPERATE_RET rt;
 
     if (cfg == NULL || cfg->role != TUYA_QSPI_ROLE_MASTER ||
@@ -674,6 +684,7 @@ OPERATE_RET tkl_qspi_init(TUYA_QSPI_NUM_E port,
         return OPRT_NOT_SUPPORTED;
     }
 
+    hardware_nss = s_qspi_pins[port].nss.enabled;
     __qspi_init_gpio(port);
 
     switch (cfg->mode) {
@@ -700,17 +711,21 @@ OPERATE_RET tkl_qspi_init(TUYA_QSPI_NUM_E port,
     spi_cfg.device_mode = SPI_MASTER;
     spi_cfg.data_size = SPI_DATASIZE_8BIT;
     spi_cfg.clock_polarity_phase = mode;
-    spi_cfg.nss = SPI_NSS_HARD;
-    spi_cfg.prescale = __qspi_prescaler(rcu_clock_freq_get(CK_PLL0Q),
+    spi_cfg.nss = hardware_nss ? SPI_NSS_HARD : SPI_NSS_SOFT;
+    spi_cfg.prescale = __qspi_prescaler(rcu_clock_freq_get(CK_APB2),
                                         cfg->freq_hz);
     spi_cfg.endian = SPI_ENDIAN_MSB;
     spi_init(hw->periph, &spi_cfg);
     spi_word_access_disable(hw->periph);
     spi_byte_access_enable(hw->periph);
     spi_fifo_threshold_level_set(hw->periph, SPI_FIFO_TH_01DATA);
-    spi_nss_output_control(hw->periph, SPI_NSS_HOLD_UNTIL_TRANS_END);
-    spi_nss_polarity_set(hw->periph, SPI_NSS_POLARITY_LOW);
-    spi_nss_output_enable(hw->periph);
+    if (hardware_nss) {
+        spi_nss_output_control(hw->periph, SPI_NSS_HOLD_UNTIL_TRANS_END);
+        spi_nss_polarity_set(hw->periph, SPI_NSS_POLARITY_LOW);
+        spi_nss_output_enable(hw->periph);
+    } else {
+        spi_nss_internal_high(hw->periph);
+    }
     rt = __qspi_set_lines(hw, TUYA_QSPI_1WIRE, false);
     if (rt != OPRT_OK) {
         return rt;

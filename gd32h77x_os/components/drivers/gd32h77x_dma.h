@@ -58,6 +58,8 @@ typedef struct {
     uint32_t direction;
     uint32_t frames;
     uint32_t priority;
+    uint32_t memory_burst;
+    uint32_t periph_burst;
 } GD32H77X_DMA_SINGLE_CFG_T;
 
 /**

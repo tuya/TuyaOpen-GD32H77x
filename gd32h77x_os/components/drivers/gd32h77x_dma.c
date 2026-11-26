@@ -194,6 +194,10 @@ int gd32h77x_dma_single_config(gd32h77x_dma_handle_t *handle,
     dma_cfg.number = cfg->frames;
     dma_cfg.priority = cfg->priority;
     dma_single_data_mode_init(handle->dma_periph, handle->channel, &dma_cfg);
+    dma_memory_burst_beats_config(handle->dma_periph, handle->channel,
+                                  cfg->memory_burst);
+    dma_periph_burst_beats_config(handle->dma_periph, handle->channel,
+                                  cfg->periph_burst);
     return GD32H77X_DMA_OK;
 }
 
