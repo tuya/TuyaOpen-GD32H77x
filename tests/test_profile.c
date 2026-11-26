@@ -102,6 +102,11 @@ static void replies_payloads_and_tx_are_bounded(void)
     assert(!at_uart_policy_payload_result(8U, true, false, true, false, true));
     assert(!at_uart_policy_payload_result(8U, true, true, false, false, true));
     assert(!at_uart_policy_payload_result(8U, true, true, true, true, true));
+    assert(at_uart_policy_payload_timeout_is_connection_level(8U, true, true, true));
+    assert(!at_uart_policy_payload_timeout_is_connection_level(0U, true, true, true));
+    assert(!at_uart_policy_payload_timeout_is_connection_level(8U, false, true, true));
+    assert(!at_uart_policy_payload_timeout_is_connection_level(8U, true, false, true));
+    assert(!at_uart_policy_payload_timeout_is_connection_level(8U, true, true, false));
     assert(at_uart_policy_ble_payload_uses_plain_ok("AT+BLEDADATRANSSEND=0,165", 25U));
     assert(!at_uart_policy_ble_payload_uses_plain_ok("AT+CIPSEND=0,165", 16U));
     assert(!at_uart_policy_ble_payload_uses_plain_ok("AT+BLEDADATRANSSEND", 21U));

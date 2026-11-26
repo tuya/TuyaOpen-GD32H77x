@@ -227,6 +227,12 @@ bool at_uart_policy_payload_result(size_t payload_length, bool prompt_seen, bool
     return !payload_length || !final_ok || (prompt_seen && payload_sent && saw_send_ok && !saw_send_fail);
 }
 
+bool at_uart_policy_payload_timeout_is_connection_level(size_t payload_length, bool prompt_seen,
+                                                        bool payload_sent, bool timeout)
+{
+    return timeout && payload_length != 0U && prompt_seen && payload_sent;
+}
+
 bool at_uart_policy_ble_payload_uses_plain_ok(const char *command, size_t length)
 {
     static const char prefix[] = AT_WIRE_BLE_SEND_PREFIX;

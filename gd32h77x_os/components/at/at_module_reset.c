@@ -9,6 +9,10 @@
 static bool soft_reset_path(const at_module_reset_ops_t *ops, void *context, uint32_t ready_timeout_ms,
                             at_module_reset_result_t *result)
 {
+    /* A failed probe can leave the AT session poisoned. Restore the local
+     * transport before trying to put AT+RST on the wire, otherwise the reset
+     * command is rejected before transmission. */
+    if (!ops->recover_transport(context)) return false;
     result->software_reset_requested = true;
     return ops->request_soft_reset(context) && ops->recover_transport(context) &&
            ops->wait_ready(context, ready_timeout_ms) && ops->recover_transport(context) &&

@@ -689,6 +689,12 @@ static void handle_client_result(void)
 {
     at_result_t result;
     if (at_client_take_result(&s_transport.client, &result)) {
+        bool connection_timeout =
+            at_uart_policy_payload_timeout_is_connection_level(
+                s_transport.request.payload_length,
+                s_transport.request.prompt_seen,
+                s_transport.request.payload_sent,
+                result == AT_RESULT_TIMEOUT);
         if (result != AT_RESULT_OK && result != AT_RESULT_ERROR) {
             int cmd_len = (int)s_transport.request.command_length;
             if (cmd_len >= 2) cmd_len -= 2;
@@ -699,9 +705,13 @@ static void handle_client_result(void)
                           s_transport.request.payload_sent ? 1 : 0,
                           s_transport.request.saw_send_ok ? 1 : 0);
             rx_trace_dump("RX FAIL", (int)result);
-            set_poison(result == AT_RESULT_TIMEOUT ? ISR_FAULT_CALLER_TIMEOUT : ISR_FAULT_NOISE);
+            if (!connection_timeout) {
+                set_poison(result == AT_RESULT_TIMEOUT ? ISR_FAULT_CALLER_TIMEOUT :
+                                                         ISR_FAULT_NOISE);
+            }
         }
-        if (!at_uart_policy_payload_result(s_transport.request.payload_length, s_transport.request.prompt_seen,
+        if (!connection_timeout &&
+            !at_uart_policy_payload_result(s_transport.request.payload_length, s_transport.request.prompt_seen,
                                               s_transport.request.payload_sent, s_transport.request.saw_send_ok,
                                               s_transport.request.saw_send_fail,
                                               result == AT_RESULT_OK)) {
@@ -790,6 +800,7 @@ static void rx_task(void *argument)
     at_client_set_boot_ready_mode(&s_transport.client, boot_ready_mode_enabled());
     at_callbacks_t parser_callbacks = at_client_parser_callbacks();
     at_parser_init(&s_transport.parser, &parser_callbacks, &s_transport.client);
+    s_transport.rx_trace_used = 0U;
 
     uint8_t bytes[AT_RX_READ_SIZE];
     request_t *request = NULL;

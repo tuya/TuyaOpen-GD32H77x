@@ -68,6 +68,7 @@ static bool remote_active = true;
 static bool reject_next_cipstart;
 static unsigned reject_cipstart_state;
 static bool cipstart_timeout;
+static bool cipsend_timeout;
 static bool fail_state_query;
 static bool remote_retired;
 static int remote_id, remote_fd;
@@ -220,6 +221,11 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
     }
     if (!strncmp(last_command, "AT+CIPSEND=", 11)) {
         ++send_count;
+        if (cipsend_timeout) {
+            cipsend_timeout = false;
+            if (request->reply_length) *request->reply_length = 0U;
+            return AT_STATUS_IO_ERROR;
+        }
         reply_set(request, "SEND OK\r\nOK\r\n"); return AT_STATUS_OK;
     }
     if (!strncmp(last_command, "AT+CIPCLOSE=", 12)) {
@@ -618,6 +624,22 @@ int main(void)
     assert(at_socket_connect(timed_out, UINT32_C(0xC0000209), 9000) == AT_SOCKET_ERRNO_CONNECTION_RESET);
     assert(reset_count == resets_before_timeout);
     assert(at_socket_close(timed_out) == AT_SOCKET_ERRNO_NONE);
+
+    /* A completed CIPSEND whose final response is lost must not poison the
+     * transport or leak the logical descriptor across repeated reconnects. */
+    for (unsigned i = 0U; i < 20U; ++i) {
+        int retry = at_socket_create(AT_SOCKET_TYPE_STREAM);
+        assert(retry == (int)AT_SOCKET_FD_BASE);
+        assert(at_socket_bind(retry, UINT32_C(0xC0A80128), 0U) == AT_SOCKET_ERRNO_NONE);
+        assert(at_socket_connect(retry, UINT32_C(0xC0000209), 9000) == AT_SOCKET_ERRNO_NONE);
+        cipsend_timeout = true;
+        static const uint8_t lost_response_payload[129] = {0};
+        assert(at_socket_send(retry, lost_response_payload,
+                              sizeof(lost_response_payload)) ==
+               AT_SOCKET_ERRNO_CONNECTION_RESET);
+        assert(at_socket_close(retry) == AT_SOCKET_ERRNO_NONE);
+        assert(reset_count == resets_before_timeout);
+    }
 
     for (unsigned state = 2U; state <= 3U; ++state) {
         int failed = at_socket_create(AT_SOCKET_TYPE_STREAM); assert(failed == (int)AT_SOCKET_FD_BASE);

@@ -32,6 +32,8 @@ bool at_uart_policy_request_pending_expired(bool request_active, bool request_st
                                                 uint32_t waited_ms, uint32_t timeout_ms);
 bool at_uart_policy_payload_result(size_t payload_length, bool prompt_seen, bool payload_sent,
                                       bool saw_send_ok, bool saw_send_fail, bool final_ok);
+bool at_uart_policy_payload_timeout_is_connection_level(size_t payload_length, bool prompt_seen,
+                                                        bool payload_sent, bool timeout);
 bool at_uart_policy_ble_payload_uses_plain_ok(const char *command, size_t length);
 bool at_uart_policy_sequence_reached(uint32_t dispatched, uint32_t watermark);
 
