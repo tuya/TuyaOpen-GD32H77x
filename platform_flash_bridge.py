@@ -55,6 +55,8 @@ _DFU_USB_PID = "0189"
 _DFU_ALT = "0"
 _DFU_ALT_NAME = "InternalFlash"
 _UART_ISP_ERASE_MODE = "extended"
+_SWD_DEFAULT_FREQUENCY_HZ = 10_000_000
+_SWD_MAX_FREQUENCY_HZ = 50_000_000
 _DFUSE_MODULE = None
 _FLASH_PACKAGE_MODULE = None
 _OSPI_MODULE = None
@@ -166,6 +168,7 @@ def _board_flash_config(using_data: dict, boards_root: str) -> Dict[str, str]:
         "CONFIG_FLASH_UART_ERASE_MODE": _UART_ISP_ERASE_MODE,
         "CONFIG_FLASH_SWD_PACK": _resolve_swd_pack(),
         "CONFIG_FLASH_SWD_PROBE": "",
+        "CONFIG_FLASH_SWD_FREQUENCY_HZ": _swd_frequency(platform_config),
         "CONFIG_FLASH_TARGET_CHIP": canonical_chip,
         "CONFIG_FLASH_SWD_TARGET": canonical_chip,
         "_CONFIG_DIR": str(board_dir if board_dir.is_dir()
@@ -211,6 +214,23 @@ def _backend(config: Dict[str, str]) -> str:
             "Unsupported flash backend '{}'; choose {}".format(
                 backend, ", ".join(_BACKENDS)))
     return backend
+
+
+def _swd_frequency(config: Dict[str, str]) -> str:
+    value = os.environ.get("GD32H77X_SWD_FREQ_HZ", "").strip()
+    if not value:
+        value = config.get("CONFIG_FLASH_SWD_FREQUENCY_HZ", "").strip()
+    if not value:
+        value = str(_SWD_DEFAULT_FREQUENCY_HZ)
+    try:
+        frequency = int(value, 0)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid SWD frequency {value!r}; use an integer in Hz") from exc
+    if frequency <= 0 or frequency > _SWD_MAX_FREQUENCY_HZ:
+        raise ValueError(
+            f"SWD frequency must be between 1 and {_SWD_MAX_FREQUENCY_HZ} Hz")
+    return str(frequency)
 
 
 def _flash_package_module():
@@ -1266,6 +1286,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
             try:
                 ecnvm_payload = Path(padded_ecnvm_path).read_bytes()
                 ecnvm_command = [*pyocd, "flash", *common,
+                    "-f", config["CONFIG_FLASH_SWD_FREQUENCY_HZ"],
                     "-O", "auto_unlock=false", "-O", "keep_unwritten=false",
                     "-O", "smart_flash=false", "-O", "resume_on_disconnect=false",
                     "-e", "sector", "--format", "bin", "--base-address",
@@ -1280,6 +1301,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
                     return {"success": False, "message": f"ECNVM pyOCD flash failed; CNVM was not started: {output or ret}"}
                 ecnvm_readback = isolated / "ecnvm-readback.bin"
                 command = [*pyocd, "commander", *common, "-O", "auto_unlock=false",
+                    "-f", config["CONFIG_FLASH_SWD_FREQUENCY_HZ"],
                     "-O", "resume_on_disconnect=false", "--pack", pack, "--target", target,
                     "--probe", probe_id, "--no-wait", "--command",
                     "savemem 0x{:08X} {} ecnvm-readback.bin".format(ecnvm_start, ecnvm_transfer_size)]
@@ -1295,6 +1317,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
         try:
             payload = Path(temp_image).read_bytes()
             command = [*pyocd, "flash", *common,
+                       "-f", config["CONFIG_FLASH_SWD_FREQUENCY_HZ"],
                        "-O", "auto_unlock=false",
                        "-O", "keep_unwritten=false",
                        "-O", "smart_flash=false",
@@ -1314,6 +1337,7 @@ def _flash_swd(config, report, image, port, start, limit, capacity, logger,
             if _boolean(config, "CONFIG_FLASH_VERIFY", True):
                 readback_path = isolated / "readback.bin"
                 readback_cmd = [*pyocd, "commander", *common,
+                                "-f", config["CONFIG_FLASH_SWD_FREQUENCY_HZ"],
                                 "-O", "auto_unlock=false",
                                 "-O", "resume_on_disconnect=false",
                                 "--pack", pack,

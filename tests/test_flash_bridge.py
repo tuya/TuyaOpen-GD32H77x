@@ -471,7 +471,9 @@ class TestGd32h77xFlashBridge(unittest.TestCase):
                  patch.object(bridge, "_validate_swd_pack", side_effect=fake_validate_pack), \
                  patch.object(bridge, "_run_pyocd", side_effect=fake_run):
                 result = bridge._flash_swd({"CONFIG_FLASH_SWD_TARGET": "GD32H779VW",
-                    "CONFIG_FLASH_SWD_PACK": "/fake.pack", "CONFIG_FLASH_VERIFY": "n"},
+                    "CONFIG_FLASH_SWD_PACK": "/fake.pack",
+                    "CONFIG_FLASH_SWD_FREQUENCY_HZ": "10000000",
+                    "CONFIG_FLASH_VERIFY": "n"},
                     report, cnvm, "", 0x08000000, 0x080E0000, 0xE0000, None, mapped)
             self.assertFalse(result["success"])
             self.assertIn("ECNVM readback failed", result["message"])
