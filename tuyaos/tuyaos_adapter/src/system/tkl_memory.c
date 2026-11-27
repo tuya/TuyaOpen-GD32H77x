@@ -291,12 +291,14 @@ typedef struct {
 
 static tkl_psram_block_t s_psram_blocks[TKL_PSRAM_MAX_BLOCKS];
 static SemaphoreHandle_t s_psram_block_lock;
+#if !defined(GD32H77X_PSRAM_OCTAL) || (GD32H77X_PSRAM_OCTAL == 0)
 static aps6404_dev_struct s_vendor_psram;
 static bool s_vendor_psram_ready;
 static uint8_t s_psram_crosscheck_tx[TKL_PSRAM_CROSSCHECK_SIZE]
     __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
 static uint8_t s_psram_crosscheck_rx[TKL_PSRAM_CROSSCHECK_SIZE]
     __attribute__((aligned(TKL_PSRAM_ALIGNMENT)));
+#endif
 
 static bool __tkl_psram_lock(void)
 {
@@ -349,6 +351,10 @@ static bool __tkl_psram_is_addr(const void *ptr)
 
 static bool __tkl_psram_wait_idle(void)
 {
+    if ((OSPI_CTL(OSPI0) & OSPI_CTL_FMOD) == OSPI_MEMORY_MAPPED) {
+        return (OSPI_STAT(OSPI0) & (OSPI_FLAG_TERR | OSPI_FLAG_TMOUT)) == 0U;
+    }
+
     for (uint32_t count = 0U; count < 2000000U; ++count) {
         uint32_t status = OSPI_STAT(OSPI0);
         if ((status & OSPI_FLAG_TERR) != 0U) {
@@ -389,6 +395,7 @@ static bool __tkl_psram_store_word(uint8_t *address, uint32_t value)
     return false;
 }
 
+#if !defined(GD32H77X_PSRAM_OCTAL) || (GD32H77X_PSRAM_OCTAL == 0)
 static void __tkl_psram_fill_pattern(uint8_t *buffer, uint32_t size,
                                      uint8_t seed)
 {
@@ -552,6 +559,7 @@ static OPERATE_RET __tkl_vendor_psram_init(void)
                    tkl_system_psram_get_free_heap_size());
     return OPRT_OK;
 }
+#endif /* non-octal vendor PSRAM path */
 #endif /* ENABLE_PSRAM */
 
 #if defined(ENABLE_EXT_RAM) && (ENABLE_EXT_RAM == 1)
@@ -634,6 +642,7 @@ static gd32h77x_psram_config_t __tkl_psram_config(void)
             .pa1_switch_open = GD32H77X_PSRAM_PA1_SWITCH_OPEN != 0,
             .set_pc2_switch = GD32H77X_PSRAM_PC2_SWITCH_SET != 0,
             .pc2_switch_open = GD32H77X_PSRAM_PC2_SWITCH_OPEN != 0,
+            .octal = GD32H77X_PSRAM_OCTAL != 0,
             .cs = {
                 .port = GD32H77X_PSRAM_CS_GPIO_PORT,
                 .clock = GD32H77X_PSRAM_CS_GPIO_CLOCK,
@@ -671,6 +680,42 @@ static gd32h77x_psram_config_t __tkl_psram_config(void)
                     .pin = GD32H77X_PSRAM_IO3_GPIO_PIN,
                     .alternate = GD32H77X_PSRAM_IO3_GPIO_AF,
                 },
+                {
+                    .port = GD32H77X_PSRAM_IO4_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO4_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO4_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO4_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO5_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO5_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO5_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO5_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO6_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO6_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO6_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO6_GPIO_AF,
+                },
+                {
+                    .port = GD32H77X_PSRAM_IO7_GPIO_PORT,
+                    .clock = GD32H77X_PSRAM_IO7_GPIO_CLOCK,
+                    .pin = GD32H77X_PSRAM_IO7_GPIO_PIN,
+                    .alternate = GD32H77X_PSRAM_IO7_GPIO_AF,
+                },
+            },
+            .dqs = {
+                .port = GD32H77X_PSRAM_DQS_GPIO_PORT,
+                .clock = GD32H77X_PSRAM_DQS_GPIO_CLOCK,
+                .pin = GD32H77X_PSRAM_DQS_GPIO_PIN,
+                .alternate = GD32H77X_PSRAM_DQS_GPIO_AF,
+            },
+            .reset_enabled = GD32H77X_PSRAM_RESET_ENABLED != 0,
+            .reset = {
+                .port = GD32H77X_PSRAM_RESET_GPIO_PORT,
+                .clock = GD32H77X_PSRAM_RESET_GPIO_CLOCK,
+                .pin = GD32H77X_PSRAM_RESET_GPIO_PIN,
             },
         },
     };
@@ -696,7 +741,8 @@ static OPERATE_RET __tkl_psram_status(gd32h77x_status_t status)
 
 OPERATE_RET tkl_system_psram_init(void)
 {
-#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1)
+#if defined(ENABLE_PSRAM) && (ENABLE_PSRAM == 1) && \
+    (!defined(GD32H77X_PSRAM_OCTAL) || (GD32H77X_PSRAM_OCTAL == 0))
     return __tkl_vendor_psram_init();
 #else
     tkl_log_output("[PSRAM] platform init begin\r\n");
@@ -908,6 +954,27 @@ static void *__tkl_psram_memset(void *dst, int value, size_t size)
     return result;
 }
 
+static uint8_t __tkl_psram_read_byte(const uint8_t *address, bool psram)
+{
+    return psram ? *(volatile const uint8_t *)address : *address;
+}
+
+static bool __tkl_psram_write_byte(uint8_t *address, bool psram, uint8_t value)
+{
+    if (!psram) {
+        *address = value;
+        return true;
+    }
+    uintptr_t block = (uintptr_t)address & ~(uintptr_t)(sizeof(uint32_t) - 1U);
+    size_t offset = (uintptr_t)address - block;
+    uint32_t word;
+    if (!__tkl_psram_load_word((const uint8_t *)block, &word)) {
+        return false;
+    }
+    *((uint8_t *)&word + offset) = value;
+    return __tkl_psram_store_word((uint8_t *)block, word);
+}
+
 void *gd32h77x_psram_memcpy(void *dst, const void *src, size_t size)
 {
     if (size == 0U) {
@@ -923,65 +990,61 @@ void *gd32h77x_psram_memcpy(void *dst, const void *src, size_t size)
         return memcpy(dst, src, size);
     }
     if ((dst_psram && !__tkl_psram_range(dst, size)) ||
-        (src_psram && !__tkl_psram_range(src, size))) {
-        return NULL;
-    }
-    if (!__tkl_psram_wait_idle()) {
+        (src_psram && !__tkl_psram_range(src, size)) ||
+        !__tkl_psram_wait_idle()) {
         return NULL;
     }
 
-    /* The caller serializes mapped operations. Poll once per copy, then use
-     * ordered 32-bit transactions with a DSB after each write. */
     uint8_t *out = dst;
     const uint8_t *in = src;
-    while (size > 0U) {
-        uintptr_t dst_block = (uintptr_t)out & ~(uintptr_t)(sizeof(uint32_t) - 1U);
-        uintptr_t src_block = (uintptr_t)in & ~(uintptr_t)(sizeof(uint32_t) - 1U);
-        size_t dst_offset = (uintptr_t)out - dst_block;
-        size_t src_offset = (uintptr_t)in - src_block;
-        size_t chunk = sizeof(uint32_t) - dst_offset;
-        if (chunk > sizeof(uint32_t) - src_offset) {
-            chunk = sizeof(uint32_t) - src_offset;
-        }
-        if (chunk > size) {
-            chunk = size;
-        }
+    size_t remaining = size;
 
-        if (dst_psram) {
-            uint32_t dst_word;
-            if (!__tkl_psram_load_word((const uint8_t *)dst_block, &dst_word)) {
-                return NULL;
-            }
-            if (src_psram) {
-                uint32_t src_word;
-                if (!__tkl_psram_load_word((const uint8_t *)src_block, &src_word)) {
-                    return NULL;
-                }
-                memcpy((uint8_t *)&dst_word + dst_offset,
-                       (const uint8_t *)&src_word + src_offset, chunk);
-            } else {
-                memcpy((uint8_t *)&dst_word + dst_offset, in, chunk);
-            }
-            if (!__tkl_psram_store_word((uint8_t *)dst_block, dst_word)) {
-                return NULL;
+    while (remaining != 0U &&
+           (((uintptr_t)out & (sizeof(uint32_t) - 1U)) != 0U)) {
+        if (!__tkl_psram_write_byte(out, dst_psram,
+                                    __tkl_psram_read_byte(in, src_psram))) {
+            return NULL;
+        }
+        ++out;
+        ++in;
+        --remaining;
+    }
+
+    while (remaining >= sizeof(uint32_t)) {
+        uint32_t word;
+        if (src_psram &&
+            (((uintptr_t)in & (sizeof(uint32_t) - 1U)) == 0U)) {
+            word = *(volatile const uint32_t *)in;
+        } else if (src_psram) {
+            uint8_t *bytes = (uint8_t *)&word;
+            for (uint32_t index = 0U; index < sizeof(word); ++index) {
+                bytes[index] = __tkl_psram_read_byte(in + index, true);
             }
         } else {
-            uint32_t src_word;
-            if (!__tkl_psram_load_word((const uint8_t *)src_block, &src_word)) {
-                return NULL;
-            }
-            memcpy(out, (const uint8_t *)&src_word + src_offset, chunk);
+            memcpy(&word, in, sizeof(word));
         }
+        if (dst_psram) {
+            *(volatile uint32_t *)out = word;
+        } else {
+            memcpy(out, &word, sizeof(word));
+        }
+        out += sizeof(word);
+        in += sizeof(word);
+        remaining -= sizeof(word);
+    }
 
-        out += chunk;
-        in += chunk;
-        size -= chunk;
+    while (remaining != 0U) {
+        if (!__tkl_psram_write_byte(out, dst_psram,
+                                    __tkl_psram_read_byte(in, src_psram))) {
+            return NULL;
+        }
+        ++out;
+        ++in;
+        --remaining;
     }
+
     __DSB();
-    if (!__tkl_psram_wait_idle()) {
-        return NULL;
-    }
-    return dst;
+    return __tkl_psram_wait_idle() ? dst : NULL;
 }
 
 void *gd32h77x_psram_memset(void *dst, int value, size_t size)
@@ -995,39 +1058,38 @@ void *gd32h77x_psram_memset(void *dst, int value, size_t size)
     if (!__tkl_psram_is_addr(dst)) {
         return memset(dst, value, size);
     }
-    if (!__tkl_psram_range(dst, size)) {
-        return NULL;
-    }
-    if (!__tkl_psram_wait_idle()) {
+    if (!__tkl_psram_range(dst, size) || !__tkl_psram_wait_idle()) {
         return NULL;
     }
 
     uint8_t *out = dst;
-    while (size > 0U) {
-        uintptr_t block = (uintptr_t)out & ~(uintptr_t)(sizeof(uint32_t) - 1U);
-        size_t offset = (uintptr_t)out - block;
-        size_t chunk = sizeof(uint32_t) - offset;
-        if (chunk > size) {
-            chunk = size;
-        }
+    size_t remaining = size;
+    uint8_t byte = (uint8_t)value;
+    uint32_t word_value = (uint32_t)byte * 0x01010101U;
 
-        uint32_t word;
-        if (!__tkl_psram_load_word((const uint8_t *)block, &word)) {
+    while (remaining != 0U &&
+           (((uintptr_t)out & (sizeof(uint32_t) - 1U)) != 0U)) {
+        if (!__tkl_psram_write_byte(out, true, byte)) {
             return NULL;
         }
-        memset((uint8_t *)&word + offset, value, chunk);
-        if (!__tkl_psram_store_word((uint8_t *)block, word)) {
-            return NULL;
-        }
-
-        out += chunk;
-        size -= chunk;
+        ++out;
+        --remaining;
     }
+    while (remaining >= sizeof(uint32_t)) {
+        *(volatile uint32_t *)out = word_value;
+        out += sizeof(uint32_t);
+        remaining -= sizeof(uint32_t);
+    }
+    while (remaining != 0U) {
+        if (!__tkl_psram_write_byte(out, true, byte)) {
+            return NULL;
+        }
+        ++out;
+        --remaining;
+    }
+
     __DSB();
-    if (!__tkl_psram_wait_idle()) {
-        return NULL;
-    }
-    return dst;
+    return __tkl_psram_wait_idle() ? dst : NULL;
 }
 
 void *tkl_system_psram_calloc(size_t nitems, size_t size)

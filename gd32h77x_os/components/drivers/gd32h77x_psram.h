@@ -42,6 +42,7 @@ typedef struct {
     uint32_t capacity_bytes;
     uint32_t max_clock_hz;
     uint32_t probe_clock_hz;
+    const gd32h77x_ospi_timing_t *timing;
     gd32h77x_status_t (*reset)(struct psram_device *device);
     gd32h77x_status_t (*probe)(struct psram_device *device);
     gd32h77x_status_t (*selftest)(struct psram_device *device);
@@ -73,9 +74,11 @@ typedef struct {
     uint32_t clock_hz;
     gd32h77x_psram_access_mode_t access_mode;
     gd32h77x_ospi_config_t controller;
+    const gd32h77x_ospi_timing_t *timing_override;
 } gd32h77x_psram_config_t;
 
 extern const gd32h77x_psram_profile_ops_t gd32h77x_psram_aps6404l_ops;
+extern const gd32h77x_psram_profile_ops_t gd32h77x_psram_aps6408l_ops;
 
 gd32h77x_status_t gd32h77x_psram_init(const gd32h77x_psram_config_t *config);
 gd32h77x_status_t gd32h77x_psram_deinit(void);
@@ -89,6 +92,7 @@ gd32h77x_status_t gd32h77x_psram_write(uint32_t offset, const void *data,
                                        size_t size);
 gd32h77x_status_t gd32h77x_psram_fill(uint32_t offset, uint8_t value,
                                       size_t size);
+gd32h77x_status_t gd32h77x_psram_wait_ready(void);
 uint8_t gd32h77x_psram_last_id(void);
 uint32_t gd32h77x_psram_last_probe_data(uint8_t *data, uint32_t capacity);
 

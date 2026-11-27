@@ -51,8 +51,8 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
     tuya_partition_id = resolved["layout"]["ota_policy"]["kv"]
     tuya_partition = _partition(resolved, tuya_partition_id)
     boot_base = _cpu_partition_base(resolved, "boot")
-    vector_base = _cpu_partition_base(resolved, "primary")
-    app_limit = vector_base + _number(primary_partition["size_bytes"])
+    primary_base = _cpu_partition_base(resolved, "primary")
+    app_limit = primary_base + _number(primary_partition["size_bytes"])
     ecnvm_regions = [item for item in resolved["layout"].get("linker_memory", [])
                      if item.get("name") == "ECNVM"]
     if len(ecnvm_regions) > 1:
@@ -82,6 +82,10 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
                             _number(kv_device["cpu_base"]) + _number(kv_device["capacity_bytes"])):
             raise ValueError("ECNVM code must end at the KV partition and KV must end at ECNVM")
     flash_image = resolved.get("layout", {}).get("flash_image", {})
+    vector_partition = flash_image.get("vector_partition", "primary")
+    if vector_partition not in ("boot", "primary"):
+        raise ValueError("Resolved flash image has an invalid vector partition")
+    vector_base = _cpu_partition_base(resolved, vector_partition)
     ram_regions = [entry for entry in resolved.get("layout", {}).get("linker_memory", [])
                    if entry.get("name") == "AXISRAM"]
     if len(ram_regions) != 1:
@@ -91,7 +95,7 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
     if (_number(flash_image.get("start_address", -1)) != boot_base
             or _number(flash_image.get("end_address", -1)) != app_limit):
         raise ValueError("Resolved full-image window differs from the mapped boot/primary regions")
-    if boot_base >= vector_base or app_limit <= vector_base:
+    if boot_base > vector_base or app_limit <= vector_base:
         raise ValueError("Resolved boot/primary address range is invalid")
     elf = Path(elf_path).read_bytes()
     binary = Path(bin_path).read_bytes()
@@ -128,10 +132,15 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
             if name and index:
                 symbols[string_at(table, name)] = value
 
-    boot = by_name[".boot_table"]
+    boot = by_name.get(".boot_table")
     vectors = by_name[".vectors"]
-    if boot[3] != boot_base or boot[5] != 8 or vectors[3] != vector_base:
-        raise ValueError("ELF boot/vector sections do not match the resolved layout")
+    if vectors[3] != vector_base:
+        raise ValueError("ELF vector section does not match the resolved layout")
+    if vector_partition == "boot":
+        if boot is not None:
+            raise ValueError("Direct-vector boot must not link a separate boot table")
+    elif boot is None or boot[3] != boot_base or boot[5] != 8:
+        raise ValueError("ELF boot section does not match the resolved layout")
     if len(binary) < vector_base - boot_base + vectors[5] or len(binary) > app_limit - boot_base:
         raise ValueError("BIN is truncated or extends beyond the primary partition")
     program_offset = struct.unpack_from("<I", elf, 28)[0]
@@ -202,7 +211,7 @@ def verify(elf_path, bin_path, resolved_layout_path, bin_name=None, elf_name=Non
         raise ValueError("ECNVM BIN was supplied but ELF has no ECNVM load sections")
     if bool(ecnvm_enabled) != bool(ecnvm_ranges):
         raise ValueError("ECNVM verification mode does not match ELF ECNVM sections")
-    if binary[:8] != elf[boot[4]:boot[4] + 8]:
+    if vector_partition == "primary" and binary[:8] != elf[boot[4]:boot[4] + 8]:
         raise ValueError("BIN boot table differs from ELF")
     vector_data = binary[vector_base - boot_base:vector_base - boot_base + vectors[5]]
     if vector_data != elf[vectors[4]:vectors[4] + vectors[5]]:

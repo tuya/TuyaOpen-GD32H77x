@@ -30,6 +30,17 @@
 #define APS6404L_KGD_PASS       0x5DU
 #define APS6404L_MMAP_TIMEOUT   32U
 
+static const gd32h77x_ospi_timing_t s_aps6404l_timing = {
+    .sample_shift = OSPI_SAMPLE_SHIFTING_HALF_CYCLE,
+    .fifo_threshold = OSPI_FIFO_THRESHOLD_4,
+    .device_size = OSPI_MESZ_8_MBS,
+    .cs_high_time = OSPI_CS_HIGH_TIME_3_CYCLE,
+    .memory_type = OSPI_STANDARD_MODE,
+    .delay_hold_cycle = OSPI_DELAY_HOLD_NONE,
+    .sample_delay = OSPI_SAMPLE_DELAY_DISABLE,
+    .refrate = 0U,
+};
+
 static gd32h77x_status_t __transfer(gd32h77x_psram_device_t *device,
                               uint8_t instruction, uint32_t address,
                               bool has_address, bool read, uint32_t data_mode,
@@ -37,15 +48,19 @@ static gd32h77x_status_t __transfer(gd32h77x_psram_device_t *device,
                               uint32_t size)
 {
     gd32h77x_ospi_transfer_t transfer = {
-        .instruction = instruction,
+        .frame = {
+            .instruction = instruction,
+            .instruction_mode = OSPI_INSTRUCTION_1_LINE,
+            .instruction_size = OSPI_INSTRUCTION_8_BITS,
+            .address_mode = has_address ? OSPI_ADDRESS_4_LINES
+                                        : OSPI_ADDRESS_NONE,
+            .address_size = OSPI_ADDRESS_24_BITS,
+            .data_mode = data_mode,
+            .dummy_cycles = dummy_cycles,
+        },
         .address = address,
         .has_address = has_address,
         .read = read,
-        .instruction_mode = OSPI_INSTRUCTION_1_LINE,
-        .address_mode = has_address ? OSPI_ADDRESS_4_LINES : OSPI_ADDRESS_NONE,
-        .address_size = OSPI_ADDRESS_24_BITS,
-        .data_mode = data_mode,
-        .dummy_cycles = dummy_cycles,
         .data = data,
         .size = size,
     };
@@ -138,13 +153,37 @@ static gd32h77x_status_t __aps_read(gd32h77x_psram_device_t *device,
 
 static gd32h77x_status_t __aps_reset(gd32h77x_psram_device_t *device)
 {
-    gd32h77x_status_t rt = __transfer(device, APS6404L_CMD_RESET_EN, 0U, false,
-                                false, OSPI_DATA_NONE, 0U, NULL, 0U);
+    /* The PSRAM may still be in QPI mode after an MCU-only reset. An
+     * incomplete QPI command is ignored by a device already in SPI mode. */
+    gd32h77x_ospi_transfer_t command = {
+        .frame = {
+            .instruction = APS6404L_CMD_RESET_EN,
+            .instruction_mode = OSPI_INSTRUCTION_4_LINES,
+            .instruction_size = OSPI_INSTRUCTION_8_BITS,
+            .address_mode = OSPI_ADDRESS_NONE,
+            .address_size = OSPI_ADDRESS_24_BITS,
+            .data_mode = OSPI_DATA_NONE,
+        },
+    };
+    gd32h77x_status_t rt =
+        gd32h77x_ospi_transfer(&device->controller, &command);
     if (rt != GD32H77X_STATUS_OK) {
         return rt;
     }
-    rt = __transfer(device, APS6404L_CMD_RESET, 0U, false, false,
-                    OSPI_DATA_NONE, 0U, NULL, 0U);
+    command.frame.instruction = APS6404L_CMD_RESET;
+    rt = gd32h77x_ospi_transfer(&device->controller, &command);
+    if (rt != GD32H77X_STATUS_OK) {
+        return rt;
+    }
+
+    command.frame.instruction = APS6404L_CMD_RESET_EN;
+    command.frame.instruction_mode = OSPI_INSTRUCTION_1_LINE;
+    rt = gd32h77x_ospi_transfer(&device->controller, &command);
+    if (rt != GD32H77X_STATUS_OK) {
+        return rt;
+    }
+    command.frame.instruction = APS6404L_CMD_RESET;
+    rt = gd32h77x_ospi_transfer(&device->controller, &command);
     if (rt == GD32H77X_STATUS_OK) {
         vTaskDelay(pdMS_TO_TICKS(1U));
     }
@@ -155,15 +194,17 @@ static gd32h77x_status_t __aps_probe(gd32h77x_psram_device_t *device)
 {
     uint8_t id[8] = {0};
     gd32h77x_ospi_transfer_t transfer = {
-        .instruction = APS6404L_CMD_READ_ID,
+        .frame = {
+            .instruction = APS6404L_CMD_READ_ID,
+            .instruction_mode = OSPI_INSTRUCTION_1_LINE,
+            .instruction_size = OSPI_INSTRUCTION_8_BITS,
+            .address_mode = OSPI_ADDRESS_1_LINE,
+            .address_size = OSPI_ADDRESS_24_BITS,
+            .data_mode = OSPI_DATA_1_LINE,
+        },
         .address = 0U,
         .has_address = true,
         .read = true,
-        .instruction_mode = OSPI_INSTRUCTION_1_LINE,
-        .address_mode = OSPI_ADDRESS_1_LINE,
-        .address_size = OSPI_ADDRESS_24_BITS,
-        .data_mode = OSPI_DATA_1_LINE,
-        .dummy_cycles = 0U,
         .data = id,
         .size = sizeof(id),
     };
@@ -182,24 +223,36 @@ static gd32h77x_status_t __aps_probe(gd32h77x_psram_device_t *device)
 
 static gd32h77x_status_t __aps_selftest(gd32h77x_psram_device_t *device)
 {
-    const uint32_t offset = device->capacity_bytes - 16U;
-    const uint32_t pattern[4] = {
-        0x13572468U, 0x89ABCDEFU, 0xA5C35A3CU, 0x5A5A5A5AU,
+    static const uint32_t offsets[] = {
+        0x000000U,
+        0x0003F0U,
+        0x123456U,
+        8U * 1024U * 1024U - 64U,
     };
-    uint32_t readback[4] = {0};
+    uint8_t write_data[64];
+    uint8_t read_data[64];
 
-    gd32h77x_status_t rt =
-        __aps_write(device, offset, pattern, sizeof(pattern));
-    if (rt != GD32H77X_STATUS_OK) {
-        return rt;
+    for (uint32_t test = 0U;
+         test < sizeof(offsets) / sizeof(offsets[0]); ++test) {
+        for (uint32_t index = 0U; index < sizeof(write_data); ++index) {
+            write_data[index] = (uint8_t)(index * 7U + test * 31U + 0x5AU);
+        }
+        memset(read_data, 0, sizeof(read_data));
+        gd32h77x_status_t rt = __aps_write(
+            device, offsets[test], write_data, sizeof(write_data));
+        if (rt != GD32H77X_STATUS_OK) {
+            return rt;
+        }
+        rt = __aps_read(device, offsets[test], read_data,
+                        sizeof(read_data));
+        if (rt != GD32H77X_STATUS_OK) {
+            return rt;
+        }
+        if (memcmp(write_data, read_data, sizeof(write_data)) != 0) {
+            return GD32H77X_STATUS_IO_ERROR;
+        }
     }
-    rt = __aps_read(device, offset, readback, sizeof(readback));
-    if (rt != GD32H77X_STATUS_OK) {
-        return rt;
-    }
-    return memcmp(pattern, readback, sizeof(pattern)) == 0
-               ? GD32H77X_STATUS_OK
-               : GD32H77X_STATUS_IO_ERROR;
+    return GD32H77X_STATUS_OK;
 }
 
 static gd32h77x_status_t __aps_configure_memory_mapped(
@@ -209,9 +262,23 @@ static gd32h77x_status_t __aps_configure_memory_mapped(
         (uint32_t)(((uint64_t)device->clock_hz * APS6404L_TCEM_NS) /
                    1000000000ULL);
     gd32h77x_ospi_memory_mapped_t config = {
-        .read_instruction = APS6404L_CMD_QUAD_READ,
-        .write_instruction = APS6404L_CMD_QUAD_WRITE,
-        .read_dummy_cycles = APS6404L_READ_DUMMY,
+        .read_frame = {
+            .instruction = APS6404L_CMD_QUAD_READ,
+            .instruction_mode = OSPI_INSTRUCTION_1_LINE,
+            .instruction_size = OSPI_INSTRUCTION_8_BITS,
+            .address_mode = OSPI_ADDRESS_4_LINES,
+            .address_size = OSPI_ADDRESS_24_BITS,
+            .data_mode = OSPI_DATA_4_LINES,
+            .dummy_cycles = APS6404L_READ_DUMMY,
+        },
+        .write_frame = {
+            .instruction = APS6404L_CMD_QUAD_WRITE,
+            .instruction_mode = OSPI_INSTRUCTION_1_LINE,
+            .instruction_size = OSPI_INSTRUCTION_8_BITS,
+            .address_mode = OSPI_ADDRESS_4_LINES,
+            .address_size = OSPI_ADDRESS_24_BITS,
+            .data_mode = OSPI_DATA_4_LINES,
+        },
         .timeout_cycles = APS6404L_MMAP_TIMEOUT,
         .refresh_cycles = tcem_cycles / 2U,
     };
@@ -223,6 +290,7 @@ const gd32h77x_psram_profile_ops_t gd32h77x_psram_aps6404l_ops = {
     .capacity_bytes = APS6404L_CAPACITY_BYTES,
     .max_clock_hz = APS6404L_MAX_CLOCK_HZ,
     .probe_clock_hz = APS6404L_PROBE_CLOCK_HZ,
+    .timing = &s_aps6404l_timing,
     .reset = __aps_reset,
     .probe = __aps_probe,
     .selftest = __aps_selftest,

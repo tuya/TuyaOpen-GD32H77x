@@ -422,10 +422,53 @@ config GD32H77X_PSRAM_IO3_PIN
     depends on ENABLE_GD32H77X_PSRAM
     default ""
 
+config GD32H77X_PSRAM_IO4_PIN
+    string "PSRAM IO4 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Required for eight-line PSRAM profiles. Leave empty for four-line devices.
+
+config GD32H77X_PSRAM_IO5_PIN
+    string "PSRAM IO5 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Required for eight-line PSRAM profiles. Leave empty for four-line devices.
+
+config GD32H77X_PSRAM_IO6_PIN
+    string "PSRAM IO6 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Required for eight-line PSRAM profiles. Leave empty for four-line devices.
+
+config GD32H77X_PSRAM_IO7_PIN
+    string "PSRAM IO7 pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Required for eight-line PSRAM profiles. Leave empty for four-line devices.
+
+config GD32H77X_PSRAM_DQS_PIN
+    string "PSRAM DQS pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Required for DQS-gated eight-line PSRAM profiles.
+
+config GD32H77X_PSRAM_RESET_PIN
+    string "PSRAM hardware reset pin"
+    depends on ENABLE_GD32H77X_PSRAM
+    default ""
+    help
+      Optional active-low PSRAM hardware reset GPIO. Leave empty when the
+      device reset pin is tied high or not connected.
+
 config GD32H77X_PSRAM_CLOCK_HZ
     int "PSRAM clock in Hz"
     depends on ENABLE_GD32H77X_PSRAM
-    range 1000000 84000000
+    range 1000000 133000000
     default 75000000
 
 config GD32H77X_PSRAM_SIZE_MB

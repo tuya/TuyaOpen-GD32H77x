@@ -7,6 +7,7 @@
 
 #include "gd32h77x_psram.h"
 #include "gd32h77x_psram_aps6404l.h"
+#include "gd32h77x_psram_aps6408l.h"
 #include "gd32h77x_status.h"
 
 #include <stddef.h>
@@ -14,14 +15,23 @@
 
 static gd32h77x_psram_device_t s_psram;
 
+static const gd32h77x_psram_profile_ops_t *const s_psram_profiles[] = {
+    &gd32h77x_psram_aps6404l_ops,
+    &gd32h77x_psram_aps6408l_ops,
+};
+
 static const gd32h77x_psram_profile_ops_t *__select_profile(
     const char *profile)
 {
     if (profile == NULL) {
         return NULL;
     }
-    if (strcmp(profile, gd32h77x_psram_aps6404l_ops.name) == 0) {
-        return &gd32h77x_psram_aps6404l_ops;
+    for (uint32_t index = 0U;
+         index < sizeof(s_psram_profiles) / sizeof(s_psram_profiles[0]);
+         ++index) {
+        if (strcmp(profile, s_psram_profiles[index]->name) == 0) {
+            return s_psram_profiles[index];
+        }
     }
     return NULL;
 }
@@ -45,7 +55,7 @@ gd32h77x_status_t gd32h77x_psram_init(const gd32h77x_psram_config_t *config)
     if (ops == NULL || config->capacity_bytes > ops->capacity_bytes ||
         config->clock_hz > ops->max_clock_hz || ops->reset == NULL ||
         ops->probe == NULL || ops->selftest == NULL || ops->read == NULL ||
-        ops->write == NULL ||
+        ops->write == NULL || ops->timing == NULL ||
         (config->access_mode == GD32H77X_PSRAM_MODE_MAPPED &&
          ops->configure_memory_mapped == NULL)) {
         return GD32H77X_STATUS_UNSUPPORTED;
@@ -62,8 +72,11 @@ gd32h77x_status_t gd32h77x_psram_init(const gd32h77x_psram_config_t *config)
     s_psram.access_mode = config->access_mode;
 
     s_psram.stage = GD32H77X_PSRAM_STAGE_CONTROLLER;
+    const gd32h77x_ospi_timing_t *timing =
+        config->timing_override != NULL ? config->timing_override
+                                        : ops->timing;
     gd32h77x_status_t rt =
-        gd32h77x_ospi_init(&s_psram.controller, &config->controller);
+        gd32h77x_ospi_init(&s_psram.controller, &config->controller, timing);
     if (rt != GD32H77X_STATUS_OK) {
         return rt;
     }
@@ -138,6 +151,14 @@ gd32h77x_psram_access_mode_t gd32h77x_psram_access_mode(void)
 gd32h77x_psram_stage_t gd32h77x_psram_stage(void)
 {
     return s_psram.stage;
+}
+
+gd32h77x_status_t gd32h77x_psram_wait_ready(void)
+{
+    if (!s_psram.ready) {
+        return GD32H77X_STATUS_NOT_READY;
+    }
+    return gd32h77x_ospi_wait_ready(&s_psram.controller);
 }
 
 uint8_t gd32h77x_psram_last_id(void)

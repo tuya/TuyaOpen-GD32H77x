@@ -939,6 +939,8 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
     partitions.sort(key=lambda item: (item["logical_base"], item["id"]))
     flash_start = flash_device["cpu_base"] + boot_seg["device_offset_bytes"]
     flash_end = flash_device["cpu_base"] + primary_seg["device_offset_bytes"] + primary["size_bytes"]
+    vector_partition = ("boot" if expected["target_chip"].startswith("GD32H77E")
+                        else "primary")
     return {
         "schema_version": 1,
         "layout_id": layout_id,
@@ -955,6 +957,7 @@ def _normalize_layout(layout: dict, geometries: dict, expected: dict) -> dict:
             "capacity_bytes": flash_end - flash_start,
             "boot_partition": boot["id"],
             "primary_partition": primary["id"],
+            "vector_partition": vector_partition,
         },
         "ota_policy": ota_policy,
         "board_binding": board_binding,
@@ -1092,7 +1095,10 @@ def _generate_header(layout: dict) -> str:
         "#define GD32H77X_LAYOUT_PRIMARY_BASE {}".format(_u32(layout["partitions"]["primary"]["logical_base"])),
         "#define GD32H77X_LAYOUT_PRIMARY_SIZE {}".format(_u32(layout["partitions"]["primary"]["size_bytes"])),
         "#define GD32H77X_LAYOUT_PRIMARY_END {}".format(_u32(layout["partitions"]["primary"]["logical_base"] + layout["partitions"]["primary"]["size_bytes"])),
-        "#define GD32H77X_LAYOUT_VECTOR_BASE GD32H77X_LAYOUT_PRIMARY_BASE",
+        "#define GD32H77X_LAYOUT_VECTOR_BASE {}".format(
+            "GD32H77X_LAYOUT_BOOT_BASE"
+            if layout["flash_image"].get("vector_partition") == "boot"
+            else "GD32H77X_LAYOUT_PRIMARY_BASE"),
         "#define GD32H77X_LAYOUT_FULL_IMAGE_BASE {}".format(_u32(layout["flash_image"]["start_address"])),
         "#define GD32H77X_LAYOUT_FULL_IMAGE_LIMIT {}".format(_u32(layout["flash_image"]["end_address"])),
         "#define GD32H77X_LAYOUT_TUYA_LOGICAL_BASE {}".format(_u32(layout["partitions"][layout["ota_policy"]["kv"]]["logical_base"])),

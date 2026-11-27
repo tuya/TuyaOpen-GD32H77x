@@ -4,6 +4,7 @@ set(GD32H77X_DRIVER_SRCS
     gd32h77x_nor.c
     gd32h77x_ospi.c
     gd32h77x_psram_aps6404l.c
+    gd32h77x_psram_aps6408l.c
     gd32h77x_psram.c
     gd32h77x_psram_pool.c
     gd32h77x_psram_cache.c

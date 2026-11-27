@@ -315,6 +315,55 @@ class PlatformConfigTests(unittest.TestCase):
         for key, expected_value in expected.items():
             self.assertEqual(bindings[key], expected_value, key)
 
+    def test_h77ei_desk_buddy_eight_line_psram_bindings(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H77EIW",
+            ROOT / "boards/GD32H77X/GD32H77EI_DESK_BUDDY/platform_config/gd32h77x.config")
+        bindings = platform_config.hardware_bindings_from_config(values)
+        expected = {
+            "GD32H77X_PSRAM_OCTAL": "1",
+            "GD32H77X_PSRAM_CS_GPIO_PORT": "GPIOG",
+            "GD32H77X_PSRAM_CS_GPIO_PIN": "GPIO_PIN_6",
+            "GD32H77X_PSRAM_CS_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_SCK_GPIO_PORT": "GPIOF",
+            "GD32H77X_PSRAM_SCK_GPIO_PIN": "GPIO_PIN_10",
+            "GD32H77X_PSRAM_SCK_GPIO_AF": "GPIO_AF_9",
+            "GD32H77X_PSRAM_DQS_GPIO_PORT": "GPIOC",
+            "GD32H77X_PSRAM_DQS_GPIO_PIN": "GPIO_PIN_5",
+            "GD32H77X_PSRAM_DQS_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO0_GPIO_PIN": "GPIO_PIN_8",
+            "GD32H77X_PSRAM_IO0_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO1_GPIO_PIN": "GPIO_PIN_9",
+            "GD32H77X_PSRAM_IO1_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO2_GPIO_PIN": "GPIO_PIN_7",
+            "GD32H77X_PSRAM_IO2_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO3_GPIO_PIN": "GPIO_PIN_3",
+            "GD32H77X_PSRAM_IO3_GPIO_AF": "GPIO_AF_8",
+            "GD32H77X_PSRAM_IO4_GPIO_PIN": "GPIO_PIN_4",
+            "GD32H77X_PSRAM_IO4_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO5_GPIO_PIN": "GPIO_PIN_5",
+            "GD32H77X_PSRAM_IO5_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO6_GPIO_PIN": "GPIO_PIN_6",
+            "GD32H77X_PSRAM_IO6_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_IO7_GPIO_PIN": "GPIO_PIN_7",
+            "GD32H77X_PSRAM_IO7_GPIO_AF": "GPIO_AF_10",
+            "GD32H77X_PSRAM_RESET_ENABLED": "1",
+            "GD32H77X_PSRAM_RESET_GPIO_PORT": "GPIOB",
+            "GD32H77X_PSRAM_RESET_GPIO_PIN": "GPIO_PIN_1",
+            "GD32H77X_PSRAM_OSPIM_PORT": "0",
+            "GD32H77X_PSRAM_SIZE_BYTES": "8388608U",
+        }
+        for key, expected_value in expected.items():
+            self.assertEqual(bindings[key], expected_value, key)
+
+    def test_eight_line_psram_requires_dqs(self):
+        values = platform_config.resolve_config(
+            PLATFORM, "GD32H77EIW",
+            ROOT / "boards/GD32H77X/GD32H77EI_DESK_BUDDY/platform_config/gd32h77x.config")
+        values["CONFIG_GD32H77X_PSRAM_DQS_PIN"] = ""
+        with self.assertRaisesRegex(ValueError, "PSRAM DQS pin must not be empty"):
+            platform_config.hardware_bindings_from_config(values)
+
     def test_psram_rejects_unverified_route(self):
         values = platform_config.resolve_config(
             PLATFORM, "GD32H779IW",

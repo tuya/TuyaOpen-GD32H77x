@@ -10,12 +10,17 @@ import re
 # OSPIM port -> signal -> verified MCU pin -> AF number.
 OSPIM_ROUTES = {
     0: {
-        "CS": {"PE11": 11},
-        "SCK": {"PB2": 9, "PA3": 12},
-        "IO0": {"PA2": 6},
-        "IO1": {"PB0": 4},
-        "IO2": {"PC2_C": 9, "PA3": 6},
-        "IO3": {"PA1": 9, "PA6": 6},
+        "CS": {"PE11": 11, "PG6": 10},
+        "SCK": {"PB2": 9, "PA3": 12, "PF10": 9},
+        "DQS": {"PC5": 10},
+        "IO0": {"PA2": 6, "PF8": 10},
+        "IO1": {"PB0": 4, "PF9": 10},
+        "IO2": {"PC2_C": 9, "PA3": 6, "PF7": 10},
+        "IO3": {"PA1": 9, "PA6": 6, "PD3": 8},
+        "IO4": {"PD4": 10},
+        "IO5": {"PD5": 10},
+        "IO6": {"PD6": 10},
+        "IO7": {"PD7": 10},
     },
     # Port 1 routes will be added only after the same datasheet/board review.
     1: {},
@@ -61,7 +66,7 @@ def ospi_signal_binding(port: int, signal: str, pin: str) -> dict[str, str]:
 
 def validate_ospi_package(chip: str, pins: list[str]) -> None:
     """Validate that the package exposes every selected PSRAM pad."""
-    if not chip.startswith("GD32H779"):
+    if not chip.startswith(("GD32H779", "GD32H77E")):
         return
     package = chip[8]
     ports = {"V": "ABCDE", "Z": "ABCDEFG", "I": "ABCDEFGH"}.get(package)

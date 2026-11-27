@@ -17,7 +17,7 @@ import kconfiglib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from at_routes import UART_ROUTES, SPI_ROUTES, pin_binding, signal_binding, validate_package
-from ospi_routes import ospi_signal_binding, validate_ospi_package
+from ospi_routes import ospi_pin_binding, ospi_signal_binding, validate_ospi_package
 
 
 PLATFORM = "GD32H77X"
@@ -193,6 +193,7 @@ def _psram_bindings(values: dict[str, str], pins: dict[str, str],
     profile = values.get("CONFIG_GD32H77X_PSRAM_PROFILE", "")
     if not profile:
         raise ValueError("GD32H77X_PSRAM_PROFILE must not be empty")
+    octal = profile.startswith("APS6408L")
 
     access_modes = [
         mode for mode, symbol in (
@@ -213,8 +214,12 @@ def _psram_bindings(values: dict[str, str], pins: dict[str, str],
         raise ValueError(
             "PSRAM heap offset + size exceeds configured PSRAM capacity")
 
+    signals = ["CS", "SCK", "IO0", "IO1", "IO2", "IO3"]
+    if octal:
+        signals.extend(("IO4", "IO5", "IO6", "IO7", "DQS"))
+
     psram_pins: list[str] = []
-    for signal in ("CS", "SCK", "IO0", "IO1", "IO2", "IO3"):
+    for signal in signals:
         pin = values.get(f"CONFIG_GD32H77X_PSRAM_{signal}_PIN", "")
         if not pin:
             raise ValueError(f"PSRAM {signal} pin must not be empty")
@@ -224,11 +229,27 @@ def _psram_bindings(values: dict[str, str], pins: dict[str, str],
         pins[f"PSRAM {signal}"] = pin
         psram_pins.append(pin)
 
+    reset_pin = values.get("CONFIG_GD32H77X_PSRAM_RESET_PIN", "")
+    if reset_pin:
+        for suffix, token in ospi_pin_binding(reset_pin).items():
+            extra[f"GD32H77X_PSRAM_RESET_GPIO_{suffix}"] = token
+        psram_pins.append(reset_pin)
+
     validate_ospi_package(
         values.get("CONFIG_GD32H77X_PSRAM_CANONICAL_CHIP", ""), psram_pins)
 
     selected = set(psram_pins)
     extra["GD32H77X_PSRAM_OSPIM_PORT"] = str(port)
+    extra["GD32H77X_PSRAM_OCTAL"] = "1" if octal else "0"
+    extra["GD32H77X_PSRAM_RESET_ENABLED"] = "1" if reset_pin else "0"
+
+    # Keep every generated C token defined so the controller can use one
+    # unconditional initializer for both four-line and eight-line devices.
+    for signal in ("IO4", "IO5", "IO6", "IO7", "DQS"):
+        for suffix in ("PORT", "CLOCK", "PIN", "AF"):
+            extra.setdefault(f"GD32H77X_PSRAM_{signal}_GPIO_{suffix}", "0U")
+    for suffix in ("PORT", "CLOCK", "PIN"):
+        extra.setdefault(f"GD32H77X_PSRAM_RESET_GPIO_{suffix}", "0U")
     extra["GD32H77X_PSRAM_MAPPED_BASE"] = "0x90000000U"
     extra["GD32H77X_PSRAM_SIZE_BYTES"] = f"{size_mb * 1024 * 1024}U"
     extra["GD32H77X_PSRAM_HEAP_OFFSET_BYTES"] = f"{heap_offset_kb * 1024}U"

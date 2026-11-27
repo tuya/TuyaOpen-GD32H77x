@@ -211,6 +211,25 @@ class MemoryLayoutResolverTests(unittest.TestCase):
         self.assertEqual(devices["internal_flash"]["vendor_algorithm"],
                          "GD32H77x_78x_CNVM_2M.FLM")
 
+    def test_h77e_uses_direct_vector_boot_at_cnvm_base(self):
+        manifest = resolver.resolve_build_layout(
+            _params(ROOT, "GD32H77EIW", "GD32H77EI_DESK_BUDDY"),
+            platform_root=PLATFORM, boards_root=ROOT / "boards")
+        layout = manifest["layout"]
+        self.assertEqual(layout["partitions"]["boot"]["logical_base"], 0x08000000)
+        self.assertEqual(layout["partitions"]["primary"]["logical_base"], 0x08010000)
+        self.assertEqual(layout["flash_image"]["vector_partition"], "boot")
+        self.assertEqual(layout["flash_image"]["start_address"], 0x08000000)
+
+    def test_h779_keeps_legacy_application_vectors_in_primary(self):
+        manifest = resolver.resolve_build_layout(
+            _params(ROOT, "GD32H779IW", "GD32H779I_DESK_BUDDY"),
+            platform_root=PLATFORM, boards_root=ROOT / "boards")
+        self.assertEqual(
+            manifest["layout"]["flash_image"]["vector_partition"], "primary")
+        self.assertEqual(
+            manifest["layout"]["partitions"]["primary"]["logical_base"], 0x08010000)
+
     def test_geometry_must_be_approved_for_the_selected_chip(self):
         with tempfile.TemporaryDirectory() as temp:
             platform = _platform_copy(temp)

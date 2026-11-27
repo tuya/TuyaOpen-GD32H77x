@@ -1,6 +1,11 @@
 /**
  * @file gd32h77x_ospi.c
- * @brief GD32H77X OSPI/OSPIM controller abstraction.
+ * @brief Thin GD32H77X OSPI/OSPIM adapter over the vendor peripheral driver.
+ *
+ * This file does not implement its own OSPI command engine. It validates the
+ * board-level configuration, translates PSRAM profile frames to vendor command
+ * structures, and delegates register/FIFO handling to the GigaDevice standard
+ * peripheral library.
  *
  * @copyright Copyright (c) 2026 Tuya Inc. All Rights Reserved.
  */
@@ -8,6 +13,7 @@
 #include "gd32h77x_ospi.h"
 
 #include "FreeRTOS.h"
+#include "task.h"
 #include "semphr.h"
 #include "gd32h77x_78x.h"
 #include "gd32h77x_78x_gpio.h"
@@ -21,25 +27,11 @@
 #include <string.h>
 
 #define GD32H77X_OSPI_POLL_LIMIT 2000000U
-#define GD32H77X_OSPI_TCFG_MASK                                             \
-    (OSPI_TCFG_IMOD | OSPI_TCFG_INSDTR | OSPI_TCFG_INSSZ |               \
-     OSPI_TCFG_ADDRMOD | OSPI_TCFG_ADDRDTR | OSPI_TCFG_ADDRSZ |           \
-     OSPI_TCFG_ALTEMOD | OSPI_TCFG_ABDTR | OSPI_TCFG_ALTESZ |             \
-     OSPI_TCFG_DATAMOD | OSPI_TCFG_DADTR | OSPI_TCFG_DQSEN |              \
-     OSPI_TCFG_SIOO)
-#define GD32H77X_OSPI_WTCFG_MASK                                            \
-    (OSPI_WTCFG_IMOD | OSPI_WTCFG_INSDTR | OSPI_WTCFG_INSSZ |             \
-     OSPI_WTCFG_ADDRMOD | OSPI_WTCFG_ADDRDTR | OSPI_WTCFG_ADDRSZ |         \
-     OSPI_WTCFG_ALTEMOD | OSPI_WTCFG_ABDTR | OSPI_WTCFG_ALTESZ |           \
-     OSPI_WTCFG_DATAMOD | OSPI_WTCFG_DADTR | OSPI_WTCFG_DQSEN)
 
 void OSPI0_IRQHandler(void)
 {
-    /* A mapped-mode timeout releases CS, but TMOUT is sticky. The controller
-     * does not guarantee subsequent mapped reads until it is cleared. This
-     * handler must remain independent of FreeRTOS and of PSRAM memory. */
-    if ((OSPI_STAT(OSPI0) & OSPI_FLAG_TMOUT) != 0U) {
-        OSPI_STATC(OSPI0) = OSPI_STATC_TMOUTC;
+    if (SET == ospi_flag_get(OSPI0, OSPI_FLAG_TMOUT)) {
+        ospi_flag_clear(OSPI0, OSPI_FLAG_TMOUT);
         __DSB();
     }
 }
@@ -48,6 +40,12 @@ static bool __pin_valid(const gd32h77x_ospi_pin_t *pin)
 {
     return pin != NULL && pin->port != 0U && pin->clock != 0U &&
            pin->pin != 0U && pin->alternate <= GPIO_AF_15;
+}
+
+static bool __gpio_pin_valid(const gd32h77x_ospi_pin_t *pin)
+{
+    return pin != NULL && pin->port != 0U && pin->clock != 0U &&
+           pin->pin != 0U;
 }
 
 static uint32_t __device_size(uint32_t capacity_bytes)
@@ -84,32 +82,17 @@ static void __unlock(gd32h77x_ospi_t *ospi)
     (void)xSemaphoreGive((SemaphoreHandle_t)ospi->lock);
 }
 
-static int __wait_flag(gd32h77x_ospi_t *ospi, uint32_t flag, bool set)
-{
-    for (uint32_t count = 0U; count < GD32H77X_OSPI_POLL_LIMIT; ++count) {
-        uint32_t status = OSPI_STAT(ospi->periph);
-        if ((status & OSPI_FLAG_TERR) != 0U) {
-            return -1;
-        }
-        if (((status & flag) != 0U) == set) {
-            return 0;
-        }
-    }
-    return -1;
-}
-
 static void __clear_status(gd32h77x_ospi_t *ospi)
 {
-    OSPI_STATC(ospi->periph) =
-        OSPI_STATC_TCC | OSPI_STATC_TERRC | OSPI_STATC_TMOUTC;
+    ospi_flag_clear(ospi->periph,
+                    OSPI_FLAG_TC | OSPI_FLAG_TERR | OSPI_FLAG_TMOUT);
 }
 
 static void __abort_locked(gd32h77x_ospi_t *ospi)
 {
-    if ((OSPI_STAT(ospi->periph) & OSPI_FLAG_BUSY) != 0U) {
-        OSPI_CTL(ospi->periph) |= OSPI_CTL_ABORT;
-        (void)__wait_flag(ospi, OSPI_FLAG_BUSY, false);
-    }
+    ospi_timeout_disable(ospi->periph);
+    ospi_interrupt_disable(ospi->periph, OSPI_INT_TMOUT);
+    ospi_transmission_abort(ospi->periph);
     __clear_status(ospi);
 }
 
@@ -156,42 +139,65 @@ static void __configure_analog_switch(const gd32h77x_ospi_config_t *config)
 
 static void __configure_gpio(const gd32h77x_ospi_config_t *config)
 {
+    uint32_t io_count = config->octal ? 8U : 4U;
+
     __configure_analog_switch(config);
 
-    /* Hold the device deselected with CLK and data low before switching AF. */
-    __prepare_pin_before_af(&config->cs, true);
-    __prepare_pin_before_af(&config->sck, false);
-    for (uint32_t index = 0U; index < 4U; ++index) {
-        __prepare_pin_before_af(&config->io[index], false);
+    if (config->reset_enabled) {
+        rcu_periph_clock_enable(config->reset.clock);
+        gpio_bit_set(config->reset.port, config->reset.pin);
+        gpio_output_options_set(config->reset.port, GPIO_OTYPE_PP,
+                                GPIO_OSPEED_100_220MHZ, config->reset.pin);
+        gpio_mode_set(config->reset.port, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                      config->reset.pin);
     }
 
-    __apply_af(&config->cs, GPIO_PUPD_PULLUP);
+    __prepare_pin_before_af(&config->cs, true);
+    __prepare_pin_before_af(&config->sck, false);
+    for (uint32_t index = 0U; index < io_count; ++index) {
+        __prepare_pin_before_af(&config->io[index], false);
+    }
+    if (config->octal) {
+        __prepare_pin_before_af(&config->dqs, false);
+    }
+
+    __apply_af(&config->cs, config->octal ? GPIO_PUPD_NONE
+                                          : GPIO_PUPD_PULLUP);
     __apply_af(&config->sck, GPIO_PUPD_NONE);
-    __apply_af(&config->io[0], GPIO_PUPD_NONE);
-    __apply_af(&config->io[1], GPIO_PUPD_NONE);
-    /* APS6404L exposes WP/HOLD (SIO2/SIO3) on these pads. In single-line
-     * mode the MCU does not drive them, so keep them deasserted until QPI
-     * transactions explicitly take ownership of the bus. */
-    __apply_af(&config->io[2], GPIO_PUPD_PULLUP);
-    __apply_af(&config->io[3], GPIO_PUPD_PULLUP);
+    for (uint32_t index = 0U; index < io_count; ++index) {
+        __apply_af(&config->io[index], GPIO_PUPD_NONE);
+    }
+    if (config->octal) {
+        __apply_af(&config->dqs, GPIO_PUPD_NONE);
+    }
 }
 
 static void __configure_ospim(const gd32h77x_ospi_config_t *config)
 {
     ospim_port_sck_config(config->ospim_port, OSPIM_PORT_SCK_ENABLE);
-    ospim_port_dqs_config(config->ospim_port, OSPIM_PORT_DQS_DISABLE);
+    ospim_port_dqs_config(config->ospim_port, config->octal
+                                                       ? OSPIM_PORT_DQS_ENABLE
+                                                       : OSPIM_PORT_DQS_DISABLE);
     ospim_port_csn_config(config->ospim_port, OSPIM_PORT_CSN_ENABLE);
     ospim_port_io3_0_config(config->ospim_port, OSPIM_IO_LOW_ENABLE);
-    ospim_port_io7_4_config(config->ospim_port, OSPIM_IO_HIGH_DISABLE);
+    ospim_port_io7_4_config(config->ospim_port, config->octal
+                                                       ? OSPIM_IO_HIGH_ENABLE
+                                                       : OSPIM_IO_HIGH_DISABLE);
     ospim_port_sck_source_select(config->ospim_port,
                                  OSPIM_SCK_SOURCE_OSPI0_SCK);
     ospim_port_csn_source_select(config->ospim_port,
                                  OSPIM_CSN_SOURCE_OSPI0_CSN);
     ospim_port_io3_0_source_select(config->ospim_port,
                                    OSPIM_SRCPLIO_OSPI0_IO_LOW);
+    if (config->octal) {
+        ospim_port_io7_4_source_select(config->ospim_port,
+                                       OSPIM_SRCPHIO_OSPI0_IO_HIGH);
+        ospim_port_dqs_source_select(config->ospim_port,
+                                     OSPIM_DQS_SOURCE_OSPI0_DQS);
+    }
 }
 
-static uint32_t __prescaler(uint32_t clock_hz, uint32_t *actual_hz)
+static uint32_t __prescaler(uint32_t clock_hz)
 {
     uint32_t source_hz = rcu_clock_freq_get(CK_AHB);
     if (source_hz == 0U || clock_hz == 0U) {
@@ -204,24 +210,74 @@ static uint32_t __prescaler(uint32_t clock_hz, uint32_t *actual_hz)
     if (divider > 256U) {
         return UINT32_MAX;
     }
-    if (actual_hz != NULL) {
-        *actual_hz = source_hz / divider;
-    }
     return divider - 1U;
 }
 
-gd32h77x_status_t gd32h77x_ospi_init(gd32h77x_ospi_t *ospi,
-                              const gd32h77x_ospi_config_t *config)
+static void __command_parameters(const gd32h77x_ospi_t *ospi,
+                                 ospi_parameter_struct *parameters)
 {
-    if (ospi == NULL || config == NULL || config->ospim_port > 1U ||
+    ospi_struct_init(parameters);
+    parameters->memory_type = ospi->memory_type;
+    parameters->delay_hold_cycle = ospi->delay_hold_cycle;
+    parameters->dual_quad = OSPI_DUAL_QUAD_MODE_DISABLE;
+}
+
+static void __frame_to_command(const gd32h77x_ospi_frame_t *frame,
+                               uint32_t operation_type, uint32_t address,
+                               bool has_address, uint32_t data_size,
+                               ospi_regular_cmd_struct *command)
+{
+    memset(command, 0, sizeof(*command));
+    command->operation_type = operation_type;
+    command->device_id = OSPI_DEVICE0_SELECT;
+    command->instruction = frame->instruction;
+    command->ins_mode = frame->instruction_mode;
+    command->ins_size = frame->instruction_size != 0U
+                            ? frame->instruction_size
+                            : OSPI_INSTRUCTION_8_BITS;
+    command->ins_dtr_mode = frame->instruction_dtr
+                                ? OSPI_INSDTR_MODE_ENABLE
+                                : OSPI_INSDTR_MODE_DISABLE;
+    command->address = has_address ? address : 0U;
+    command->addr_mode = frame->address_mode;
+    command->addr_size = frame->address_size;
+    command->addr_dtr_mode = frame->address_dtr ? OSPI_ADDRDTR_MODE_ENABLE
+                                                : OSPI_ADDRDTR_MODE_DISABLE;
+    command->alter_bytes = 0U;
+    command->alter_bytes_mode = OSPI_ALTERNATE_BYTES_NONE;
+    command->alter_bytes_size = OSPI_ALTERNATE_BYTES_8_BITS;
+    command->alter_bytes_dtr_mode = OSPI_ABDTR_MODE_DISABLE;
+    command->data_mode = frame->data_mode;
+    command->nbdata = data_size == 0U ? 1U : data_size;
+    command->data_dtr_mode = frame->data_dtr ? OSPI_DADTR_MODE_ENABLE
+                                             : OSPI_DADTR_MODE_DISABLE;
+    command->dummy_cycles = frame->dummy_cycles;
+    command->dqs_mode = frame->dqs_enable ? OSPI_DQS_ENABLE
+                                          : OSPI_DQS_DISABLE;
+    command->sioo_mode = OSPI_SIOO_INST_EVERY_CMD;
+}
+
+gd32h77x_status_t gd32h77x_ospi_init(gd32h77x_ospi_t *ospi,
+                                     const gd32h77x_ospi_config_t *config,
+                                     const gd32h77x_ospi_timing_t *timing)
+{
+    if (ospi == NULL || config == NULL || timing == NULL ||
+        config->ospim_port > 1U ||
         __device_size(config->capacity_bytes) == UINT32_MAX ||
         !__pin_valid(&config->cs) || !__pin_valid(&config->sck)) {
         return GD32H77X_STATUS_INVALID_PARAM;
     }
-    for (uint32_t index = 0U; index < 4U; ++index) {
+    uint32_t io_count = config->octal ? 8U : 4U;
+    for (uint32_t index = 0U; index < io_count; ++index) {
         if (!__pin_valid(&config->io[index])) {
             return GD32H77X_STATUS_INVALID_PARAM;
         }
+    }
+    if (config->octal && !__pin_valid(&config->dqs)) {
+        return GD32H77X_STATUS_INVALID_PARAM;
+    }
+    if (config->reset_enabled && !__gpio_pin_valid(&config->reset)) {
+        return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (ospi->initialized) {
         return GD32H77X_STATUS_OK;
@@ -231,6 +287,13 @@ gd32h77x_status_t gd32h77x_ospi_init(gd32h77x_ospi_t *ospi,
     ospi->periph = OSPI0;
     ospi->ospim_port = config->ospim_port;
     ospi->capacity_bytes = config->capacity_bytes;
+    ospi->reset_enabled = config->reset_enabled;
+    ospi->memory_type = timing->memory_type;
+    ospi->delay_hold_cycle = timing->delay_hold_cycle;
+    if (config->reset_enabled) {
+        ospi->reset_port = config->reset.port;
+        ospi->reset_pin = config->reset.pin;
+    }
     ospi->lock = xSemaphoreCreateMutex();
     if (ospi->lock == NULL) {
         return GD32H77X_STATUS_IO_ERROR;
@@ -246,35 +309,47 @@ gd32h77x_status_t gd32h77x_ospi_init(gd32h77x_ospi_t *ospi,
     __configure_gpio(config);
     __configure_ospim(config);
 
-    uint32_t actual_hz = 0U;
-    uint32_t prescaler = __prescaler(config->clock_hz, &actual_hz);
+    uint32_t prescaler = __prescaler(config->clock_hz);
     if (prescaler == UINT32_MAX) {
         vSemaphoreDelete((SemaphoreHandle_t)ospi->lock);
         ospi->lock = NULL;
         return GD32H77X_STATUS_INVALID_PARAM;
     }
 
-    uint32_t dcfg0 = OSPI_DCFG0(OSPI0);
-    dcfg0 &= ~(OSPI_DCFG0_DTYSEL | OSPI_DCFG0_MESZ | OSPI_DCFG0_CSHC |
-               OSPI_DCFG0_RCKADD | OSPI_DCFG0_RSCKDEN | OSPI_DCFG0_RXSFT |
-               OSPI_DCFG0_FRCK);
-    dcfg0 |= OSPI_STANDARD_MODE | __device_size(config->capacity_bytes) |
-             OSPI_CS_HIGH_TIME_3_CYCLE | OSPI_SAMPLE_DELAY_DISABLE;
-    OSPI_DCFG0(OSPI0) = dcfg0;
-    OSPI_DCFG1(OSPI0) = (OSPI_DCFG1(OSPI0) & ~OSPI_DCFG1_PSC) |
-                        OSPI_PSC(prescaler);
-    OSPI_CTL(OSPI0) = (OSPI_CTL(OSPI0) &
-                       ~(OSPI_CTL_FTL | OSPI_CTL_DQMOD |
-                         OSPI_CTL_TERRIE | OSPI_CTL_TCIE | OSPI_CTL_FTIE |
-                         OSPI_CTL_SMIE | OSPI_CTL_TMOUTIE)) |
-                      OSPI_FIFO_THRESHOLD_16 | OSPI_DUAL_QUAD_MODE_DISABLE;
-    OSPI_TIMCFG(OSPI0) =
-        (OSPI_TIMCFG(OSPI0) & ~(OSPI_TIMCFG_SSAMPLE | OSPI_TIMCFG_DEHQC |
-                                OSPI_TIMCFG_DUMYC)) |
-        OSPI_SAMPLE_SHIFTING_HALF_CYCLE | OSPI_DELAY_HOLD_NONE;
-    OSPI_CTL(OSPI0) |= OSPI_CTL_OSPIEN;
-    __clear_status(ospi);
+    ospi_parameter_struct parameters;
+    ospi_struct_init(&parameters);
+    parameters.prescaler = prescaler;
+    parameters.sample_shift = timing->sample_shift;
+    parameters.fifo_threshold = timing->fifo_threshold;
+    parameters.device_size = timing->device_size != 0U
+                                 ? timing->device_size
+                                 : __device_size(config->capacity_bytes);
+    parameters.cs_hightime = timing->cs_high_time;
+    parameters.memory_type = timing->memory_type;
+    parameters.delay_hold_cycle = timing->delay_hold_cycle;
+    parameters.sample_delay = timing->sample_delay;
+    parameters.refrate = timing->refrate;
+    ospi_init(OSPI0, &parameters);
+    ospi_enable(OSPI0);
 
+    if (timing->dqs_rck_add_enable) {
+        ospi_dqs_rck_add_enable(OSPI0);
+    }
+    if (timing->receive_delay_block_enable) {
+        ospi_receive_delay_block_enable(OSPI0);
+    }
+    if (timing->tck_delay_tap != 0U) {
+        ospi_tck_delay_chain_config(OSPI0, timing->tck_delay_tap);
+        ospi_tck_delay_chain_enable(OSPI0);
+    }
+    if (timing->rck_delay_tap != 0U) {
+        ospi_rck_delay_chain_config(OSPI0, timing->rck_delay_tap);
+    }
+    if (timing->receive_sck_delay_chain_select) {
+        ospi_receive_sck_delay_chain_select(OSPI0);
+    }
+
+    __clear_status(ospi);
     ospi->initialized = true;
     return GD32H77X_STATUS_OK;
 }
@@ -285,54 +360,64 @@ gd32h77x_status_t gd32h77x_ospi_set_clock(gd32h77x_ospi_t *ospi,
     if (ospi == NULL || !ospi->initialized || clock_hz == 0U) {
         return GD32H77X_STATUS_INVALID_PARAM;
     }
-    uint32_t prescaler = __prescaler(clock_hz, NULL);
+    uint32_t prescaler = __prescaler(clock_hz);
     if (prescaler == UINT32_MAX) {
         return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (__lock(ospi) != 0) {
         return GD32H77X_STATUS_IO_ERROR;
     }
-    if (__wait_flag(ospi, OSPI_FLAG_BUSY, false) != 0) {
-        __abort_locked(ospi);
-        __unlock(ospi);
-        return GD32H77X_STATUS_TIMEOUT;
+    gd32h77x_status_t rt = gd32h77x_ospi_wait_ready(ospi);
+    if (rt == GD32H77X_STATUS_OK) {
+        ospi_prescaler_config(ospi->periph, prescaler);
+        __DSB();
     }
-    OSPI_DCFG1(ospi->periph) =
-        (OSPI_DCFG1(ospi->periph) & ~OSPI_DCFG1_PSC) | OSPI_PSC(prescaler);
-    __DSB();
     __unlock(ospi);
+    return rt;
+}
+
+gd32h77x_status_t gd32h77x_ospi_wait_ready(gd32h77x_ospi_t *ospi)
+{
+    if (ospi == NULL || !ospi->initialized) {
+        return GD32H77X_STATUS_NOT_READY;
+    }
+
+    for (uint32_t count = 0U; count < GD32H77X_OSPI_POLL_LIMIT; ++count) {
+        if (SET == ospi_flag_get(ospi->periph, OSPI_FLAG_TERR)) {
+            return GD32H77X_STATUS_IO_ERROR;
+        }
+        if (SET == ospi_flag_get(ospi->periph, OSPI_FLAG_TMOUT)) {
+            return GD32H77X_STATUS_TIMEOUT;
+        }
+        if (ospi->memory_mapped ||
+            RESET == ospi_flag_get(ospi->periph, OSPI_FLAG_BUSY)) {
+            return GD32H77X_STATUS_OK;
+        }
+    }
+    return GD32H77X_STATUS_TIMEOUT;
+}
+
+gd32h77x_status_t gd32h77x_ospi_reset_device(gd32h77x_ospi_t *ospi,
+                                            uint32_t low_ms,
+                                            uint32_t high_ms)
+{
+    if (ospi == NULL || !ospi->initialized || !ospi->reset_enabled) {
+        return GD32H77X_STATUS_UNSUPPORTED;
+    }
+
+    gpio_bit_reset(ospi->reset_port, ospi->reset_pin);
+    if (low_ms != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(low_ms));
+    }
+    gpio_bit_set(ospi->reset_port, ospi->reset_pin);
+    if (high_ms != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(high_ms));
+    }
     return GD32H77X_STATUS_OK;
 }
 
-static void __prepare_common_command(gd32h77x_ospi_t *ospi,
-                                     const gd32h77x_ospi_transfer_t *transfer)
-{
-    uint32_t tcfg = transfer->instruction_mode | OSPI_INSTRUCTION_8_BITS |
-                    transfer->address_mode | transfer->address_size |
-                    transfer->data_mode | OSPI_INSDTR_MODE_DISABLE |
-                    OSPI_ADDRDTR_MODE_DISABLE | OSPI_DADTR_MODE_DISABLE |
-                    OSPI_DQS_DISABLE | OSPI_SIOO_INST_EVERY_CMD;
-
-    OSPI_CTL(ospi->periph) =
-        (OSPI_CTL(ospi->periph) & ~(OSPI_CTL_FMOD | OSPI_CTL_DEVS)) |
-        OSPI_DEVICE0_SELECT;
-    OSPI_DTLEN(ospi->periph) = transfer->size == 0U ? 0U : transfer->size - 1U;
-    OSPI_TCFG(ospi->periph) =
-        (OSPI_TCFG(ospi->periph) & ~GD32H77X_OSPI_TCFG_MASK) | tcfg;
-    OSPI_TIMCFG(ospi->periph) =
-        (OSPI_TIMCFG(ospi->periph) & ~OSPI_TIMCFG_DUMYC) |
-        OSPI_DUMYC(transfer->dummy_cycles);
-    /* The instruction register is consumed by every transfer frame, including
-     * indirect reads with an address. Omitting it leaves the previous command
-     * in OSPI_INS and sends the wrong opcode. */
-    OSPI_INS(ospi->periph) = transfer->instruction;
-    if (transfer->has_address) {
-        OSPI_ADDR(ospi->periph) = transfer->address;
-    }
-}
-
 gd32h77x_status_t gd32h77x_ospi_transfer(gd32h77x_ospi_t *ospi,
-                                  const gd32h77x_ospi_transfer_t *transfer)
+                                        const gd32h77x_ospi_transfer_t *transfer)
 {
     if (ospi == NULL || transfer == NULL || !ospi->initialized ||
         ospi->memory_mapped ||
@@ -345,48 +430,32 @@ gd32h77x_status_t gd32h77x_ospi_transfer(gd32h77x_ospi_t *ospi,
     if (__lock(ospi) != 0) {
         return GD32H77X_STATUS_IO_ERROR;
     }
-    if (__wait_flag(ospi, OSPI_FLAG_BUSY, false) != 0) {
+    gd32h77x_status_t rt = gd32h77x_ospi_wait_ready(ospi);
+    if (rt != GD32H77X_STATUS_OK) {
         __abort_locked(ospi);
         __unlock(ospi);
-        return GD32H77X_STATUS_TIMEOUT;
+        return rt;
     }
 
     __clear_status(ospi);
-    __prepare_common_command(ospi, transfer);
+    ospi_parameter_struct parameters;
+    ospi_regular_cmd_struct command;
+    __command_parameters(ospi, &parameters);
+    __frame_to_command(&transfer->frame, OSPI_OPTYPE_COMMON_CFG,
+                       transfer->address, transfer->has_address,
+                       transfer->size, &command);
+    ospi_command_config(ospi->periph, &parameters, &command);
 
     if (transfer->read) {
-        OSPI_CTL(ospi->periph) =
-            (OSPI_CTL(ospi->periph) & ~OSPI_CTL_FMOD) | OSPI_INDIRECT_READ;
-        if (transfer->has_address) {
-            OSPI_ADDR(ospi->periph) = transfer->address;
-        }
-        for (uint32_t index = 0U; index < transfer->size; ++index) {
-            if (__wait_flag(ospi, OSPI_FLAG_FT | OSPI_FLAG_TC, true) != 0) {
-                __abort_locked(ospi);
-                __unlock(ospi);
-                return GD32H77X_STATUS_TIMEOUT;
+        if (transfer->size != 0U) {
+            ospi_receive(ospi->periph, &parameters, transfer->data);
+            if (transfer->frame.dqs_enable &&
+                SET == ospi_flag_get(ospi->periph, OSPI_FLAG_BUSY)) {
+                ospi_transmission_abort(ospi->periph);
             }
-            transfer->data[index] =
-                *((__IO uint8_t *)&OSPI_DATA(ospi->periph));
         }
-    } else {
-        OSPI_CTL(ospi->periph) =
-            (OSPI_CTL(ospi->periph) & ~OSPI_CTL_FMOD) | OSPI_INDIRECT_WRITE;
-        for (uint32_t index = 0U; index < transfer->size; ++index) {
-            if (__wait_flag(ospi, OSPI_FLAG_FT, true) != 0) {
-                __abort_locked(ospi);
-                __unlock(ospi);
-                return GD32H77X_STATUS_TIMEOUT;
-            }
-            *((__IO uint8_t *)&OSPI_DATA(ospi->periph)) =
-                transfer->data[index];
-        }
-    }
-
-    if (__wait_flag(ospi, OSPI_FLAG_TC, true) != 0) {
-        __abort_locked(ospi);
-        __unlock(ospi);
-        return GD32H77X_STATUS_TIMEOUT;
+    } else if (transfer->size != 0U) {
+        ospi_transmit(ospi->periph, transfer->data);
     }
     __clear_status(ospi);
     __unlock(ospi);
@@ -397,67 +466,53 @@ gd32h77x_status_t gd32h77x_ospi_enter_memory_mapped(
     gd32h77x_ospi_t *ospi, const gd32h77x_ospi_memory_mapped_t *config)
 {
     if (ospi == NULL || config == NULL || !ospi->initialized ||
-        config->timeout_cycles == 0U) {
+        config->read_frame.instruction == 0U ||
+        config->write_frame.instruction == 0U) {
         return GD32H77X_STATUS_INVALID_PARAM;
     }
     if (__lock(ospi) != 0) {
         return GD32H77X_STATUS_IO_ERROR;
     }
-    if (__wait_flag(ospi, OSPI_FLAG_BUSY, false) != 0) {
+    gd32h77x_status_t rt = gd32h77x_ospi_wait_ready(ospi);
+    if (rt != GD32H77X_STATUS_OK) {
         __abort_locked(ospi);
         __unlock(ospi);
-        return GD32H77X_STATUS_TIMEOUT;
+        return rt;
     }
 
-    uint32_t tcfg = OSPI_INSTRUCTION_1_LINE | OSPI_INSTRUCTION_8_BITS |
-                    OSPI_ADDRESS_4_LINES | OSPI_ADDRESS_24_BITS |
-                    OSPI_DATA_4_LINES | OSPI_INSDTR_MODE_DISABLE |
-                    OSPI_ADDRDTR_MODE_DISABLE | OSPI_DADTR_MODE_DISABLE |
-                    OSPI_DQS_DISABLE | OSPI_SIOO_INST_EVERY_CMD;
-    uint32_t wtcfg = OSPI_INSTRUCTION_1_LINE | OSPI_INSTRUCTION_8_BITS |
-                     OSPI_ADDRESS_4_LINES | OSPI_ADDRESS_24_BITS |
-                     OSPI_DATA_4_LINES | OSPI_INSDTR_MODE_DISABLE |
-                     OSPI_ADDRDTR_MODE_DISABLE | OSPI_DADTR_MODE_DISABLE |
-                     OSPI_DQS_DISABLE;
-
-    OSPI_TCFG(ospi->periph) =
-        (OSPI_TCFG(ospi->periph) & ~GD32H77X_OSPI_TCFG_MASK) | tcfg;
-    OSPI_TIMCFG(ospi->periph) =
-        (OSPI_TIMCFG(ospi->periph) & ~OSPI_TIMCFG_DUMYC) |
-        OSPI_DUMYC(config->read_dummy_cycles);
-    OSPI_INS(ospi->periph) = config->read_instruction;
-
-    OSPI_WTCFG(ospi->periph) =
-        (OSPI_WTCFG(ospi->periph) & ~GD32H77X_OSPI_WTCFG_MASK) | wtcfg;
-    OSPI_WTIMCFG(ospi->periph) &= ~OSPI_WTIMCFG_DUMYC;
-    OSPI_WINS(ospi->periph) = config->write_instruction;
-
-    /* Cortex-M7 cache line fills may use the OSPI wrapped-read frame. */
-    OSPI_WPTCFG(ospi->periph) =
-        (OSPI_WPTCFG(ospi->periph) & ~GD32H77X_OSPI_TCFG_MASK) | tcfg;
-    uint32_t read_timing =
-        OSPI_TIMCFG(ospi->periph) & (OSPI_TIMCFG_DEHQC | OSPI_TIMCFG_SSAMPLE);
-    OSPI_WPTIMCFG(ospi->periph) =
-        (OSPI_WPTIMCFG(ospi->periph) &
-         ~(OSPI_WPTIMCFG_DUMYC | OSPI_TIMCFG_DEHQC | OSPI_TIMCFG_SSAMPLE)) |
-        OSPI_DUMYC(config->read_dummy_cycles) | read_timing;
-    OSPI_WPINS(ospi->periph) = config->read_instruction;
-    OSPI_WPALTE(ospi->periph) = 0U;
-
-    /* Release CE# periodically so the PSRAM can perform internal refresh even
-     * when the AXI master keeps a mapped transaction stream active. */
-    OSPI_DCFG3(ospi->periph) = config->refresh_cycles;
-    OSPI_LPOUT(ospi->periph) = config->timeout_cycles;
+    ospi_parameter_struct parameters;
+    ospi_regular_cmd_struct command;
+    __command_parameters(ospi, &parameters);
     __clear_status(ospi);
-    /* Clear timeout even inside an RTOS critical section: no kernel APIs are
-     * used by this priority-zero ISR, and mapped accesses must not see TMOUT. */
-    NVIC_SetPriority(OSPI0_IRQn, 0U);
-    NVIC_ClearPendingIRQ(OSPI0_IRQn);
-    NVIC_EnableIRQ(OSPI0_IRQn);
-    OSPI_CTL(ospi->periph) =
-        (OSPI_CTL(ospi->periph) &
-         ~(OSPI_CTL_TMOUTEN | OSPI_CTL_FMOD | OSPI_CTL_TMOUTIE)) |
-        OSPI_TIMEOUT_COUNT_ENABLE | OSPI_CTL_TMOUTIE | OSPI_MEMORY_MAPPED;
+
+    __frame_to_command(&config->read_frame, OSPI_OPTYPE_READ_CFG, 0U, false,
+                       0U, &command);
+    ospi_command_config(ospi->periph, &parameters, &command);
+
+    __frame_to_command(&config->write_frame, OSPI_OPTYPE_WRITE_CFG, 0U, false,
+                       0U, &command);
+    ospi_command_config(ospi->periph, &parameters, &command);
+
+    if (config->refresh_cycles != 0U) {
+        ospi_refresh_config(ospi->periph, config->refresh_cycles);
+    }
+    if (config->timeout_cycles != 0U) {
+        ospi_timeout_cycle_config(ospi->periph,
+                                  (uint16_t)config->timeout_cycles);
+        ospi_timeout_enable(ospi->periph);
+    }
+
+    ospi_memorymapped_struct memory_mapped = {
+        .timeout_activation = OSPI_TIMEOUT_COUNT_DISABLE,
+        .timeout_period = 0U,
+    };
+    ospi_memorymapped_mode(ospi->periph, &memory_mapped);
+    if (config->timeout_cycles != 0U) {
+        NVIC_SetPriority(OSPI0_IRQn, 0U);
+        NVIC_ClearPendingIRQ(OSPI0_IRQn);
+        NVIC_EnableIRQ(OSPI0_IRQn);
+        ospi_interrupt_enable(ospi->periph, OSPI_INT_TMOUT);
+    }
     __DSB();
     __ISB();
     ospi->memory_mapped = true;
@@ -471,7 +526,6 @@ gd32h77x_status_t gd32h77x_ospi_abort(gd32h77x_ospi_t *ospi)
         return GD32H77X_STATUS_INVALID_PARAM;
     }
     NVIC_DisableIRQ(OSPI0_IRQn);
-    OSPI_CTL(ospi->periph) &= ~OSPI_CTL_TMOUTIE;
     __abort_locked(ospi);
     NVIC_ClearPendingIRQ(OSPI0_IRQn);
     ospi->memory_mapped = false;

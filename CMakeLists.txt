@@ -14,6 +14,9 @@ endif()
 if((PLATFORM_CHIP STREQUAL "GD32H779VW" AND PLATFORM_BOARD STREQUAL "GD32H779V_START") OR
         (PLATFORM_CHIP STREQUAL "GD32H779IW" AND PLATFORM_BOARD STREQUAL "GD32H779I_DESK_BUDDY"))
     set(GD32H77X_DEVICE_DEFINE GD32H779XW)
+elseif(PLATFORM_CHIP STREQUAL "GD32H77EIW" AND
+        PLATFORM_BOARD STREQUAL "GD32H77EI_DESK_BUDDY")
+    set(GD32H77X_DEVICE_DEFINE GD32H77EXW)
 else()
     message(FATAL_ERROR
         "Unsupported GD32H77X board/chip combination: ${PLATFORM_BOARD}/${PLATFORM_CHIP}")
@@ -139,13 +142,27 @@ else()
     message(FATAL_ERROR "resolved layout ecnvm_code entry is not an object")
 endif()
 if(GD32H77X_ECNVM_LAYOUT_ENABLED)
-    # Keep the boot table and vector table in CNVM. Move the application
-    # instruction stream and read-only data into executable ECNVM.
+    # Move the application instruction stream and read-only data into
+    # executable ECNVM. The vector location is selected separately below.
     set(CNVM_TEXT_INPUTS "")
     set(ECNVM_OUTPUT_SECTIONS ".ecnvm_text : { *(.text*) *(.rodata*) } > ECNVM\n    ASSERT(SIZEOF(.ecnvm_text) > 0, \"ECNVM linker region declared but ECNVM text is empty\")")
 else()
     set(CNVM_TEXT_INPUTS "*(.text*) *(.rodata*)")
     set(ECNVM_OUTPUT_SECTIONS "")
+endif()
+# GD32H77E boots directly from a full vector table at 0x08000000. H779 keeps
+# the legacy 8-byte boot table at 0x08000000 and its application vectors at
+# 0x08010000.
+if(PLATFORM_CHIP MATCHES "^GD32H77E")
+    set(GD32H77X_LINKER_VECTOR_BASE "ORIGIN(BOOT)")
+    set(GD32H77X_LINKER_BOOT_TABLE "/DISCARD/ : { *(.boot_table) }")
+    set(GD32H77X_LINKER_VECTOR_OUTPUT "> BOOT")
+    set(GD32H77X_LINKER_BOOT_TABLE_ASSERT "")
+else()
+    set(GD32H77X_LINKER_VECTOR_BASE "ORIGIN(CNVM)")
+    set(GD32H77X_LINKER_BOOT_TABLE ".boot_table : { KEEP(*(.boot_table)) } > BOOT")
+    set(GD32H77X_LINKER_VECTOR_OUTPUT "> CNVM")
+    set(GD32H77X_LINKER_BOOT_TABLE_ASSERT "ASSERT(SIZEOF(.boot_table) == 8, \"boot table must contain SP and reset entry\")")
 endif()
 set(LINKER "${GD32H77X_GENERATED_DIR}/gd32h77x_linker.ld")
 configure_file("${LINKER_TEMPLATE}" "${LINKER}" @ONLY)

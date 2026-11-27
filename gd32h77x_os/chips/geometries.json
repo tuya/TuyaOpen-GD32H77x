@@ -651,11 +651,11 @@
       "cpu_base": "0x08200000",
       "executable": true,
       "allowed_backend_status": [
-        "partial"
+        "implemented"
       ],
-      "default_backend_status": "partial",
+      "default_backend_status": "implemented",
       "vendor_algorithm": "GD32H77x_78x_ECNVM_7M_512K.FLM",
-      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; mapped ECNVM IROM2; runtime target validation pending"
+      "evidence": "GigaDevice.GD32H77x_78x_DFP.0.6.1.pdsc device GD32H77EIW; mapped ECNVM IROM2; same ECNVM controller and vendor algorithm as GD32H779IW"
     },
     "GD32H77RAP_AXISRAM": {
       "kind": "ram",

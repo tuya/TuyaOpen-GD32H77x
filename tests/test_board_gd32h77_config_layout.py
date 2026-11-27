@@ -8,8 +8,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 BOARDS = ROOT / "boards" / "GD32H77X"
-BOARD_NAMES = ("GD32H779I_DESK_BUDDY", "GD32H779V_START")
+BOARD_NAMES = (
+    "GD32H77EI_DESK_BUDDY",
+    "GD32H779I_DESK_BUDDY",
+    "GD32H779V_START",
+)
 BOARD_SELECTION_FILES = {
+    "GD32H77EI_DESK_BUDDY": "GD32H77EI_DESK_BUDDY.config",
     "GD32H779I_DESK_BUDDY": "GD32H779I_DESK_BUDDY.config",
     "GD32H779V_START": "GD32H779V.config",
 }
@@ -46,7 +51,7 @@ def main() -> int:
                     f"{board_name}: flash_devices.csv duplicates the GD32H779VW chip default and must not exist")
         elif board_name != "GD32H779V_START":
             failures.append(f"{board_name}: missing optional platform_config/ directory")
-        if board_name == "GD32H779I_DESK_BUDDY" and config_dir.is_dir():
+        if board_name.endswith("_DESK_BUDDY") and config_dir.is_dir():
             for name in ("gd32h77x.config",):
                 if not (config_dir / name).is_file():
                     failures.append(
@@ -119,6 +124,8 @@ def main() -> int:
             "CONFIG_BOARD_CHOICE_GD32H77X=y",
             f"CONFIG_BOARD_CHOICE_{board_name}=y",
         }
+        if board_name.endswith("_DESK_BUDDY"):
+            expected.add("CONFIG_SERIAL_CLI_STACK_SIZE=12288")
         actual = {
             line.strip() for line in selection.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")

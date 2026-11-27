@@ -57,6 +57,7 @@ def main():
     supported_targets = {
         ("GD32H779V_START", "GD32H779VW"),
         ("GD32H779I_DESK_BUDDY", "GD32H779IW"),
+        ("GD32H77EI_DESK_BUDDY", "GD32H77EIW"),
     }
     if (data["PLATFORM_BOARD"], data["PLATFORM_CHIP"]) not in supported_targets:
         parser.error("Unsupported GD32H77X board/chip combination: {}/{}".format(
