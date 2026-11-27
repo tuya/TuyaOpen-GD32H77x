@@ -30,8 +30,8 @@ extern uint8_t __rtos_heap_end[];
 #define configUSE_COUNTING_SEMAPHORES                1
 #define configSUPPORT_DYNAMIC_ALLOCATION             1
 #define configSUPPORT_STATIC_ALLOCATION              0
-#define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    0
-#define configTASK_ALLOCATION_FROM_DTCM              0
+#define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    1
+#define configTASK_ALLOCATION_FROM_DTCM              1
 #define configUSE_TIMERS                             1
 #define configTIMER_TASK_PRIORITY                    2U
 #define configTIMER_QUEUE_LENGTH                     16U
