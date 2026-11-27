@@ -24,6 +24,9 @@
 #define GD32H77X_SPI_TIMEOUT_MS       50U
 #define GD32H77X_SPI_DMA_MAX_FRAMES   0xFFFFU
 #define GD32H77X_SPI_DMA_TIMEOUT_MS   1000U
+#define GD32H77X_SPI_DMA_MIN_SIZE     256U
+#define GD32H77X_DTCM_START           0x20000000U
+#define GD32H77X_DTCM_END             0x20040000U
 
 typedef struct {
     uint32_t port;
@@ -541,6 +544,22 @@ static OPERATE_RET __spi_dma_begin(TUYA_SPI_NUM_E port,
     return rt;
 }
 
+static bool __spi_dma_range_allowed(const void *data, uint32_t size)
+{
+    if (data == NULL || size == 0U) {
+        return true;
+    }
+
+    const uintptr_t begin = (uintptr_t)data;
+    if (size > UINTPTR_MAX - begin) {
+        return false;
+    }
+    const uintptr_t end = begin + size;
+
+    /* GD32H77x DMA cannot access the CPU-private DTCM. */
+    return end <= GD32H77X_DTCM_START || begin >= GD32H77X_DTCM_END;
+}
+
 static OPERATE_RET __spi_dma_transfer_blocking(TUYA_SPI_NUM_E port,
                                                const void *send_buf,
                                                void *receive_buf, uint32_t size)
@@ -789,7 +808,10 @@ static OPERATE_RET __spi_transfer(TUYA_SPI_NUM_E port, const void *send_buf,
     frames = size / frame_bytes;
 
 #ifndef GD32H77X_SPI_HOST_TEST
-    if (s_spi[port].cfg.spi_dma_flags != 0U && frame_bytes == 1U) {
+    if (s_spi[port].cfg.spi_dma_flags != 0U && frame_bytes == 1U &&
+        size > GD32H77X_SPI_DMA_MIN_SIZE &&
+        __spi_dma_range_allowed(send_buf, size) &&
+        __spi_dma_range_allowed(receive_buf, size)) {
         if (s_spi[port].irq_enabled)
             return __spi_dma_start_async(port, send_buf, receive_buf, size);
         uint32_t dma_mask = tkl_system_enter_critical();

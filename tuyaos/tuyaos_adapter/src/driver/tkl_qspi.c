@@ -22,6 +22,9 @@
 #define QSPI_TIMEOUT_MS 50U
 #define QSPI_DMA_TIMEOUT_MS 1000U
 #define QSPI_MAX_FRAMES 0xFFFFU
+#define QSPI_DMA_MIN_SIZE 256U
+#define QSPI_DTCM_START 0x20000000U
+#define QSPI_DTCM_END 0x20040000U
 
 typedef struct {
     uint32_t periph;
@@ -614,6 +617,23 @@ static OPERATE_RET __qspi_read_chunk(const QSPI_HW_T *hw, uint8_t *data,
     return rt == OPRT_OK ? stop_rt : rt;
 }
 
+static bool __qspi_dma_range_allowed(const void *data, uint32_t size)
+{
+    if (data == NULL || size == 0U) {
+        return true;
+    }
+
+    const uintptr_t begin = (uintptr_t)data;
+    if (size > UINTPTR_MAX - begin) {
+        return false;
+    }
+    const uintptr_t end = begin + size;
+
+    /* GD32H77x DMA cannot access the CPU-private DTCM. Short transfers are
+     * already handled by the CPU path; larger DTCM buffers must take it too. */
+    return end <= QSPI_DTCM_START || begin >= QSPI_DTCM_END;
+}
+
 static OPERATE_RET __qspi_write_all(const QSPI_HW_T *hw,
                                     const uint8_t *data, uint32_t size,
                                     TUYA_QSPI_WIRE_MODE_E lines, bool use_dma)
@@ -625,7 +645,8 @@ static OPERATE_RET __qspi_write_all(const QSPI_HW_T *hw,
                              (QSPI_MAX_FRAMES & ~3U) : QSPI_MAX_FRAMES;
         uint32_t chunk = size - offset > max_chunk ?
                          max_chunk : size - offset;
-        bool dma = use_dma && chunk >= 4U &&
+        bool dma = use_dma && chunk > QSPI_DMA_MIN_SIZE &&
+                   __qspi_dma_range_allowed(data + offset, chunk) &&
                    (lines != TUYA_QSPI_4WIRE ||
                     (((uintptr_t)(data + offset) & 3U) == 0U &&
                      (chunk % 4U) == 0U));
@@ -651,7 +672,8 @@ static OPERATE_RET __qspi_read_all(const QSPI_HW_T *hw,
                              (QSPI_MAX_FRAMES & ~3U) : QSPI_MAX_FRAMES;
         uint32_t chunk = size - offset > max_chunk ?
                          max_chunk : size - offset;
-        bool dma = use_dma && chunk >= 4U &&
+        bool dma = use_dma && chunk > QSPI_DMA_MIN_SIZE &&
+                   __qspi_dma_range_allowed(data + offset, chunk) &&
                    (lines != TUYA_QSPI_4WIRE ||
                     (((uintptr_t)(data + offset) & 3U) == 0U &&
                      (chunk % 4U) == 0U));
