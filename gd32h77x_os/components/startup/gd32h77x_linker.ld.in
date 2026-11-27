@@ -1,18 +1,26 @@
 /* Device regions come from the selected resolved flash layout. */
 INCLUDE gd32h77x_memory.ldinc
+
+/* The resolved flash layout currently describes boot/flash/AXISRAM only.
+ * DTCM is a fixed Cortex-M7 core region on GD32H77x. */
+MEMORY
+{
+    DTCMRAM (xrw) : ORIGIN = 0x20000000, LENGTH = 0x00040000
+}
+
 ENTRY(Reset_Handler)
 _sp = ORIGIN(AXISRAM) + LENGTH(AXISRAM);
 _stack_bottom = _sp - 8K;
 _ram_start = ORIGIN(AXISRAM);
 _ram_end = ORIGIN(AXISRAM) + LENGTH(AXISRAM);
-__vector_base = ORIGIN(CNVM);
+__vector_base = @GD32H77X_LINKER_VECTOR_BASE@;
 SECTIONS
 {
-    .boot_table : { KEEP(*(.boot_table)) } > BOOT
+    @GD32H77X_LINKER_BOOT_TABLE@
     .vectors : {
         KEEP(*(.vectors))
         __Vectors_End = .;
-    } > CNVM
+    } @GD32H77X_LINKER_VECTOR_OUTPUT@
     __Vectors = __gVectors;
     __Vectors_Size = __Vectors_End - __gVectors;
     .text : {
@@ -72,9 +80,20 @@ SECTIONS
         . = ABSOLUTE(_stack_bottom);
         __rtos_heap_end = .;
     } > AXISRAM
+    /* DTCM-first task memory. 224 KiB is available to task stacks and TCBs;
+     * the remaining 32 KiB stays reserved for future CPU-hot codec data.
+     * Allocations fall back to the AXISRAM FreeRTOS heap when this arena is
+     * exhausted. */
+    .dtcm_task_heap (NOLOAD) : {
+        . = ALIGN(8);
+        __dtcm_task_heap_start = .;
+        . += 0x00038000;
+        . = ALIGN(8);
+        __dtcm_task_heap_end = .;
+    } > DTCMRAM
     .ARM.attributes 0 : { *(.ARM.attributes) }
 }
-ASSERT(SIZEOF(.boot_table) == 8, "boot table must contain SP and reset entry")
+@GD32H77X_LINKER_BOOT_TABLE_ASSERT@
 ASSERT(ADDR(.vectors) == __vector_base, "vector table differs from selected flash layout")
 ASSERT(SIZEOF(.ramfunc) > 0, "CNVM runtime command routine must be linked into AXI SRAM")
 ASSERT(ADDR(.ramfunc) >= ORIGIN(AXISRAM) && ADDR(.ramfunc) + SIZEOF(.ramfunc) <= ORIGIN(AXISRAM) + LENGTH(AXISRAM), "RAM functions must execute from AXI SRAM")
@@ -84,3 +103,5 @@ ASSERT(__rtos_heap_start == _heap_end, "FreeRTOS heap must follow libc arena")
 ASSERT(__rtos_heap_end == _stack_bottom, "FreeRTOS heap must end below main stack")
 ASSERT(__rtos_heap_end - __rtos_heap_start >= 1024, "Insufficient AXI SRAM for FreeRTOS heap")
 ASSERT((__rtos_heap_start & 7) == 0 && (__rtos_heap_end & 7) == 0, "FreeRTOS heap must be 8-byte aligned")
+ASSERT(__dtcm_task_heap_end <= ORIGIN(DTCMRAM) + LENGTH(DTCMRAM), "DTCM task heap exceeds DTCM")
+ASSERT(__dtcm_task_heap_start == ORIGIN(DTCMRAM), "DTCM task heap must begin at DTCM base")

@@ -102,6 +102,11 @@
     #define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    0
 #endif
 
+#ifndef configTASK_ALLOCATION_FROM_DTCM
+    /* Defaults to 0 so other platforms keep the standard heap allocator. */
+    #define configTASK_ALLOCATION_FROM_DTCM              0
+#endif
+
 #include "mpu_wrappers.h"
 
 /* *INDENT-OFF* */
@@ -201,6 +206,11 @@ void xPortResetHeapMinimumEverFreeHeapSize( void ) PRIVILEGED_FUNCTION;
 #else
     #define pvPortMallocStack    pvPortMalloc
     #define vPortFreeStack       vPortFree
+#endif
+
+#if ( configTASK_ALLOCATION_FROM_DTCM == 1 )
+    void * pvPortMallocTask( size_t xSize ) PRIVILEGED_FUNCTION;
+    void vPortFreeTask( void * pv ) PRIVILEGED_FUNCTION;
 #endif
 
 /*

@@ -23,7 +23,24 @@ def render(layout: dict, output: Path,
     else:
         cnvm_text = "*(.text*) *(.rodata*)"
         ecnvm_sections = ""
+    direct_vector = layout["layout"]["flash_image"].get("vector_partition") == "boot"
+    if direct_vector:
+        vector_base = "ORIGIN(BOOT)"
+        boot_table = "/DISCARD/ : { *(.boot_table) }"
+        vector_output = "> BOOT"
+        boot_table_assert = ""
+    else:
+        vector_base = "ORIGIN(CNVM)"
+        boot_table = ".boot_table : { KEEP(*(.boot_table)) } > BOOT"
+        vector_output = "> CNVM"
+        boot_table_assert = (
+            'ASSERT(SIZEOF(.boot_table) == 8, '
+            '"boot table must contain SP and reset entry")')
     text = text.replace("@CNVM_TEXT_INPUTS@", cnvm_text)
     text = text.replace("@ECNVM_OUTPUT_SECTIONS@", ecnvm_sections)
+    text = text.replace("@GD32H77X_LINKER_VECTOR_BASE@", vector_base)
+    text = text.replace("@GD32H77X_LINKER_BOOT_TABLE@", boot_table)
+    text = text.replace("@GD32H77X_LINKER_VECTOR_OUTPUT@", vector_output)
+    text = text.replace("@GD32H77X_LINKER_BOOT_TABLE_ASSERT@", boot_table_assert)
     output.write_text(text, encoding="utf-8")
     return output

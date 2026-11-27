@@ -41,6 +41,14 @@
 #include "timers.h"
 #include "stack_macros.h"
 
+#if ( configTASK_ALLOCATION_FROM_DTCM == 1 )
+    #define pvPortMallocTaskMemory    pvPortMallocTask
+    #define vPortFreeTaskMemory       vPortFreeTask
+#else
+    #define pvPortMallocTaskMemory    pvPortMalloc
+    #define vPortFreeTaskMemory       vPortFree
+#endif
+
 /* The default definitions are only available for non-MPU ports. The
  * reason is that the stack alignment requirements vary for different
  * architectures.*/
@@ -1532,7 +1540,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             /* MISRA Ref 11.5.1 [Malloc memory assignment] */
             /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
             /* coverity[misra_c_2012_rule_11_5_violation] */
-            pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+            pxNewTCB = ( TCB_t * ) pvPortMallocTaskMemory( sizeof( TCB_t ) );
 
             if( pxNewTCB != NULL )
             {
@@ -1659,7 +1667,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             /* MISRA Ref 11.5.1 [Malloc memory assignment] */
             /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
             /* coverity[misra_c_2012_rule_11_5_violation] */
-            pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+            pxNewTCB = ( TCB_t * ) pvPortMallocTaskMemory( sizeof( TCB_t ) );
 
             if( pxNewTCB != NULL )
             {
@@ -1676,7 +1684,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
                 if( pxNewTCB->pxStack == NULL )
                 {
                     /* Could not allocate the stack.  Delete the allocated TCB. */
-                    vPortFree( pxNewTCB );
+                    vPortFreeTaskMemory( pxNewTCB );
                     pxNewTCB = NULL;
                 }
             }
@@ -1697,7 +1705,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
                 /* MISRA Ref 11.5.1 [Malloc memory assignment] */
                 /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
                 /* coverity[misra_c_2012_rule_11_5_violation] */
-                pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+                pxNewTCB = ( TCB_t * ) pvPortMallocTaskMemory( sizeof( TCB_t ) );
 
                 if( pxNewTCB != NULL )
                 {
@@ -6478,7 +6486,7 @@ static void prvCheckTasksWaitingTermination( void )
             /* The task can only have been allocated dynamically - free both
              * the stack and TCB. */
             vPortFreeStack( pxTCB->pxStack );
-            vPortFree( pxTCB );
+            vPortFreeTaskMemory( pxTCB );
         }
         #elif ( tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE != 0 )
         {
@@ -6490,13 +6498,13 @@ static void prvCheckTasksWaitingTermination( void )
                 /* Both the stack and TCB were allocated dynamically, so both
                  * must be freed. */
                 vPortFreeStack( pxTCB->pxStack );
-                vPortFree( pxTCB );
+                vPortFreeTaskMemory( pxTCB );
             }
             else if( pxTCB->ucStaticallyAllocated == tskSTATICALLY_ALLOCATED_STACK_ONLY )
             {
                 /* Only the stack was statically allocated, so the TCB is the
                  * only memory that must be freed. */
-                vPortFree( pxTCB );
+                vPortFreeTaskMemory( pxTCB );
             }
             else
             {

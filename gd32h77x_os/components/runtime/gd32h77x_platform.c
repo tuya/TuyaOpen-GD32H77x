@@ -58,6 +58,22 @@ static void __configure_psram_mpu(void)
     mpu_region_config(&region);
     mpu_region_enable();
 
+    /* DTCM is CPU-private data memory. Keep it non-cacheable and non-DMA
+     * visible, but explicitly allow privileged read/write access because the
+     * task-memory allocator places task stacks and TCBs there. */
+    region.region_base_address = 0x20000000U;
+    region.region_size = MPU_REGION_SIZE_256KB;
+    region.subregion_disable = 0U;
+    region.tex_type = MPU_TEX_TYPE0;
+    region.access_permission = MPU_AP_FULL_ACCESS;
+    region.access_shareable = MPU_ACCESS_NON_SHAREABLE;
+    region.access_cacheable = MPU_ACCESS_NON_CACHEABLE;
+    region.access_bufferable = MPU_ACCESS_NON_BUFFERABLE;
+    region.instruction_exec = MPU_INSTRUCTION_EXEC_NOT_PERMIT;
+    region.region_number = MPU_REGION_NUMBER3;
+    mpu_region_config(&region);
+    mpu_region_enable();
+
     region.region_base_address = GD32H77X_PSRAM_MAPPED_BASE;
     region.region_size = MPU_REGION_SIZE_8MB;
     region.subregion_disable = MPU_SUBREGION_ENABLE;
@@ -243,19 +259,28 @@ static void fault_report(const char *kind, uint32_t *stack_frame)
 
 __attribute__((naked, noreturn)) void HardFault_Handler(void)
 {
-    __asm volatile("mrs r0, msp\n"
+    __asm volatile("tst lr, #4\n"
+                   "ite eq\n"
+                   "mrseq r0, msp\n"
+                   "mrsne r0, psp\n"
                    "b hardfault_report\n");
 }
 
 __attribute__((naked, noreturn)) void MemManage_Handler(void)
 {
-    __asm volatile("mrs r0, msp\n"
+    __asm volatile("tst lr, #4\n"
+                   "ite eq\n"
+                   "mrseq r0, msp\n"
+                   "mrsne r0, psp\n"
                    "b memmanage_report\n");
 }
 
 __attribute__((naked, noreturn)) void BusFault_Handler(void)
 {
-    __asm volatile("mrs r0, msp\n"
+    __asm volatile("tst lr, #4\n"
+                   "ite eq\n"
+                   "mrseq r0, msp\n"
+                   "mrsne r0, psp\n"
                    "b busfault_report\n");
 }
 
