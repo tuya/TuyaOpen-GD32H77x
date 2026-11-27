@@ -60,11 +60,14 @@ static void __configure_psram_mpu(void)
 
     /* DTCM is CPU-private data memory. Keep it non-cacheable and non-DMA
      * visible, but explicitly allow privileged read/write access because the
-     * task-memory allocator places task stacks and TCBs there. */
+     * task-memory allocator places task stacks and TCBs there. TEX=1 makes this
+     * Normal non-cacheable memory instead of Strongly-ordered memory, which is
+     * required because memcpy and other optimized code may use unaligned
+     * accesses on task-stack buffers. */
     region.region_base_address = 0x20000000U;
     region.region_size = MPU_REGION_SIZE_256KB;
     region.subregion_disable = 0U;
-    region.tex_type = MPU_TEX_TYPE0;
+    region.tex_type = MPU_TEX_TYPE1;
     region.access_permission = MPU_AP_FULL_ACCESS;
     region.access_shareable = MPU_ACCESS_NON_SHAREABLE;
     region.access_cacheable = MPU_ACCESS_NON_CACHEABLE;
