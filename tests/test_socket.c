@@ -69,6 +69,7 @@ static bool reject_next_cipstart;
 static unsigned reject_cipstart_state;
 static bool cipstart_timeout;
 static bool cipsend_timeout;
+static bool cipsend_terminal_error;
 static bool fail_state_query;
 static bool remote_retired;
 static int remote_id, remote_fd;
@@ -221,6 +222,11 @@ at_status_t at_device_execute(const at_request_t *request, at_result_t *result)
     }
     if (!strncmp(last_command, "AT+CIPSEND=", 11)) {
         ++send_count;
+        if (cipsend_terminal_error) {
+            cipsend_terminal_error = false;
+            reply_set(request, "SEND FAIL\r\nERROR\r\n");
+            return AT_STATUS_IO_ERROR;
+        }
         if (cipsend_timeout) {
             cipsend_timeout = false;
             if (request->reply_length) *request->reply_length = 0U;
@@ -388,7 +394,7 @@ int main(void)
     }
     uint8_t large_tx[3000]; memset(large_tx, 0xa5, sizeof(large_tx)); unsigned before_large_send = send_count;
     assert(at_socket_send(tcp, large_tx, sizeof(large_tx)) == (int)sizeof(large_tx));
-    assert(send_count == before_large_send + 3U && last_payload_len == 952U);
+    assert(send_count == before_large_send + 2U && last_payload_len == 952U);
     assert(at_socket_getpeername(tcp, &(uint32_t){0}, &(uint16_t){0}) == AT_STATUS_OK);
 
     /* A second outbound socket must coexist with the first one. */
@@ -624,6 +630,21 @@ int main(void)
     assert(at_socket_connect(timed_out, UINT32_C(0xC0000209), 9000) == AT_SOCKET_ERRNO_CONNECTION_RESET);
     assert(reset_count == resets_before_timeout);
     assert(at_socket_close(timed_out) == AT_SOCKET_ERRNO_NONE);
+
+    /* A terminal CIPSEND error means VW553 has already closed the client. The
+     * backend must fail the logical socket immediately instead of retrying the
+     * same con_id and letting the audio queue flood the AT channel with ERROR. */
+    int terminal = at_socket_create(AT_SOCKET_TYPE_STREAM);
+    assert(terminal == (int)AT_SOCKET_FD_BASE);
+    assert(at_socket_bind(terminal, UINT32_C(0xC0A80128), 0U) == AT_SOCKET_ERRNO_NONE);
+    assert(at_socket_connect(terminal, UINT32_C(0xC0000209), 9000) == AT_SOCKET_ERRNO_NONE);
+    unsigned terminal_sends = send_count;
+    cipsend_terminal_error = true;
+    assert(at_socket_send(terminal, "fatal", 5U) == AT_SOCKET_ERRNO_CONNECTION_RESET);
+    assert(send_count == terminal_sends + 1U);
+    assert(at_socket_send(terminal, "again", 5U) == AT_SOCKET_ERRNO_NOT_CONNECTED);
+    assert(send_count == terminal_sends + 1U);
+    assert(at_socket_close(terminal) == AT_SOCKET_ERRNO_NONE);
 
     /* A completed CIPSEND whose final response is lost must not poison the
      * transport or leak the logical descriptor across repeated reconnects. */

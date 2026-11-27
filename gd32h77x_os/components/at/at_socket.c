@@ -23,8 +23,8 @@
 #define RX_RING_SIZE 8192U
 #define RX_DYNAMIC_LIMIT 12288U
 #define STREAM_RX_FETCH_SIZE 2048U
-#define STREAM_TX_CHUNK_SIZE 1024U
-#define STREAM_TX_GAP_MS 20U
+#define STREAM_TX_CHUNK_SIZE 2048U
+#define STREAM_TX_GAP_MS 5U
 #define SEND_FAIL_RETRY_COUNT 4U
 #define UDP_QUEUE_DEPTH 2U
 #define ACCEPT_QUEUE_DEPTH 4U
@@ -430,6 +430,23 @@ static at_socket_errno_t fail_with(int error)
 {
     s_last_errno = error;
     return (at_socket_errno_t)error;
+}
+
+static void mark_stream_send_failed(int idx, uint32_t generation)
+{
+    if (!state_lock()) return;
+    socket_slot_t *slot = &s_slots[idx];
+    if (slot->generation == generation && slot->state == SLOT_CONNECTED) {
+        /* A failed CIPSEND can mean the module already closed the TCP client.
+         * Do not let the upper layer keep sending to that stale con_id while it
+         * waits for a close event or a heartbeat timeout. */
+        rx_queue_clear_locked(&slot->rx);
+        slot->state = SLOT_FAILED;
+        slot->rx_ready = false;
+        slot->rx_fetching = false;
+    }
+    state_unlock();
+    wake_waiters();
 }
 
 void at_socket_ap_listeners_invalidate(bool invalid)
@@ -1240,6 +1257,7 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
                                      NULL, timeout);
         bool send_failed = false;
         bool send_ok = false;
+        bool reply_error = false;
         for (size_t i = 0U; i + 9U <= reply_length; ++i) {
             if (memcmp(reply + i, "SEND FAIL", 9U) == 0) {
                 send_failed = true;
@@ -1248,6 +1266,12 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
         for (size_t i = 0U; i + 7U <= reply_length; ++i) {
             if (memcmp(reply + i, "SEND OK", 7U) == 0) {
                 send_ok = true;
+                break;
+            }
+        }
+        for (size_t i = 0U; i + 5U <= reply_length; ++i) {
+            if (memcmp(reply + i, "ERROR", 5U) == 0) {
+                reply_error = true;
                 break;
             }
         }
@@ -1276,7 +1300,11 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
                 continue;
             }
         }
-        if (!send_failed || send_fail_retries >= SEND_FAIL_RETRY_COUNT) {
+        /* VW553 sends "SEND FAIL\r\nERROR\r\n" when its local TCP send path
+         * already closed the client. Retrying the same con_id can only produce
+         * more ERROR replies and blocks the real-time audio queue. */
+        if ((send_failed && reply_error) || !send_failed ||
+            send_fail_retries >= SEND_FAIL_RETRY_COUNT) {
             break;
         }
         /* The module's local socket queue rejected the payload before any TCP
@@ -1295,6 +1323,7 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
                       slot.remote_id, (unsigned)length, (unsigned long)send_elapsed, (long)status);
     }
     if (status != AT_STATUS_OK) {
+        mark_stream_send_failed(idx, slot.generation);
         AT_SUMMARY("socket send failed fd=%d remote=%d len=%u status=%ld reply=%.*s", fd, slot.remote_id,
                       (unsigned)length, (long)status, (int)reply_length, reply);
         return fail_with(AT_SOCKET_ERRNO_CONNECTION_RESET);
@@ -1303,6 +1332,7 @@ static int send_common(int fd, const void *buf, uint32_t length, bool explicit_p
     for (size_t i = 0; i + 7U <= reply_length; ++i)
         if (memcmp(reply + i, "SEND OK", 7U) == 0) send_ok = true;
     if (reply_length && !send_ok) {
+        mark_stream_send_failed(idx, slot.generation);
         AT_SUMMARY("socket send missing SEND OK fd=%d remote=%d len=%u reply=%.*s", fd, slot.remote_id,
                       (unsigned)length, (int)reply_length, reply);
         return fail_with(AT_SOCKET_ERRNO_CONNECTION_RESET);

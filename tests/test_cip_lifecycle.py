@@ -60,6 +60,10 @@ def main() -> int:
     backend = SOCKET_BACKEND.read_text(errors="replace")
     if "at_device_reset_and_recover()" in backend:
         failures.append("H77 CIPSTART failure still hard-resets VW553")
+    if "STREAM_TX_CHUNK_SIZE 2048U" not in backend:
+        failures.append("stream CIPSEND chunks do not use the VW553 2048-byte limit")
+    if "mark_stream_send_failed" not in backend:
+        failures.append("terminal CIPSEND failure does not invalidate the logical socket")
     if "leaving AT running" not in backend:
         failures.append("missing explicit no-reset CIPSTART timeout decision")
     if "listener stop deferred" not in backend:
@@ -105,6 +109,10 @@ def main() -> int:
 
     if "at_cip_stop_all_listeners" not in atcmd_tcpip:
         failures.append("AT stack does not close AP listeners on the STA switch")
+    if re.search(r"if \(\(cip_info\.cli\[index\]\.fd >= 0\).*CIP_ROLE_SERVER", atcmd_tcpip):
+        failures.append("client TX errors are still hidden from the host close-event path")
+    if 'cip_info_cli_free_reason(idx, "TX_ERROR")' not in atcmd_tcpip:
+        failures.append("TCP TX_ERROR does not emit a close event")
     if not re.search(r"#define MAX_SERVER_NUM\s+4\b", atcmd_tcpip_h):
         failures.append("AT server slots were not widened for the AP->LAN overlap")
     if "struct timeval tv = {12, 0};" not in atcmd_tcpip:

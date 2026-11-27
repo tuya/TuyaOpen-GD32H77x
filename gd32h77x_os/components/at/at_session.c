@@ -1015,7 +1015,15 @@ static int32_t submit_locked(const char *command, size_t length, const void *pay
     if (xQueueSend(s_transport.request_queue, &request, 0) != pdPASS) {
         return AT_STATUS_IO_ERROR;
     }
-    if (xSemaphoreTake(s_transport.result_ready, pdMS_TO_TICKS(timeout_ms + AT_IO_POLL_MS + 2U)) != pdTRUE) {
+    uint32_t result_wait_ms = timeout_ms + AT_IO_POLL_MS + 2U;
+    if (payload_length != 0U && wait_prompt) {
+        /* Let the RX/poll task publish AT_RESULT_TIMEOUT first. For CIPSEND
+         * that timeout is connection-level after prompt+payload, and must not
+         * be escalated into a whole-transport poison by this caller-side race. */
+        result_wait_ms += 1000U;
+    }
+    if (xSemaphoreTake(s_transport.result_ready,
+                       pdMS_TO_TICKS(result_wait_ms)) != pdTRUE) {
         AT_SUMMARY("AT transaction timeout cmd=%.*s wait_prompt=%d payload=%lu timeout=%lums poisoned=%d",
                   (int)length, command, wait_prompt ? 1 : 0, (unsigned long)payload_length,
                   (unsigned long)timeout_ms, s_transport.poisoned ? 1 : 0);
